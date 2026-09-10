@@ -19,6 +19,9 @@ export interface TagTermApi {
     getVersion(): Promise<string>
     getOsBuild(): Promise<number>
     listShells(): Promise<ShellKind[]>
+    getDataDir(): Promise<string>
+    pickImage(): Promise<string | null>
+    onOpenSettings(cb: () => void): Unsubscribe
   }
   session: {
     list(): Promise<Session[]>
@@ -31,6 +34,7 @@ export interface TagTermApi {
   settings: {
     get(): Promise<Settings>
     update(patch: SettingsPatch): Promise<Settings>
+    readBackgroundImage(): Promise<string | null>
     onChanged(cb: (settings: Settings) => void): Unsubscribe
   }
   pty: {

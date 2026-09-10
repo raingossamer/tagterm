@@ -14,6 +14,7 @@ import {
   type SettingsFile,
 } from '@shared/models'
 import { readJson, writeJsonAtomic } from './jsonFile'
+import { readImageAsDataUrl } from './backgroundImage'
 
 const SETTINGS_FILE = 'settings.json'
 
@@ -88,6 +89,12 @@ export class SettingsStore {
     const settings = this.get()
     this.onChanged(settings)
     return settings
+  }
+
+  /** 背景图的 data: URL；未设置或文件不存在为 null（回退纯色） */
+  readBackgroundImage(): Promise<string | null> {
+    const path = this.settings.terminalBackground.imagePath
+    return path ? readImageAsDataUrl(path) : Promise.resolve(null)
   }
 
   private async save(): Promise<void> {

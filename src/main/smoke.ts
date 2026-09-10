@@ -5,6 +5,8 @@
  * 以 JSON 打印到 stdout。生产运行不触发。
  */
 import { app, type BrowserWindow } from 'electron'
+import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { PtyManager } from './pty/PtyManager'
 import type { SessionStore } from './store/SessionStore'
 
@@ -102,6 +104,39 @@ const FOCUS_AND_PREPARE_CLIPBOARD = `(async () => {
   return document.activeElement?.tagName ?? null
 })()`
 
+/** 设置弹窗（由主进程广播 app:open-settings 打开）与背景图往返：设图 → 面板出现 data: URL → 清除 */
+const SETTINGS_SCRIPT = (pngPath: string): string => `(async () => {
+  const api = window.tagterm
+  const $ = (sel) => document.querySelector(sel)
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  const waitFor = async (cond, timeoutMs = 5000) => {
+    const start = Date.now()
+    while (!cond()) {
+      if (Date.now() - start > timeoutMs) return false
+      await sleep(50)
+    }
+    return true
+  }
+  const modalOpened = await waitFor(() => !!$('[data-test=settings-modal]'))
+  await waitFor(() => /v[0-9]/.test($('[data-test=about-version]')?.textContent ?? ''))
+  const aboutVersion = $('[data-test=about-version]')?.textContent ?? null
+  await api.settings.update({ terminalBackground: { imagePath: ${JSON.stringify(pngPath)}, dimOpacity: 0.5 } })
+  const bgShown = await waitFor(() => ($('[data-test=terminal-bg]')?.getAttribute('style') ?? '').includes('data:image/png'))
+  const dimStyle = $('[data-test=terminal-dim]')?.getAttribute('style') ?? null
+  $('[data-test=bg-clear]')?.click()
+  const bgCleared = await waitFor(() => !$('[data-test=terminal-bg]'))
+  $('[data-test=settings-done]')?.click()
+  await sleep(50)
+  const modalClosed = !$('[data-test=settings-modal]')
+  return { modalOpened, aboutVersion, bgShown, dimStyle, bgCleared, modalClosed }
+})()`
+
+/** 1×1 PNG，供背景图往返测试 */
+const PNG_1X1 = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+  'base64',
+)
+
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
 /** 渲染进程脚本卡住时也要退出并留下线索 */
@@ -144,6 +179,16 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
       )) as boolean
       const clipboard = { focused, gotCtrlVPaste }
 
+      // 托盘「设置」的广播 → 设置弹窗；背景图设 / 清往返
+      const pngPath = join(app.getPath('userData'), 'smoke-bg.png')
+      writeFileSync(pngPath, PNG_1X1)
+      win.webContents.send('app:open-settings')
+      const settings = await withTimeout(
+        win.webContents.executeJavaScript(SETTINGS_SCRIPT(pngPath)),
+        15000,
+        '设置弹窗烟测',
+      )
+
       // 关窗 → 只隐藏；pty 存活；托盘「显示窗口」恢复
       win.close()
       await sleep(300)
@@ -160,7 +205,8 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
       for (const id of sessionIds) await deps.store.remove(id)
       const remaining = deps.store.list().length
       console.log(
-        '[smoke] ' + JSON.stringify({ ...result, clipboard, lifecycle, remaining, consoleErrors }),
+        '[smoke] ' +
+          JSON.stringify({ ...result, clipboard, settings, lifecycle, remaining, consoleErrors }),
       )
     } catch (err) {
       console.log('[smoke] ' + JSON.stringify({ error: String(err), ...result, consoleErrors }))

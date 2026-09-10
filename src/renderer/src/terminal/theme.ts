@@ -1,12 +1,13 @@
 /**
  * 终端默认选项：字体栈、Windows Campbell 配色（与原型 --t-* 一致）、ConPTY 标注。
+ * 背景设为透明：纯黑 / 背景图 / 遮罩都由 TerminalPane 容器提供，换背景不必重开终端。
  */
 import type { ITerminalOptions, ITheme } from '@xterm/xterm'
 
 export const TERMINAL_FONT_FAMILY = '"Cascadia Mono", Consolas, "Microsoft YaHei", monospace'
 
 export const CAMPBELL_THEME: ITheme = {
-  background: '#0C0C0C',
+  background: '#0C0C0C00', // 透明，见文件头注释
   foreground: '#CCCCCC',
   cursor: '#FFFFFF',
   selectionBackground: '#FFFFFF40',
@@ -36,6 +37,7 @@ export function buildTerminalOptions(osBuild: number): ITerminalOptions {
     scrollback: 5000,
     cursorBlink: true,
     allowProposedApi: true, // Unicode11 addon 需要
+    allowTransparency: true,
     theme: CAMPBELL_THEME,
     windowsPty: osBuild > 0 ? { backend: 'conpty', buildNumber: osBuild } : { backend: 'conpty' },
   }
