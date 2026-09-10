@@ -449,10 +449,10 @@ export class TerminalPool {
 
 **Acceptance criteria**:
 - [ ] 打开 3 个不同目录会话各自跑 `claude`，来回切换内容不丢、TUI 不乱
-- [ ] 关闭标签页后 pty 仍在（任务管理器可见）；从左栏点回来内容与进程原样
-- [ ] 关闭当前标签页时激活的邻居与原型规则一致；全关后显示空状态
-- [ ] 唤起按钮效果等同于在终端敲 `claude⏎`；清屏按钮生效
-- [ ] ☰ 收起 / 展开侧栏后终端自动重排
+- [x] 关闭标签页后 pty 仍在（任务管理器可见）；从左栏点回来内容与进程原样
+- [x] 关闭当前标签页时激活的邻居与原型规则一致；全关后显示空状态
+- [x] 唤起按钮效果等同于在终端敲 `claude⏎`；清屏按钮生效
+- [x] ☰ 收起 / 展开侧栏后终端自动重排
 - [ ] 同时打开 ≥ 8 个会话不出现 WebGL 上下文丢失告警
 
 **Implementation hints**:
@@ -560,7 +560,7 @@ Slice 1 → Slice 2 → Slice 3 → Slice 4 → Slice 5 → Slice 6 → Slice 7 
 | 1 脚手架与安全基线 | 🟢 Done | Claude | 2026-09-10；commit d3c0882；偏差见 §11 |
 | 2 会话持久化与左栏列表 | 🟢 Done | Claude | 2026-09-10；commit 9b2ceb8；偏差见 §11 |
 | 3 终端：PTY 与 xterm 单会话 | 🟢 Done | Claude | 2026-09-10；commit 869e97b；偏差见 §11；「拖动窗口重排」「WebGL 上下文丢失回退」两项留 S7 人工验证 |
-| 4 多会话切换与标签页 | 🔴 Not started | - | - |
+| 4 多会话切换与标签页 | 🟢 Done | Claude | 2026-09-10；commit 5196e07；偏差见 §11；「3 个 claude TUI 来回切换不乱」「≥8 会话无 WebGL 告警」留 S7 人工验证 |
 | 5 托盘与生命周期 | 🔴 Not started | - | - |
 | 6 打包 | 🔴 Not started | - | - |
 | 7 M1 验收（HITL） | 🔴 Not started | - | - |
@@ -601,3 +601,11 @@ Status: 🔴 Not started | 🟡 In progress | 🟢 Done | ⚠️ Blocked
 | `App.vue` 的工作区用 `v-show` 而非 `v-if`，TerminalPane 常驻 | 实例池容器不能随空状态切换而卸载 | 无 |
 | 验收项「输入 claude 的 TUI / 方向键 / Ctrl+C」「拖动窗口重排」「模拟 WebGL 上下文丢失」未自动化 | 需要交互；烟测已覆盖提示符 / 中文 echo / canvas 存在 | 留 Slice 7 人工验收 |
 | 风险：node-pty `kill()` 时打印 `Error: AttachConsole failed`（枚举控制台子进程失败），主 shell 已确认被结束，但 shell 内正在运行的子进程（如 claude）是否随之结束待验证 | node-pty 在无控制台的进程里 AttachConsole 失败 | Slice 5「托盘退出无残留进程」验收时重点检查；必要时改用 `taskkill /T /PID` 兜底 |
+
+### Slice 4
+
+| 偏差 / 补充 | 原因 | 影响 |
+|------|------|------|
+| 唤起按钮列表 = `DEFAULT_AGENTS`（claude / gemini / codex / pi）经 PATH 探测过滤，新增 invoke 通道 `app:list-agents`；探测泛化为 `main/pathProbe.ts`（原 `shells.ts` 并入） | 落实 Plan §9 #6 的推荐执行方案；本机显示 claude / gemini / pi | 「可配置列表」的设置 UI 未做（M4 配置项）；Design API 端点 / 目录结构需补记 |
+| `TerminalPool` 增加 `onExit` / `onRestartRequested` 回调与"已退出实例不再转发按键"的规则；重启 = `dispose` + `open`，由 `App.vue` 编排 | 落实 Plan §9 #1「退出后按回车或再次点击会话行即重启」 | 无 |
+| `App.vue` 监听 `workspace.activeId` 变化直接 `pool.show / hide` | 标签页点击、关闭邻居切换都只切 display，不必经过 selectSession 的 open 路径 | 无 |

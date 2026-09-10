@@ -1,18 +1,20 @@
 /**
  * 装配层：创建各服务、注入依赖、绑定 app 生命周期；不含业务逻辑。
+ * 会话生命周期 = 应用生命周期：关窗只隐藏到托盘；托盘「退出」与 before-quit 都 killAll。
  */
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, type Tray } from 'electron'
 import { existsSync } from 'node:fs'
 import { release } from 'node:os'
 import type { EventArgs, EventChannel } from '@shared/ipc'
-import { createMainWindow } from './window'
+import { DEFAULT_AGENTS } from '@shared/models'
+import { createMainWindow, showMainWindow } from './window'
+import { createTray } from './tray'
 import { registerIpc } from './ipc'
 import { runSmokeCheck } from './smoke'
 import { SessionStore } from './store/SessionStore'
 import { resolveDataDir } from './store/paths'
 import { PtyManager } from './pty/PtyManager'
 import { detectAvailableShells, findOnPath } from './pathProbe'
-import { DEFAULT_AGENTS } from '@shared/models'
 
 // 顶层异常：记录日志 + 弹框，不静默
 process.on('uncaughtException', (err) => {
@@ -23,7 +25,14 @@ process.on('unhandledRejection', (reason) => {
   console.error('[main] 未处理的 Promise 拒绝', reason)
 })
 
+// 单实例锁：二次启动只聚焦已有窗口
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+}
+
 let mainWindow: BrowserWindow | null = null
+let tray: Tray | null = null
+let isQuitting = false
 
 /** 主进程是持久数据与终端输出的来源：向渲染进程广播 */
 function broadcast<K extends EventChannel>(channel: K, ...args: EventArgs<K>): void {
@@ -41,6 +50,15 @@ async function pickDirectory(): Promise<string | null> {
 /** Windows 构建号：os.release() 形如 "10.0.26200" */
 function osBuildNumber(): number {
   return Number(release().split('.')[2] ?? 0) || 0
+}
+
+function showWindow(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) showMainWindow(mainWindow)
+}
+
+function quitApp(): void {
+  isQuitting = true
+  app.quit()
 }
 
 const ptyManager = new PtyManager({
@@ -78,16 +96,23 @@ app.whenReady().then(async () => {
     listAgents: () => availableAgents,
   })
 
-  mainWindow = createMainWindow()
-  if (process.env['TAGTERM_SMOKE']) runSmokeCheck(mainWindow)
+  mainWindow = createMainWindow({ shouldHideOnClose: () => !isQuitting })
+  tray = createTray({ onShow: showWindow, onQuit: quitApp })
+  if (process.env['TAGTERM_SMOKE'])
+    runSmokeCheck(mainWindow, { store, pty: ptyManager, quit: quitApp })
 })
 
-// 退出前结束全部终端，防孤儿 conhost（S5 托盘「退出」也走这里）
+app.on('second-instance', () => showWindow())
+
+// 退出前结束全部终端，防孤儿 conhost（托盘「退出」也走这里）
 app.on('before-quit', () => {
+  isQuitting = true
   ptyManager.killAll()
+  tray?.destroy()
+  tray = null
 })
 
-// S5 引入托盘后改为常驻；此前关闭窗口即退出
+// 常驻托盘：关闭窗口不退出
 app.on('window-all-closed', () => {
-  app.quit()
+  /* 保持运行，由托盘「退出」结束 */
 })

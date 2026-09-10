@@ -10,7 +10,7 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "types": ["node"],
+    "types": ["node", "electron-vite/node"],
     "baseUrl": ".",
     "paths": { "@shared/*": ["src/shared/*"] }
   },
