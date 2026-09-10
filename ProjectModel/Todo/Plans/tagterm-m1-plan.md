@@ -565,8 +565,8 @@ Slice 1 → Slice 2 → Slice 3 → Slice 4 → Slice 5 → Slice 6 → Slice 7 
 | 6 打包 | 🟢 Done | Claude | 2026-09-10；commit 122ca4d；产出 dist/TagTerm Setup 0.1.0.exe（118 MB）与 dist/win-unpacked；「可安装 / 卸载不删数据」留 S7 人工验证 |
 | 7 M1 验收（HITL） | 🟡 In progress | 你 | 验收指引见 §12；已修粘贴 bug（682cdc8）；反馈催生 S8–S10（§13） |
 | 8 唤起命令自定义（收藏夹式） | 🟢 Done | Claude | 2026-09-11；commit 1ffa0f6；偏差见 §11；81 例单测 + 烟测（settings.json 生成、按钮来自设置）绿；「重启后仍如此」「拖拽手感」留人工验收 |
-| 9 设置窗口与终端背景图 | 🟢 Done | Claude | 2026-09-11；偏差见 §11；单测 + 烟测（广播打开设置弹窗、设图后面板出现 data: URL 与遮罩、清除）绿；「托盘菜单可见」「图片实际观感」留人工验收 |
-| 10 检查更新 | 🔴 Not started | - | §13；更新源地址待用户提供 |
+| 9 设置窗口与终端背景图 | 🟢 Done | Claude | 2026-09-11；commit 8f15075；偏差见 §11；单测 + 烟测（广播打开设置弹窗、设图后面板出现 data: URL 与遮罩、清除）绿；「托盘菜单可见」「图片实际观感」留人工验收 |
+| 10 检查更新 | 🟢 Done | Claude | 2026-09-11；偏差见 §11；本地 HTTP 更新源验证通过：0.1.0 打包版发现 0.1.1、带进度下载完成、出现「立即安装并重启」；安装与 GitHub 真实链路留人工验收（§12 #24–25）；更新源按 GitHub Releases 推定，待用户确认仓库可见性 |
 
 Status: 🔴 Not started | 🟡 In progress | 🟢 Done | ⚠️ Blocked
 
@@ -665,6 +665,20 @@ Status: 🔴 Not started | 🟡 In progress | 🟢 Done | ⚠️ Blocked
 | 设置弹窗「更新」段为占位：`检查更新` 按钮 disabled + 「即将支持」 | 按 §13 S9 要求先占位，S10 接入 | S10 替换 |
 | 设置入口只有托盘右键「设置」（按 §13）；主窗口内暂无入口 | 保持切片范围 | 若人工验收觉得难找，M4 打磨时加左栏 ⚙ |
 
+### Slice 10
+
+| 偏差 / 决定 | 原因 | 影响 |
+|------|------|------|
+| 更新源默认 **GitHub Releases**（`electron-builder.yml` `publish: github`，`nujabes226/tagterm`）；§13「待你确认」#1 用户未回复，按「已建 GitHub 仓库」推定 | 仓库已存在，零额外基础设施 | **仓库必须 public**（用户机器匿名下载 Release 附件）；若 private，改 `publish` 为 `provider: generic` + 自有静态 URL 后重新打包即可，代码不动 |
+| `artifactName` 改为 `${productName}-Setup-${version}.${ext}`（无空格） | electron-builder 生成 `latest.yml` 时把 url 里的空格换成 `-`，与磁盘上带空格的文件名不一致，本地 HTTP 验证时下载 404 | 安装包文件名变为 `TagTerm-Setup-0.1.1.exe` |
+| 版本号升到 **0.1.1** | 已安装的 0.1.0 只能更新到更高版本；且 0.1.0 安装版本身没有更新模块，**第一次升级必须手动安装 0.1.1**，之后才能在应用内更新 | `package.json` version 0.1.1；发布物 `dist/latest.yml`、`TagTerm-Setup-0.1.1.exe`、`.exe.blockmap` |
+| 新增通道 `update:download`（§13 只列 `update:check` / `update:install`）与 `update:get-status` | 「只提示不自动下载」→ 用户点「下载」才拉安装包；弹窗打开时要能拿到当前状态 | 状态机 idle → checking → available / none / error；available → downloading → downloaded |
+| `Updater` 服务层以 `AutoUpdaterLike` 接口注入 electron-updater（测试用假对象）；未打包时 `checkForUpdates` 返回 null 且不发事件 → 转成 error「未打包的开发版本不支持检查更新」 | electron-updater 在未打包时静默跳过，否则状态停在 checking | 开发模式点「检查更新」得到明确提示，不会卡住 |
+| 启动后 10 s 自动检查只在打包版（`app.isPackaged`）且非烟测时执行 | 开发模式必然失败，避免噪音 | 无 |
+| 「立即安装并重启」未自动化 | 会用测试安装包覆盖本机已安装的 TagTerm | 留 §12 人工验收；`quitAndInstall` 前已 `killAll` |
+| 打包脚本加 `--publish never` | 本地打包不尝试上传 GitHub（无 token 也会报错） | 发布 = 手动把三个文件传到 Release，或将来 CI 用 `--publish always` |
+| 安装包未签名，electron-updater 不做签名校验 | 无证书（与 Slice 6 一致） | 将来签名后 electron-updater 会自动校验新包的发布者与当前一致 |
+
 ## 12. M1 验收指引（Slice 7 HITL 输入）
 
 > 自动化已覆盖的项在「已自动验证」列标 ✅（vitest 60 例 + `TAGTERM_SMOKE=1` 烟测，含打包版）；需要你亲手操作的在「你要做的」列。每步给出预期现象，不符即记为问题。
@@ -701,6 +715,18 @@ pnpm dev            :: 开发模式；或用打包版 dist\win-unpacked\TagTerm.
 | 16 | 重新启动应用 | 左栏会话列表仍在（读自 `sessions.json`），终端为空白待点开；点开后需重新输入 `claude` | ✅ |
 | 17 | 同时打开 ≥ 8 个会话 | DevTools Console 无 WebGL 上下文丢失告警；只有当前可见终端有 canvas（DevTools Elements 里 `[data-test=terminal-pane]` 下只有一个 host 含 `canvas`） | ❌ 需人工 |
 | 18 | 安装包（若已产出）：安装 → 启动 → 开终端 → 跑 `claude` → 卸载 | 安装版读写仍是 `%APPDATA%\TagTerm\sessions.json`；卸载后该文件仍在 | ❌ 需人工 |
+
+### 追加切片验收（S8–S10，2026-09-11 追加）
+
+| # | 你要做的 | 预期现象 | 已自动验证 |
+|---|---------|---------|:---:|
+| 19 | 路径条点「编辑」：新增一行命令 `pi --model x`、显示名 `pi x`、取消「常用」，用左侧手柄拖到第一位，「完成」 | 平铺区不再显示它，「更多 ▾」里它排第一，点选即在终端执行；重启应用后仍如此；`%APPDATA%\TagTerm\settings.json` 里 `launchCommands` 对应 | ✅（单测 + 烟测）/ ❌ 拖拽手感与重启需人工 |
+| 20 | 编辑弹窗里删到一条不剩，「完成」 | 路径条只剩「唤起」标签与「编辑」，清屏 / 移除会话仍在 | ✅ |
+| 21 | 托盘右键「设置」 | 窗口显示且设置弹窗打开；「关于」显示版本与数据目录 | ✅（广播 → 弹窗）/ ❌ 托盘菜单项需人工 |
+| 22 | 「选择图片…」选一张图；拖遮罩滑块 | 所有会话的终端都以它为背景、文字清晰；滑块拖动即时变化、松手落盘；重启后背景仍在 | ✅（设图 → 面板出现 data: URL 与遮罩）/ ❌ 观感需人工 |
+| 23 | 把那张图片文件删掉再启动；再点「清除」 | 启动不报错、终端纯黑、设置里提示「图片文件不存在，已回退为纯色」；清除后提示消失 | ✅（单测） |
+| 24 | **首次发布**：把 `dist/latest.yml`、`dist/TagTerm-Setup-0.1.1.exe`、`dist/TagTerm-Setup-0.1.1.exe.blockmap` 上传到 GitHub Release（tag `v0.1.1`，仓库需 public）；本机**手动**运行 `TagTerm-Setup-0.1.1.exe` 覆盖安装 | 安装后「关于」显示 v0.1.1；`sessions.json` / `settings.json` 原样。（0.1.0 安装版没有更新模块，这一次必须手动） | ❌ 需人工 |
+| 25 | 之后任一次发布（如 0.1.2）：在已装的 0.1.1 里托盘「设置」→「检查更新」 | 显示「发现新版本 v0.1.2」→「下载」有进度 →「立即安装并重启」→ 重启后是新版本，数据原样；无新版本时显示「已是最新版本 v0.1.1」；断网时显示「检查更新失败：…」且应用不崩 | ✅（本地 HTTP 更新源：0.1.0 打包版发现 0.1.1 并下载完成）/ ❌ 安装与 GitHub 真实链路需人工 |
 
 ### 你确认后
 

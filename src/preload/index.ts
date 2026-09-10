@@ -58,6 +58,13 @@ const api: TagTermApi = {
     readBackgroundImage: () => invoke('settings:read-background-image'),
     onChanged: (cb) => subscribe('settings:changed', cb),
   },
+  update: {
+    getStatus: () => invoke('update:get-status'),
+    check: () => invoke('update:check'),
+    download: () => invoke('update:download'),
+    install: () => invoke('update:install'),
+    onStatus: (cb) => subscribe('update:status', cb),
+  },
   pty: {
     open: (sessionId, size) => invoke('pty:open', sessionId, size),
     write: (sessionId, data) => send('pty:write', sessionId, data),

@@ -57,3 +57,13 @@ export const SETTINGS_FILE_VERSION = 1
 export interface SettingsFile extends Settings {
   version: typeof SETTINGS_FILE_VERSION
 }
+
+// ---- 检查更新（M1 追加，Plan §13 S10）----
+
+/** 更新状态机：idle → checking → available | none | error；available → downloading → downloaded */
+export interface UpdateStatus {
+  state: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'none' | 'error'
+  version?: string // available / downloading / downloaded：新版本；none：当前版本
+  percent?: number // downloading：0–100 整数
+  message?: string // error
+}

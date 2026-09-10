@@ -125,10 +125,28 @@ const SETTINGS_SCRIPT = (pngPath: string): string => `(async () => {
   const dimStyle = $('[data-test=terminal-dim]')?.getAttribute('style') ?? null
   $('[data-test=bg-clear]')?.click()
   const bgCleared = await waitFor(() => !$('[data-test=terminal-bg]'))
+  // 检查更新：开发模式下 electron-updater 报「未打包」→ error；打包版对着可达的更新源 → none / available
+  const updateStatuses = []
+  api.update.onStatus((s) => updateStatuses.push(s))
+  $('[data-test=update-check]')?.click()
+  const updateSettled = await waitFor(() => updateStatuses.some((s) => ['none', 'available', 'error'].includes(s.state)), 15000)
+  const updateStatus = updateStatuses[updateStatuses.length - 1] ?? null
+  const updateText = $('[data-test=update-status]')?.textContent ?? null
+  // 打包版对着托管了更高版本的更新源：点「下载」→ 进度 → downloaded（不点安装，安装留人工验收）
+  let download = null
+  if (updateStatus?.state === 'available') {
+    $('[data-test=update-download]')?.click()
+    const downloaded = await waitFor(() => updateStatuses.some((s) => s.state === 'downloaded'), 120000)
+    download = {
+      downloaded,
+      sawProgress: updateStatuses.some((s) => s.state === 'downloading' && s.percent > 0),
+      installButton: $('[data-test=update-install]')?.textContent?.trim() ?? null,
+    }
+  }
   $('[data-test=settings-done]')?.click()
   await sleep(50)
   const modalClosed = !$('[data-test=settings-modal]')
-  return { modalOpened, aboutVersion, bgShown, dimStyle, bgCleared, modalClosed }
+  return { modalOpened, aboutVersion, bgShown, dimStyle, bgCleared, updateSettled, updateStatus, updateText, download, modalClosed }
 })()`
 
 /** 1×1 PNG，供背景图往返测试 */
@@ -185,7 +203,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
       win.webContents.send('app:open-settings')
       const settings = await withTimeout(
         win.webContents.executeJavaScript(SETTINGS_SCRIPT(pngPath)),
-        15000,
+        180000,
         '设置弹窗烟测',
       )
 

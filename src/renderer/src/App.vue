@@ -16,6 +16,7 @@ import NewSessionModal from './components/NewSessionModal.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import { useSessionsStore } from './stores/sessions'
 import { useSettingsStore } from './stores/settings'
+import { useUpdateStore } from './stores/update'
 import { useWorkspaceStore } from './stores/workspace'
 import { TerminalPool } from './terminal/TerminalPool'
 import { TERMINAL_POOL_KEY } from './terminal/poolKey'
@@ -24,6 +25,7 @@ import { buildTerminalOptions } from './terminal/theme'
 
 const sessions = useSessionsStore()
 const settings = useSettingsStore()
+const update = useUpdateStore()
 const workspace = useWorkspaceStore()
 const isNewModalOpen = ref(false)
 const isSettingsOpen = ref(false)
@@ -109,6 +111,7 @@ onMounted(async () => {
   try {
     osBuild = await window.tagterm.app.getOsBuild()
     await settings.load()
+    await update.load()
     await sessions.load()
   } catch (err) {
     loadError.value = err instanceof Error ? err.message : String(err)

@@ -5,9 +5,11 @@ import { join } from 'node:path'
 import { registerIpc, type IpcDeps } from '../../src/main/ipc'
 import { SessionStore } from '../../src/main/store/SessionStore'
 import { SettingsStore } from '../../src/main/store/SettingsStore'
+import { Updater } from '../../src/main/updater/Updater'
+import { FakeAutoUpdater } from './fakeAutoUpdater'
 import { PtyManager } from '../../src/main/pty/PtyManager'
 import type { PtyExitEvent, PtyOpenResult } from '@shared/ipc'
-import type { Session, Settings } from '@shared/models'
+import type { Session, Settings, UpdateStatus } from '@shared/models'
 import { createFakeIpcMain, type FakeIpcMain } from './fakeIpcMain'
 import { waitFor } from './helpers'
 
@@ -18,6 +20,8 @@ describe('IPC 接口层', () => {
   let store: SessionStore
   let settings: SettingsStore
   let pty: PtyManager
+  let autoUpdater: FakeAutoUpdater
+  const updateStatuses: UpdateStatus[] = []
   const output: Record<string, string> = {}
   const exits: PtyExitEvent[] = []
 
@@ -34,11 +38,19 @@ describe('IPC 接口层', () => {
       onExit: (e) => exits.push(e),
     })
     ipc = createFakeIpcMain()
+    autoUpdater = new FakeAutoUpdater()
+    const updater = new Updater({
+      autoUpdater,
+      currentVersion: '0.1.0',
+      onStatus: (s) => updateStatuses.push(s),
+      beforeInstall: () => autoUpdater.order.push('before'),
+    })
     deps = {
       version: '0.1.0',
       osBuild: 26200,
       store,
       settings,
+      updater,
       pty,
       dataDir: dir,
       pickImage: async () => join(dir, 'picked.png'),
@@ -50,6 +62,7 @@ describe('IPC 接口层', () => {
   afterEach(() => {
     pty.killAll()
     exits.length = 0
+    updateStatuses.length = 0
     for (const k of Object.keys(output)) delete output[k]
     rmSync(dir, { recursive: true, force: true })
   })
@@ -157,6 +170,25 @@ describe('IPC 接口层', () => {
     await expect(ipc.invoke('settings:read-background-image')).resolves.toBe(
       'data:image/png;base64,iVBORw0KGgo=',
     )
+  })
+
+  it('update:get-status / check / download / install 经接口层落到 Updater', async () => {
+    await expect(ipc.invoke('update:get-status')).resolves.toEqual({ state: 'idle' })
+
+    await ipc.invoke('update:check')
+    expect(autoUpdater.checkCalls).toBe(1)
+    expect(updateStatuses).toEqual([{ state: 'checking' }])
+    autoUpdater.emit('update-available', { version: '0.2.0' })
+    await expect(ipc.invoke('update:get-status')).resolves.toEqual({
+      state: 'available',
+      version: '0.2.0',
+    })
+
+    await ipc.invoke('update:download')
+    expect(autoUpdater.downloadCalls).toBe(1)
+
+    await ipc.invoke('update:install')
+    expect(autoUpdater.order).toEqual(['before', 'install'])
   })
 
   it('settings:update 非法补丁在接口层被拒绝', async () => {

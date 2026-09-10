@@ -1,10 +1,13 @@
 <script setup lang="ts">
-// 「设置」弹窗（主窗口内 modal）：终端背景（选图 / 清除 / 遮罩滑块即时预览）、更新（S10 接入）、关于
+// 「设置」弹窗（主窗口内 modal）：终端背景（选图 / 清除 / 遮罩滑块即时预览）、更新（检查 / 下载 / 安装）、关于
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useSettingsStore } from '../stores/settings'
+import { useUpdateStore } from '../stores/update'
+import { describeUpdateStatus } from '../composables/updateStatus'
 
 const emit = defineEmits<{ close: [] }>()
 const settings = useSettingsStore()
+const update = useUpdateStore()
 
 const version = ref('')
 const dataDir = ref('')
@@ -13,6 +16,19 @@ const error = ref('')
 const imagePath = computed(() => settings.settings.terminalBackground.imagePath)
 const dimPercent = computed(() => Math.round(settings.terminalBackground.dimOpacity * 100))
 const isImageMissing = computed(() => !!imagePath.value && settings.backgroundImage === null)
+
+const updateText = computed(() => describeUpdateStatus(update.status))
+/** 检查 / 下载进行中不允许再点 */
+const isUpdateBusy = computed(() => ['checking', 'downloading'].includes(update.status.state))
+
+async function runUpdateAction(action: () => Promise<void>): Promise<void> {
+  error.value = ''
+  try {
+    await action()
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  }
+}
 
 onMounted(async () => {
   document.addEventListener('keydown', onKeydown)
@@ -107,8 +123,34 @@ function onKeydown(e: KeyboardEvent): void {
       <section>
         <h4>更新</h4>
         <div class="row">
-          <button class="btn sm" type="button" disabled data-test="update-check">检查更新</button>
-          <span class="hint" data-test="update-status">即将支持</span>
+          <button
+            class="btn sm"
+            type="button"
+            :disabled="isUpdateBusy"
+            data-test="update-check"
+            @click="runUpdateAction(update.check)"
+          >
+            检查更新
+          </button>
+          <button
+            v-if="update.status.state === 'available'"
+            class="btn sm primary"
+            type="button"
+            data-test="update-download"
+            @click="runUpdateAction(update.download)"
+          >
+            下载
+          </button>
+          <button
+            v-if="update.status.state === 'downloaded'"
+            class="btn sm primary"
+            type="button"
+            data-test="update-install"
+            @click="runUpdateAction(update.install)"
+          >
+            立即安装并重启
+          </button>
+          <span class="hint" data-test="update-status">{{ updateText }}</span>
         </div>
       </section>
 

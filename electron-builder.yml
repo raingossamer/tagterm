@@ -19,7 +19,15 @@ win:
   target:
     - nsis
   icon: resources/icon.ico
-  artifactName: ${productName} Setup ${version}.${ext}
+  # 文件名不含空格：latest.yml 里的 url 与磁盘 / Release 附件同名，generic 与 GitHub 更新源都不用改名
+  artifactName: ${productName}-Setup-${version}.${ext}
+# 更新源（electron-updater 读取打包时生成的 resources/app-update.yml）：
+# 默认 GitHub Releases（仓库需公开）；换成自有静态地址时改为 provider: generic + url: https://…/tagterm/
+# 发布方式：把 dist 里的 latest.yml、TagTerm-Setup-x.y.z.exe、.exe.blockmap 三个文件传到对应 Release（tag vx.y.z）
+publish:
+  provider: github
+  owner: nujabes226
+  repo: tagterm
 nsis:
   oneClick: false
   perMachine: false
