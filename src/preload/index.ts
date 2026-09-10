@@ -40,6 +40,7 @@ const api: TagTermApi = {
     getVersion: () => invoke('app:get-version'),
     getOsBuild: () => invoke('app:get-os-build'),
     listShells: () => invoke('app:list-shells'),
+    listAgents: () => invoke('app:list-agents'),
   },
   session: {
     list: () => invoke('session:list'),

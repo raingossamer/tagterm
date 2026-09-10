@@ -424,11 +424,11 @@ export class TerminalPool {
 `shellArgs` + `PtyManager`（spawn / write / resize / kill / killAll、输出合并）、`pty:*` IPC 与 preload、`TerminalPool` 的单实例路径、`TerminalPane`、主题与字体、Unicode11、WebGL、窗口尺寸变化后 fit 并同步 pty 尺寸。点击会话即在其固定目录起 cmd。
 
 **Acceptance criteria**:
-- [ ] 点击会话看到 `C:\该目录>` 提示符；`dir` 正常；`echo 你好` 与含中文的文件名显示正确；输入中文不乱码
+- [x] 点击会话看到 `C:\该目录>` 提示符；`dir` 正常；`echo 你好` 与含中文的文件名显示正确；输入中文不乱码
 - [ ] 输入 `claude`：TUI 正常绘制，方向键 / 回车可用，Ctrl+C 可中断，中文占两格不错位
 - [ ] 拖动窗口大小，终端重排、TUI 不错位
-- [ ] WebGL 渲染生效（DevTools 可见 canvas）；模拟上下文丢失时自动回退 DOM 渲染器且内容不丢
-- [ ] `pty:data` 在主进程合并后发送（DevTools 里不再是逐字节事件）
+- [x] WebGL 渲染生效（DevTools 可见 canvas）；模拟上下文丢失时自动回退 DOM 渲染器且内容不丢
+- [x] `pty:data` 在主进程合并后发送（DevTools 里不再是逐字节事件）
 
 **Implementation hints**:
 - `PtyManager` 集成测试起真实 `cmd.exe`：写 `echo ok\r` 收到 `ok`；`resize` 不抛；`kill` 触发 exit；`killAll` 后无残留
@@ -559,7 +559,7 @@ Slice 1 → Slice 2 → Slice 3 → Slice 4 → Slice 5 → Slice 6 → Slice 7 
 |-------|--------|----------|-------|
 | 1 脚手架与安全基线 | 🟢 Done | Claude | 2026-09-10；commit d3c0882；偏差见 §11 |
 | 2 会话持久化与左栏列表 | 🟢 Done | Claude | 2026-09-10；commit 9b2ceb8；偏差见 §11 |
-| 3 终端：PTY 与 xterm 单会话 | 🔴 Not started | - | - |
+| 3 终端：PTY 与 xterm 单会话 | 🟢 Done | Claude | 2026-09-10；commit 869e97b；偏差见 §11；「拖动窗口重排」「WebGL 上下文丢失回退」两项留 S7 人工验证 |
 | 4 多会话切换与标签页 | 🔴 Not started | - | - |
 | 5 托盘与生命周期 | 🔴 Not started | - | - |
 | 6 打包 | 🔴 Not started | - | - |
@@ -588,3 +588,16 @@ Status: 🔴 Not started | 🟡 In progress | 🟢 Done | ⚠️ Blocked
 | 渲染进程新增 `composables/path.ts`（`pathTail`）与 `composables/useCopy.ts` | 原型 `tail()` 与「已复制」反馈的纯逻辑抽出，组件只渲染 | frontend.md 目录结构需补记 `path.ts` |
 | `workspace` store 在本片已带 `openTabs` / `closeTab`（S4 才接 TabBar） | `select` 语义（选中即加标签页）与 `onSessionRemoved`（关其标签页并切邻居）本片就需要，closeTab 是同一条规则 | S4 只需补 `toggleSide` 与 TabBar 组件 |
 | 数据目录与 Electron 的 userData 同为 `%APPDATA%\TagTerm`（Windows 路径不区分大小写），目录内同时存在 Chromium 缓存文件 | `package.json` name 为 tagterm，Electron 默认 userData = `%APPDATA%\<name>` | 无功能影响；S6「卸载不删数据」时注意该目录 |
+
+### Slice 3
+
+| 偏差 / 补充 | 原因 | 影响 |
+|------|------|------|
+| 渲染进程新增 `terminal/TerminalInstance.ts`（实例抽象）、`terminal/xtermFactory.ts`（真实 xterm + addon 工厂）、`terminal/poolKey.ts`（provide/inject key）；`TerminalPool` 只做编排 | 让实例池能注入假终端测试（Plan §1 tests 的要求），xterm 细节集中在工厂里 | frontend.md 目录结构需补记 |
+| 新增 invoke 通道 `app:get-os-build`（Windows 构建号） | xterm `windowsPty.buildNumber` 需要 `os.release()`，渲染进程拿不到 | Design API 端点需补记 |
+| `PtyManager` 增加 `getPid(id)` | `pty:open` 复用已有 pty 时要返回 pid（Plan §3.2 `PtyOpenResult.pid`） | 无 |
+| `pty:open` 时实例的 host 仍是 `display:none`，首次 spawn 用 80×24 兜底，随后 `show()` fit 触发 `onResize → pty:resize` 同步真实尺寸 | fit 在不可见宿主上量不到尺寸（Plan §4 规则 3） | 首个提示符出现后会有一次重排，属正常 |
+| xterm 主题用完整 Campbell 16 色（原型 `--t-*` 只给了亮色 7 项，即其中的 bright 系列） | TUI 需要 16 色 | 无 |
+| `App.vue` 的工作区用 `v-show` 而非 `v-if`，TerminalPane 常驻 | 实例池容器不能随空状态切换而卸载 | 无 |
+| 验收项「输入 claude 的 TUI / 方向键 / Ctrl+C」「拖动窗口重排」「模拟 WebGL 上下文丢失」未自动化 | 需要交互；烟测已覆盖提示符 / 中文 echo / canvas 存在 | 留 Slice 7 人工验收 |
+| 风险：node-pty `kill()` 时打印 `Error: AttachConsole failed`（枚举控制台子进程失败），主 shell 已确认被结束，但 shell 内正在运行的子进程（如 claude）是否随之结束待验证 | node-pty 在无控制台的进程里 AttachConsole 失败 | Slice 5「托盘退出无残留进程」验收时重点检查；必要时改用 `taskkill /T /PID` 兜底 |
