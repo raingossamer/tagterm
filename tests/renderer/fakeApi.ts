@@ -1,6 +1,6 @@
 import { vi } from 'vitest'
 import type { TagTermApi } from '@shared/api'
-import type { Session, ShellKind } from '@shared/models'
+import type { AgentKind, Session, ShellKind } from '@shared/models'
 
 type Overrides = {
   [K in keyof TagTermApi]?: Partial<TagTermApi[K]>
@@ -22,6 +22,7 @@ export function createFakeApi(overrides: Overrides = {}): TagTermApi {
       getVersion: vi.fn(async () => '0.0.0-test'),
       getOsBuild: vi.fn(async () => 26200),
       listShells: vi.fn(async (): Promise<ShellKind[]> => ['cmd.exe', 'powershell.exe']),
+      listAgents: vi.fn(async (): Promise<AgentKind[]> => ['claude', 'gemini', 'pi']),
       ...overrides.app,
     },
     session: {

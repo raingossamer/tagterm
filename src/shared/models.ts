@@ -18,6 +18,10 @@ export interface Session {
   lastOpenedAt?: string // ISO 8601，每次打开终端时更新
 }
 
+/** 唤起按钮候选：启动时探测 PATH，未安装的不显示（Plan §9 #6） */
+export const DEFAULT_AGENTS = ['claude', 'gemini', 'codex', 'pi'] as const
+export type AgentKind = (typeof DEFAULT_AGENTS)[number]
+
 export const SESSIONS_FILE_VERSION = 1
 
 export interface SessionsFile {

@@ -11,7 +11,8 @@ import { runSmokeCheck } from './smoke'
 import { SessionStore } from './store/SessionStore'
 import { resolveDataDir } from './store/paths'
 import { PtyManager } from './pty/PtyManager'
-import { detectAvailableShells } from './shells'
+import { detectAvailableShells, findOnPath } from './pathProbe'
+import { DEFAULT_AGENTS } from '@shared/models'
 
 // 顶层异常：记录日志 + 弹框，不静默
 process.on('uncaughtException', (err) => {
@@ -61,8 +62,11 @@ app.whenReady().then(async () => {
     return
   }
 
-  const availableShells = detectAvailableShells(process.env['PATH'] ?? '', existsSync)
+  const pathEnv = process.env['PATH'] ?? ''
+  const availableShells = detectAvailableShells(pathEnv, existsSync)
+  const availableAgents = findOnPath(DEFAULT_AGENTS, pathEnv, existsSync)
   console.log(`[main] 可用 shell：${availableShells.join(', ') || '无'}`)
+  console.log(`[main] 已安装的唤起工具：${availableAgents.join(', ') || '无'}`)
 
   registerIpc(ipcMain, {
     version: app.getVersion(),
@@ -71,6 +75,7 @@ app.whenReady().then(async () => {
     pty: ptyManager,
     pickDirectory,
     listShells: () => availableShells,
+    listAgents: () => availableAgents,
   })
 
   mainWindow = createMainWindow()

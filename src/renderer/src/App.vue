@@ -1,11 +1,12 @@
 <script setup lang="ts">
-// 应用骨架：左栏（会话列表）+ 右栏（工作区 / 空状态 + 状态栏），布局照原型 .app 双栏 grid；
-// 提供 TerminalPool 单例，并把「选中会话 → 打开终端」「会话被移除 → 销毁实例」编排在这里
+// 应用骨架：左栏（会话列表）+ 右栏（标签页 / 工作区 / 空状态 + 状态栏），布局照原型 .app 双栏 grid；
+// 提供 TerminalPool 单例，并把「选中会话 → 打开终端」「pty 退出 → 重启」「会话被移除 → 销毁实例」编排在这里
 import { onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import type { Session } from '@shared/models'
 import SideHead from './components/SideHead.vue'
 import SessionGroups from './components/SessionGroups.vue'
 import SideFoot from './components/SideFoot.vue'
+import TabBar from './components/TabBar.vue'
 import PathStrip from './components/PathStrip.vue'
 import TerminalPane from './components/TerminalPane.vue'
 import EmptyState from './components/EmptyState.vue'
@@ -27,19 +28,38 @@ let osBuild = 0
 const pool = new TerminalPool({
   pty: window.tagterm.pty,
   createTerminal: createXtermFactory(() => buildTerminalOptions(osBuild)),
+  onExit: (e) => workspace.setExited(e.sessionId, e.exitCode),
+  onRestartRequested: (id) => void restartSession(id),
 })
 provide(TERMINAL_POOL_KEY, pool)
 
+/** 打开（或复用）会话的终端并显示；pty 已退出的会话再次选中即重启 */
 async function selectSession(id: string): Promise<void> {
   const session = sessions.byId(id)
   if (!session) return
   workspace.select(id)
+  if (!workspace.isAlive(id)) {
+    await restartSession(id)
+    return
+  }
+  await openAndShow(session)
+}
+
+async function restartSession(id: string): Promise<void> {
+  const session = sessions.byId(id)
+  if (!session) return
+  pool.dispose(id)
+  workspace.markAlive(id)
+  await openAndShow(session)
+}
+
+async function openAndShow(session: Session): Promise<void> {
   try {
     await pool.open(session)
   } catch (err) {
     console.error('[terminal] 打开终端失败', err)
   }
-  if (workspace.activeId === id) pool.show(id)
+  if (workspace.activeId === session.id) pool.show(session.id)
 }
 
 function onCreated(session: Session): void {
@@ -47,11 +67,12 @@ function onCreated(session: Session): void {
   void selectSession(session.id)
 }
 
-// 没有活动会话时隐藏全部实例（空状态）
+// 切换活动会话：只切 display；没有活动会话时隐藏全部实例（空状态）
 watch(
   () => workspace.activeId,
   (id) => {
     if (id === null) pool.hide()
+    else if (pool.has(id)) pool.show(id)
   },
 )
 
@@ -86,7 +107,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
-  <div class="app">
+  <div class="app" :class="{ 'side-hidden': workspace.sideHidden }">
     <aside class="side">
       <SideHead />
       <div v-if="loadError" class="empty-side" data-test="load-error">{{ loadError }}</div>
@@ -94,6 +115,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
       <SideFoot @new-session="isNewModalOpen = true" />
     </aside>
     <main class="main">
+      <TabBar @select="selectSession" @new-session="isNewModalOpen = true" />
       <div v-show="workspace.hasActive" class="work">
         <PathStrip />
         <TerminalPane />

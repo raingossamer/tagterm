@@ -2,6 +2,7 @@
  * xterm 实例池：一个会话一个终端实例，与 pty 同寿命；所有实例挂在同一容器里，
  * 各自一个绝对定位的 host，切换只切 display。禁止用一个实例反复重灌数据。
  */
+import type { PtyExitEvent } from '@shared/ipc'
 import type { Session } from '@shared/models'
 import type { TagTermApi, Unsubscribe } from '@shared/api'
 import type {
@@ -18,12 +19,17 @@ export interface TerminalPoolDeps {
   createTerminal: TerminalFactory
   /** 下一帧调度（默认 requestAnimationFrame；测试传同步执行） */
   raf?: (fn: () => void) => void
+  /** pty 退出（已在实例末尾写入提示后）回调 */
+  onExit?: (e: PtyExitEvent) => void
+  /** pty 已退出的终端里按回车 → 请求重启 shell */
+  onRestartRequested?: (sessionId: string) => void
 }
 
 interface Entry {
   term: TerminalInstance
   host: HTMLDivElement
   disposables: Disposable[]
+  isExited: boolean
 }
 
 export class TerminalPool {
@@ -43,9 +49,7 @@ export class TerminalPool {
     for (const { host } of this.entries.values()) container.appendChild(host)
     this.unsubscribes.push(
       this.deps.pty.onData((sessionId, data) => this.entries.get(sessionId)?.term.write(data)),
-      this.deps.pty.onExit((e) =>
-        this.entries.get(e.sessionId)?.term.write(`\r\n[进程已退出，代码 ${e.exitCode}]\r\n`),
-      ),
+      this.deps.pty.onExit((e) => this.handleExit(e)),
     )
   }
 
@@ -66,11 +70,12 @@ export class TerminalPool {
 
     const term = this.deps.createTerminal()
     term.open(host)
-    const disposables: Disposable[] = [
-      term.onData((data) => this.deps.pty.write(session.id, data)),
+    const entry: Entry = { term, host, disposables: [], isExited: false }
+    entry.disposables.push(
+      term.onData((data) => this.handleInput(session.id, entry, data)),
       term.onResize((size) => void this.deps.pty.resize(session.id, size)),
-    ]
-    this.entries.set(session.id, { term, host, disposables })
+    )
+    this.entries.set(session.id, entry)
 
     const size = term.fit() ?? FALLBACK_SIZE
     await this.deps.pty.open(session.id, size)
@@ -126,5 +131,22 @@ export class TerminalPool {
 
   sessionIds(): string[] {
     return [...this.entries.keys()]
+  }
+
+  private handleInput(sessionId: string, entry: Entry, data: string): void {
+    if (!entry.isExited) {
+      this.deps.pty.write(sessionId, data)
+      return
+    }
+    // 已退出：按键不再转发；回车即请求重启
+    if (data.includes('\r')) this.deps.onRestartRequested?.(sessionId)
+  }
+
+  private handleExit(e: PtyExitEvent): void {
+    const entry = this.entries.get(e.sessionId)
+    if (!entry) return
+    entry.isExited = true
+    entry.term.write(`\r\n[进程已退出，代码 ${e.exitCode}]\r\n`)
+    this.deps.onExit?.(e)
   }
 }

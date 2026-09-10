@@ -12,7 +12,7 @@ import type {
   SendChannel,
   SessionPatch,
 } from '@shared/ipc'
-import { SHELL_KINDS, type ShellKind } from '@shared/models'
+import { SHELL_KINDS, type AgentKind, type ShellKind } from '@shared/models'
 import type { PtyManager } from './pty/PtyManager'
 import type { SessionStore } from './store/SessionStore'
 
@@ -32,6 +32,8 @@ export interface IpcDeps {
   pickDirectory: () => Promise<string | null>
   /** 本机可用 shell（启动时探测） */
   listShells: () => ShellKind[]
+  /** 已安装的唤起工具（启动时探测） */
+  listAgents: () => AgentKind[]
 }
 
 export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
@@ -48,6 +50,7 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   handle('app:get-version', () => deps.version)
   handle('app:get-os-build', () => deps.osBuild)
   handle('app:list-shells', () => deps.listShells())
+  handle('app:list-agents', () => deps.listAgents())
 
   handle('session:list', () => deps.store.list())
   handle('session:create', (input) => deps.store.create(assertCreateInput(input)))

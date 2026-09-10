@@ -59,6 +59,27 @@ describe('PathStrip', () => {
     expect(useWorkspaceStore().activeId).toBeNull()
   })
 
+  it('唤起区只列已安装的工具，点击即向终端写入 `<cmd>\\r`；清屏按 shell 写 cls / clear', async () => {
+    const api = installFakeApi({ app: { listAgents: async () => ['claude', 'pi'] } })
+    const wrapper = mount(PathStrip)
+    await flushPromises()
+
+    const launchers = wrapper.findAll('[data-test=launch-agent]')
+    expect(launchers.map((b) => b.text())).toEqual(['claude', 'pi'])
+    expect(wrapper.find('[data-test=launch-label]').text()).toBe('唤起')
+
+    await launchers[0]!.trigger('click')
+    expect(api.pty.write).toHaveBeenCalledWith(session.id, 'claude\r')
+
+    await wrapper.find('[data-test=strip-clear]').trigger('click')
+    expect(api.pty.write).toHaveBeenCalledWith(session.id, 'cls\r')
+
+    useSessionsStore().sessions = [{ ...session, shell: 'powershell.exe' }]
+    await flushPromises()
+    await wrapper.find('[data-test=strip-clear]').trigger('click')
+    expect(api.pty.write).toHaveBeenCalledWith(session.id, 'clear\r')
+  })
+
   it('取消确认则不移除', async () => {
     const api = installFakeApi()
     stubConfirm(false)

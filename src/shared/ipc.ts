@@ -2,7 +2,7 @@
  * IPC 契约的唯一真相源：通道名 + 每个通道的参数与返回类型。
  * preload 与主进程都按这里的类型实现，避免通道名与参数漂移。
  */
-import type { Session, ShellKind } from './models'
+import type { AgentKind, Session, ShellKind } from './models'
 
 export interface CreateSessionInput {
   cwd: string
@@ -33,6 +33,7 @@ export interface IpcInvokeMap {
   'app:get-version': { args: []; result: string }
   'app:get-os-build': { args: []; result: number } // Windows 构建号，供 xterm windowsPty 选项
   'app:list-shells': { args: []; result: ShellKind[] } // 本机可用 shell（PATH 探测）
+  'app:list-agents': { args: []; result: AgentKind[] } // 已安装的唤起工具（PATH 探测）
   'session:list': { args: []; result: Session[] }
   'session:create': { args: [input: CreateSessionInput]; result: Session }
   'session:update': { args: [id: string, patch: SessionPatch]; result: Session }

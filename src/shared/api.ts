@@ -3,7 +3,7 @@
  * 每个操作一个具体函数，渲染进程测试时按函数 mock；所有 on* 返回取消订阅函数。
  */
 import type { CreateSessionInput, PtyExitEvent, PtyOpenResult, PtySize, SessionPatch } from './ipc'
-import type { Session, ShellKind } from './models'
+import type { AgentKind, Session, ShellKind } from './models'
 
 export type Unsubscribe = () => void
 
@@ -12,6 +12,7 @@ export interface TagTermApi {
     getVersion(): Promise<string>
     getOsBuild(): Promise<number>
     listShells(): Promise<ShellKind[]>
+    listAgents(): Promise<AgentKind[]>
   }
   session: {
     list(): Promise<Session[]>

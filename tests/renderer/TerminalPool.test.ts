@@ -150,11 +150,41 @@ describe('TerminalPool', () => {
     expect(terminals[1]!.host!.style.display).toBe('none')
   })
 
-  it('pty:exit 在对应实例末尾写入退出提示', async () => {
+  it('pty:exit 在对应实例末尾写入退出提示并回调 onExit；退出后按回车请求重启、按键不再转发', async () => {
+    const exits: PtyExitEvent[] = []
+    const restarts: string[] = []
+    pool = new TerminalPool({
+      pty: api.pty,
+      createTerminal: () => {
+        const t = new FakeTerminal()
+        terminals.push(t)
+        return t
+      },
+      raf: (fn) => fn(),
+      onExit: (e) => exits.push(e),
+      onRestartRequested: (id) => restarts.push(id),
+    })
+    pool.attach(container)
     await pool.open(a)
 
     exitCb!({ sessionId: a.id, exitCode: 3 })
     expect(terminals[0]!.written).toContain('[进程已退出，代码 3]')
+    expect(exits).toEqual([{ sessionId: a.id, exitCode: 3 }])
+
+    terminals[0]!.typeInput('x')
+    expect(restarts).toEqual([])
+    terminals[0]!.typeInput('\r')
+    expect(restarts).toEqual([a.id])
+    expect(api.pty.write).not.toHaveBeenCalled()
+  })
+
+  it('dispose 后重新 open 同一会话会新建实例并重新打开 pty（重启 shell）', async () => {
+    await pool.open(a)
+    pool.dispose(a.id)
+    await pool.open(a)
+
+    expect(terminals).toHaveLength(2)
+    expect(api.pty.open).toHaveBeenCalledTimes(2)
   })
 
   it('dispose 销毁实例、移除 host、不再接收该会话的数据', async () => {

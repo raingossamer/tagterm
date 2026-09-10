@@ -37,6 +37,7 @@ describe('IPC 接口层', () => {
       pty,
       pickDirectory: async () => 'D:\\picked',
       listShells: () => ['cmd.exe', 'powershell.exe'],
+      listAgents: () => ['claude', 'pi'],
     }
     registerIpc(ipc, deps)
   })
@@ -79,8 +80,9 @@ describe('IPC 接口层', () => {
     await expect(ipc.invoke('session:pick-directory')).resolves.toBe('D:\\picked')
   })
 
-  it('app:list-shells 返回本机可用的 shell', async () => {
+  it('app:list-shells / app:list-agents 返回本机可用的 shell 与唤起工具', async () => {
     await expect(ipc.invoke('app:list-shells')).resolves.toEqual(['cmd.exe', 'powershell.exe'])
+    await expect(ipc.invoke('app:list-agents')).resolves.toEqual(['claude', 'pi'])
   })
 
   it('pty:open 按会话目录 / shell 起真实终端且幂等；写入 / 是否存活 / kill 经接口层生效', async () => {
