@@ -36,5 +36,6 @@
     "vite": "7.3.6",
     "vitest": "4.1.11",
     "vue-tsc": "3.3.11"
-  }
+  },
+  "packageManager": "pnpm@11.17.0"
 }
