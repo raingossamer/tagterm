@@ -1,0 +1,42 @@
+/**
+ * 终端默认选项：字体栈、Windows Campbell 配色（与原型 --t-* 一致）、ConPTY 标注。
+ */
+import type { ITerminalOptions, ITheme } from '@xterm/xterm'
+
+export const TERMINAL_FONT_FAMILY = '"Cascadia Mono", Consolas, "Microsoft YaHei", monospace'
+
+export const CAMPBELL_THEME: ITheme = {
+  background: '#0C0C0C',
+  foreground: '#CCCCCC',
+  cursor: '#FFFFFF',
+  selectionBackground: '#FFFFFF40',
+  black: '#0C0C0C',
+  red: '#C50F1F',
+  green: '#13A10E',
+  yellow: '#C19C00',
+  blue: '#0037DA',
+  magenta: '#881798',
+  cyan: '#3A96DD',
+  white: '#CCCCCC',
+  brightBlack: '#767676',
+  brightRed: '#E74856',
+  brightGreen: '#16C60C',
+  brightYellow: '#F9F1A5',
+  brightBlue: '#3B78FF',
+  brightMagenta: '#B4009E',
+  brightCyan: '#61D6D6',
+  brightWhite: '#F2F2F2',
+}
+
+/** osBuild 为 Windows 构建号（如 26200），xterm 据此选择 ConPTY 的兼容策略 */
+export function buildTerminalOptions(osBuild: number): ITerminalOptions {
+  return {
+    fontFamily: TERMINAL_FONT_FAMILY,
+    fontSize: 14,
+    scrollback: 5000,
+    cursorBlink: true,
+    allowProposedApi: true, // Unicode11 addon 需要
+    theme: CAMPBELL_THEME,
+    windowsPty: osBuild > 0 ? { backend: 'conpty', buildNumber: osBuild } : { backend: 'conpty' },
+  }
+}

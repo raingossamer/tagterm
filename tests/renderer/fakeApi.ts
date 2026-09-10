@@ -11,9 +11,16 @@ type Overrides = {
  * 传入 overrides 覆盖需要的函数，其余为带合理缺省返回值的 vi.fn()。
  */
 export function installFakeApi(overrides: Overrides = {}): TagTermApi {
-  const api: TagTermApi = {
+  const api = createFakeApi(overrides)
+  Object.defineProperty(window, 'tagterm', { value: api, configurable: true, writable: true })
+  return api
+}
+
+export function createFakeApi(overrides: Overrides = {}): TagTermApi {
+  return {
     app: {
       getVersion: vi.fn(async () => '0.0.0-test'),
+      getOsBuild: vi.fn(async () => 26200),
       listShells: vi.fn(async (): Promise<ShellKind[]> => ['cmd.exe', 'powershell.exe']),
       ...overrides.app,
     },
@@ -26,9 +33,17 @@ export function installFakeApi(overrides: Overrides = {}): TagTermApi {
       onChanged: vi.fn(() => () => {}),
       ...overrides.session,
     },
+    pty: {
+      open: vi.fn(async () => ({ created: true, pid: 4242 })),
+      write: vi.fn(),
+      resize: vi.fn(async () => {}),
+      kill: vi.fn(async () => {}),
+      isAlive: vi.fn(async () => true),
+      onData: vi.fn(() => () => {}),
+      onExit: vi.fn(() => () => {}),
+      ...overrides.pty,
+    },
   }
-  Object.defineProperty(window, 'tagterm', { value: api, configurable: true, writable: true })
-  return api
 }
 
 let seq = 0

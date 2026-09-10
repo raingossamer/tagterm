@@ -7,9 +7,13 @@ import type {
   InvokeArgs,
   InvokeChannel,
   InvokeResult,
+  PtySize,
+  SendArgs,
+  SendChannel,
   SessionPatch,
 } from '@shared/ipc'
 import { SHELL_KINDS, type ShellKind } from '@shared/models'
+import type { PtyManager } from './pty/PtyManager'
 import type { SessionStore } from './store/SessionStore'
 
 export interface IpcMainLike {
@@ -20,7 +24,10 @@ export interface IpcMainLike {
 export interface IpcDeps {
   /** 应用版本（app.getVersion()） */
   version: string
+  /** Windows 构建号（os.release 的第三段），供 xterm windowsPty 选项 */
+  osBuild: number
   store: SessionStore
+  pty: PtyManager
   /** 系统目录选择框（平台层注入，服务层不 import electron） */
   pickDirectory: () => Promise<string | null>
   /** 本机可用 shell（启动时探测） */
@@ -34,15 +41,47 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   ): void => {
     ipc.handle(channel, (_event, ...args) => fn(...(args as InvokeArgs<K>)))
   }
+  const on = <K extends SendChannel>(channel: K, fn: (...args: SendArgs<K>) => void): void => {
+    ipc.on(channel, (_event, ...args) => fn(...(args as SendArgs<K>)))
+  }
 
   handle('app:get-version', () => deps.version)
+  handle('app:get-os-build', () => deps.osBuild)
   handle('app:list-shells', () => deps.listShells())
 
   handle('session:list', () => deps.store.list())
   handle('session:create', (input) => deps.store.create(assertCreateInput(input)))
   handle('session:update', (id, patch) => deps.store.update(assertId(id), assertPatch(patch)))
-  handle('session:remove', (id) => deps.store.remove(assertId(id)))
+  handle('session:remove', async (id) => {
+    const sessionId = assertId(id)
+    deps.pty.kill(sessionId)
+    await deps.store.remove(sessionId)
+  })
   handle('session:pick-directory', () => deps.pickDirectory())
+
+  // 幂等：无 pty 则按会话 cwd / shell spawn，有则复用；每次打开都更新 lastOpenedAt
+  handle('pty:open', async (id, size) => {
+    const sessionId = assertId(id)
+    const { cols, rows } = assertSize(size)
+    const session = deps.store.get(sessionId)
+    let created = false
+    let pid = deps.pty.getPid(sessionId)
+    if (pid === null) {
+      pid = deps.pty.spawn(sessionId, { cwd: session.cwd, shell: session.shell, cols, rows }).pid
+      created = true
+    }
+    await deps.store.touchOpened(sessionId)
+    return { created, pid }
+  })
+  handle('pty:resize', (id, size) => {
+    const { cols, rows } = assertSize(size)
+    deps.pty.resize(assertId(id), cols, rows)
+  })
+  handle('pty:kill', (id) => deps.pty.kill(assertId(id)))
+  handle('pty:is-alive', (id) => deps.pty.has(assertId(id)))
+  on('pty:write', (id, data) => {
+    if (typeof id === 'string' && typeof data === 'string') deps.pty.write(id, data)
+  })
 }
 
 // ---- 参数类型守卫：非法即抛（面向用户可读的中文 message） ----
@@ -54,6 +93,13 @@ function assertId(id: unknown): string {
 
 function isShellKind(v: unknown): v is ShellKind {
   return typeof v === 'string' && (SHELL_KINDS as readonly string[]).includes(v)
+}
+
+function assertSize(size: unknown): PtySize {
+  const o = (size ?? {}) as Record<string, unknown>
+  const isPositiveInt = (v: unknown): v is number => Number.isInteger(v) && (v as number) > 0
+  if (!isPositiveInt(o.cols) || !isPositiveInt(o.rows)) throw new Error('终端尺寸必须是正整数')
+  return { cols: o.cols, rows: o.rows }
 }
 
 function assertCreateInput(input: unknown): CreateSessionInput {

@@ -12,21 +12,52 @@ export interface CreateSessionInput {
 
 export type SessionPatch = Partial<Pick<Session, 'name' | 'shell' | 'startupCmd' | 'sortOrder'>>
 
+export interface PtySize {
+  cols: number
+  rows: number
+}
+
+export interface PtyExitEvent {
+  sessionId: string
+  exitCode: number
+  signal?: number
+}
+
+export interface PtyOpenResult {
+  created: boolean // true=本次新 spawn；false=复用已在运行的 pty
+  pid: number
+}
+
 // 请求 / 响应：ipcRenderer.invoke ↔ ipcMain.handle
 export interface IpcInvokeMap {
   'app:get-version': { args: []; result: string }
+  'app:get-os-build': { args: []; result: number } // Windows 构建号，供 xterm windowsPty 选项
   'app:list-shells': { args: []; result: ShellKind[] } // 本机可用 shell（PATH 探测）
   'session:list': { args: []; result: Session[] }
   'session:create': { args: [input: CreateSessionInput]; result: Session }
   'session:update': { args: [id: string, patch: SessionPatch]; result: Session }
-  'session:remove': { args: [id: string]; result: void }
+  'session:remove': { args: [id: string]; result: void } // 同时 kill 其 pty
   'session:pick-directory': { args: []; result: string | null }
+  'pty:open': { args: [sessionId: string, size: PtySize]; result: PtyOpenResult } // 幂等
+  'pty:resize': { args: [sessionId: string, size: PtySize]; result: void }
+  'pty:kill': { args: [sessionId: string]; result: void }
+  'pty:is-alive': { args: [sessionId: string]; result: boolean }
+}
+
+// 单向高频：ipcRenderer.send → ipcMain.on（键入不等待响应）
+export interface IpcSendMap {
+  'pty:write': [sessionId: string, data: string]
 }
 
 // 主进程 → 渲染进程：webContents.send → ipcRenderer.on
 export interface IpcEventMap {
+  'pty:data': [sessionId: string, data: string] // 主进程侧按 ≤16 ms 或 ≥64 KB 合并后再发
+  'pty:exit': [event: PtyExitEvent]
   'session:changed': [sessions: Session[]] // 任何会话数据变更后广播全量列表（主进程是真相源）
 }
+
+export type SendChannel = keyof IpcSendMap
+export type SendArgs<K extends SendChannel> = IpcSendMap[K]
 
 export type InvokeChannel = keyof IpcInvokeMap
 export type InvokeArgs<K extends InvokeChannel> = IpcInvokeMap[K]['args']
