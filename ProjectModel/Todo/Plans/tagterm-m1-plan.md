@@ -563,7 +563,10 @@ Slice 1 → Slice 2 → Slice 3 → Slice 4 → Slice 5 → Slice 6 → Slice 7 
 | 4 多会话切换与标签页 | 🟢 Done | Claude | 2026-09-10；commit 5196e07；偏差见 §11；「3 个 claude TUI 来回切换不乱」「≥8 会话无 WebGL 告警」留 S7 人工验证 |
 | 5 托盘与生命周期 | 🟢 Done | Claude | 2026-09-10；commit 1714485；「托盘恢复后内容原样」「无残留 conhost / claude 进程」「二次启动只聚焦」留 S7 人工验证 |
 | 6 打包 | 🟢 Done | Claude | 2026-09-10；commit 122ca4d；产出 dist/TagTerm Setup 0.1.0.exe（118 MB）与 dist/win-unpacked；「可安装 / 卸载不删数据」留 S7 人工验证 |
-| 7 M1 验收（HITL） | 🟡 In progress | 你 | 验收指引见 §12；tdd auto 在此暂停等待你的验收结论 |
+| 7 M1 验收（HITL） | 🟡 In progress | 你 | 验收指引见 §12；已修粘贴 bug（682cdc8）；反馈催生 S8–S10（§13） |
+| 8 唤起命令自定义（收藏夹式） | 🔴 Not started | - | §13 |
+| 9 设置窗口与终端背景图 | 🔴 Not started | - | §13 |
+| 10 检查更新 | 🔴 Not started | - | §13；更新源地址待用户提供 |
 
 Status: 🔴 Not started | 🟡 In progress | 🟢 Done | ⚠️ Blocked
 
@@ -679,3 +682,78 @@ pnpm dev            :: 开发模式；或用打包版 dist\win-unpacked\TagTerm.
 ### 你确认后
 
 把 §10 Slice 7 置为 🟢 Done；发现的问题我修复并提交后，自动进入 `design-doc-sync` 收尾。
+
+
+## 13. M1 追加切片（用户 2026-09-11 验收时决定）
+
+> 来源：Slice 7 验收反馈。用户明确「现在做」，未走 grill / write-a-spec；本节即这三片的 Spec。依赖：S8 → S9 → S10（S9 的设置窗口承载 S10 的「检查更新」入口）。
+
+### 数据：`%APPDATA%\TagTerm\settings.json`（v1，新增文件）
+
+```ts
+export interface LaunchCommand {
+  id: string        // uuid v4
+  label: string     // 按钮文字，缺省 = command
+  command: string   // 写入终端的命令（不含回车）
+  pinned: boolean   // true = 平铺在路径条；false = 收进「更多 ▾」
+  sortOrder: number // 越小越靠前（平铺区与「更多」各自按此排序）
+}
+export interface TerminalBackground {
+  imagePath: string | null // 用户选择的图片绝对路径；null = 纯色
+  dimOpacity: number       // 0–1，图片上方的黑色遮罩不透明度，缺省 0.6，保证文字可读
+}
+export interface SettingsFile {
+  version: 1
+  launchCommands: LaunchCommand[]
+  terminalBackground: TerminalBackground
+}
+```
+
+首次运行（文件不存在）时 `launchCommands` 由 PATH 探测生成：已安装的 claude / gemini / codex / pi 各一条、全部 `pinned: true`；之后完全以文件为准，不再自动增删。读写规则与 `sessions.json` 相同（原子写、版本校验、坏文件报错不清空）。
+
+### Slice 8: 唤起命令自定义（收藏夹式）
+
+- **Type**: AFK
+- **Blocked by**: Slice 7 的验收反馈（已明确）
+- **Complexity**: M
+
+**What to build**：`SettingsStore`（settings.json）；IPC `settings:get` / `settings:update`（patch）与广播 `settings:changed`；渲染进程 `settings` store。路径条唤起区：`pinned` 的命令平铺（mono 按钮，行为不变 = `pty.write(command + '\r')`），非 pinned 收进「更多 ▾」弹出层，最右「编辑」按钮打开「唤起命令」弹窗：每行 = 拖拽手柄、显示名、命令、「常用」开关、删除；底部「新增」；行间可拖拽排序（HTML5 DnD，排序逻辑为纯函数 `moveItem(list, from, to)`）；「完成」保存。
+
+**Acceptance criteria**:
+- [ ] 首次启动生成 `settings.json`，`launchCommands` 与 PATH 探测结果一致（本机 claude / gemini / pi）
+- [ ] 编辑弹窗里新增一条 `pi --model x`、取消「常用」、拖到第一位，保存后：路径条平铺区不再显示它，「更多 ▾」里它排第一；重启应用后仍如此
+- [ ] 点击任一命令按钮效果等同在终端敲 `<command>⏎`；清屏、移除会话按钮位置不变
+- [ ] 删除到一条不剩时路径条只显示「唤起」标签与「编辑」
+
+### Slice 9: 设置窗口与终端背景图
+
+- **Type**: AFK
+- **Blocked by**: Slice 8（复用 SettingsStore）
+- **Complexity**: M
+
+**What to build**：托盘菜单在「显示窗口」与「退出」之间加「设置」→ 显示窗口并广播 `app:open-settings` → 渲染进程打开「设置」弹窗（主窗口内的 modal，不另开 BrowserWindow）。弹窗分三段：**终端背景**（「选择图片…」调系统文件对话框、「清除」、遮罩不透明度滑块 0–100%，改动即时预览、关闭即保存）；**更新**（S10 接入，本片先放「检查更新」按钮占位并显示当前版本）；**关于**（版本号、数据目录路径）。背景实现：主进程读取图片文件返回 `data:` URL（CSP 已允许 `img-src data:`），TerminalPane 容器设 `background-image` + 半透明黑色遮罩，xterm 开 `allowTransparency` 且主题背景透明。
+
+**Acceptance criteria**:
+- [ ] 托盘右键出现「设置」；点击后窗口显示且设置弹窗打开
+- [ ] 选择一张图片后，所有会话的终端都以它为背景、文字仍清晰；滑块调节遮罩即时生效；重启后背景仍在
+- [ ] 「清除」恢复纯黑背景；图片文件被删后启动不报错、回退纯黑并在设置里提示
+- [ ] 弹窗内 Esc / 「完成」关闭
+
+### Slice 10: 检查更新
+
+- **Type**: AFK（更新源地址由用户提供，见「待你确认」）
+- **Blocked by**: Slice 9
+- **Complexity**: M
+
+**What to build**：`electron-updater`（generic provider），更新源 URL 写在 `electron-builder.yml` 的 `publish` 段；打包时同时产出 `latest.yml` 与 `.exe.blockmap`（已有）。主进程 `Updater` 模块：`check()` → 状态事件 `update:status`（`checking` / `available {version}` / `downloading {percent}` / `downloaded` / `none` / `error {message}`）；`install()` → `quitAndInstall`（先 killAll）。设置弹窗「更新」段：「检查更新」按钮 + 状态文案 + 有新版本时「下载」→ 进度 →「立即安装并重启」。启动后延迟 10 s 自动检查一次（只提示不自动下载）。
+
+**Acceptance criteria**:
+- [ ] 本地起一个 HTTP 服务托管 `dist/`（含 `latest.yml`）并把版本改高，应用内「检查更新」能发现新版本、下载显示进度、「立即安装并重启」后运行的是新版本
+- [ ] 无新版本时提示「已是最新版本 vX」；更新源不可达时提示错误、应用不崩
+- [ ] 安装版更新后 `%APPDATA%\TagTerm` 下的 sessions.json / settings.json 原样
+
+### 待你确认
+
+1. **更新源放哪里**：GitHub Releases（electron-builder 直接发布，需仓库公开且用户机器能访问 GitHub）/ 自有 HTTP 或对象存储地址（generic，随便一个能放静态文件的 URL）。S10 开工前需要这个地址；没有的话我先用本地 HTTP 服务验证机制，地址留占位。
+2. 拖拽排序只在「编辑」弹窗内做，不在路径条上直接拖（路径条空间小，误触多）。若你希望路径条上也能拖，告诉我。
+3. 设置窗口做成主窗口内的弹窗而不是独立窗口（复用 CSP、store 与实例池，托盘「设置」= 显示窗口 + 打开弹窗）。
