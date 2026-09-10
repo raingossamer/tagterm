@@ -2,7 +2,14 @@
  * IPC 契约的唯一真相源：通道名 + 每个通道的参数与返回类型。
  * preload 与主进程都按这里的类型实现，避免通道名与参数漂移。
  */
-import type { LaunchCommand, Session, Settings, ShellKind, TerminalBackground } from './models'
+import type {
+  LaunchCommand,
+  Session,
+  Settings,
+  ShellKind,
+  TerminalBackground,
+  UpdateStatus,
+} from './models'
 
 export interface CreateSessionInput {
   cwd: string
@@ -51,6 +58,10 @@ export interface IpcInvokeMap {
   'settings:get': { args: []; result: Settings }
   'settings:update': { args: [patch: SettingsPatch]; result: Settings } // 补丁合并，返回全量
   'settings:read-background-image': { args: []; result: string | null } // data: URL；未设置或文件不存在为 null
+  'update:get-status': { args: []; result: UpdateStatus }
+  'update:check': { args: []; result: void } // 结果经 update:status 事件回报
+  'update:download': { args: []; result: void }
+  'update:install': { args: []; result: void } // 先结束全部终端，再退出安装
   'pty:open': { args: [sessionId: string, size: PtySize]; result: PtyOpenResult } // 幂等
   'pty:resize': { args: [sessionId: string, size: PtySize]; result: void }
   'pty:kill': { args: [sessionId: string]; result: void }
@@ -69,6 +80,7 @@ export interface IpcEventMap {
   'session:changed': [sessions: Session[]] // 任何会话数据变更后广播全量列表（主进程是真相源）
   'settings:changed': [settings: Settings] // 设置变更后广播全量
   'app:open-settings': [] // 托盘「设置」→ 渲染进程打开设置弹窗
+  'update:status': [status: UpdateStatus] // 更新状态机每次变化
 }
 
 export type SendChannel = keyof IpcSendMap

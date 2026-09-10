@@ -18,6 +18,7 @@ import { SHELL_KINDS, type ShellKind, type TerminalBackground } from '@shared/mo
 import type { PtyManager } from './pty/PtyManager'
 import type { SessionStore } from './store/SessionStore'
 import type { SettingsStore } from './store/SettingsStore'
+import type { Updater } from './updater/Updater'
 
 export interface IpcMainLike {
   handle(channel: string, listener: (event: unknown, ...args: any[]) => unknown): void
@@ -31,6 +32,7 @@ export interface IpcDeps {
   osBuild: number
   store: SessionStore
   settings: SettingsStore
+  updater: Updater
   pty: PtyManager
   /** 数据目录（设置「关于」显示） */
   dataDir: string
@@ -72,6 +74,11 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   handle('settings:get', () => deps.settings.get())
   handle('settings:update', (patch) => deps.settings.update(assertSettingsPatch(patch)))
   handle('settings:read-background-image', () => deps.settings.readBackgroundImage())
+
+  handle('update:get-status', () => deps.updater.status())
+  handle('update:check', () => deps.updater.check())
+  handle('update:download', () => deps.updater.download())
+  handle('update:install', () => deps.updater.install())
 
   // 幂等：无 pty 则按会话 cwd / shell spawn，有则复用；每次打开都更新 lastOpenedAt
   handle('pty:open', async (id, size) => {

@@ -3,6 +3,7 @@
  * 会话生命周期 = 应用生命周期：关窗只隐藏到托盘；托盘「退出」与 before-quit 都 killAll。
  */
 import { app, BrowserWindow, dialog, ipcMain, type Tray } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import { existsSync } from 'node:fs'
 import { release, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -16,6 +17,7 @@ import { SessionStore } from './store/SessionStore'
 import { SettingsStore } from './store/SettingsStore'
 import { resolveDataDir } from './store/paths'
 import { PtyManager } from './pty/PtyManager'
+import { Updater } from './updater/Updater'
 import { detectAvailableShells, findOnPath } from './pathProbe'
 import { IMAGE_EXTENSIONS } from './store/backgroundImage'
 
@@ -92,6 +94,17 @@ const ptyManager = new PtyManager({
 })
 console.log('[pty] node-pty 已加载')
 
+// 检查更新：更新源见 electron-builder.yml 的 publish；只提示不自动下载，安装前结束全部终端
+const updater = new Updater({
+  autoUpdater,
+  currentVersion: app.getVersion(),
+  onStatus: (status) => broadcast('update:status', status),
+  beforeInstall: () => {
+    isQuitting = true
+    ptyManager.killAll()
+  },
+})
+
 app.whenReady().then(async () => {
   const dataDir = isSmoke ? app.getPath('userData') : resolveDataDir(app.getPath('appData'))
   const pathEnv = process.env['PATH'] ?? ''
@@ -123,6 +136,7 @@ app.whenReady().then(async () => {
     osBuild: osBuildNumber(),
     store,
     settings,
+    updater,
     pty: ptyManager,
     dataDir,
     pickDirectory,
@@ -132,8 +146,9 @@ app.whenReady().then(async () => {
 
   mainWindow = createMainWindow({ shouldHideOnClose: () => !isQuitting })
   tray = createTray({ onShow: showWindow, onOpenSettings: openSettings, onQuit: quitApp })
-  if (process.env['TAGTERM_SMOKE'])
-    runSmokeCheck(mainWindow, { store, pty: ptyManager, quit: quitApp })
+  if (isSmoke) runSmokeCheck(mainWindow, { store, pty: ptyManager, quit: quitApp })
+  // 未打包（开发）时 electron-updater 会直接报错，只在打包版自动检查
+  else if (app.isPackaged) updater.scheduleAutoCheck(10_000)
 })
 
 app.on('second-instance', () => showWindow())

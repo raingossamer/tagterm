@@ -10,7 +10,7 @@ import type {
   SessionPatch,
   SettingsPatch,
 } from './ipc'
-import type { Session, Settings, ShellKind } from './models'
+import type { Session, Settings, ShellKind, UpdateStatus } from './models'
 
 export type Unsubscribe = () => void
 
@@ -36,6 +36,13 @@ export interface TagTermApi {
     update(patch: SettingsPatch): Promise<Settings>
     readBackgroundImage(): Promise<string | null>
     onChanged(cb: (settings: Settings) => void): Unsubscribe
+  }
+  update: {
+    getStatus(): Promise<UpdateStatus>
+    check(): Promise<void>
+    download(): Promise<void>
+    install(): Promise<void>
+    onStatus(cb: (status: UpdateStatus) => void): Unsubscribe
   }
   pty: {
     open(sessionId: string, size: PtySize): Promise<PtyOpenResult>

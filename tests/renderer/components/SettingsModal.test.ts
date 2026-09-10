@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import SettingsModal from '../../../src/renderer/src/components/SettingsModal.vue'
 import { useSettingsStore } from '../../../src/renderer/src/stores/settings'
+import { useUpdateStore } from '../../../src/renderer/src/stores/update'
 import { installFakeApi, makeSettings } from '../fakeApi'
 
 describe('SettingsModal', () => {
@@ -70,13 +71,50 @@ describe('SettingsModal', () => {
     })
   })
 
-  it('「更新」段先显示占位；「完成」与 Esc 关闭', async () => {
+  it('「更新」段：检查更新 → 状态文案；有新版本出现「下载」；下载完成出现「立即安装并重启」', async () => {
+    const api = installFakeApi()
+    const update = useUpdateStore()
+    const wrapper = mount(SettingsModal)
+    await flushPromises()
+
+    const check = wrapper.find('[data-test=update-check]')
+    expect(check.text()).toBe('检查更新')
+    expect(wrapper.find('[data-test=update-status]').text()).toBe('')
+    await check.trigger('click')
+    expect(api.update.check).toHaveBeenCalledTimes(1)
+
+    update.status = { state: 'checking' }
+    await flushPromises()
+    expect(wrapper.find('[data-test=update-status]').text()).toBe('正在检查…')
+    expect(check.attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-test=update-download]').exists()).toBe(false)
+
+    update.status = { state: 'available', version: '0.2.0' }
+    await flushPromises()
+    expect(wrapper.find('[data-test=update-status]').text()).toBe('发现新版本 v0.2.0')
+    await wrapper.find('[data-test=update-download]').trigger('click')
+    expect(api.update.download).toHaveBeenCalledTimes(1)
+
+    update.status = { state: 'downloading', version: '0.2.0', percent: 42 }
+    await flushPromises()
+    expect(wrapper.find('[data-test=update-status]').text()).toBe('正在下载 v0.2.0：42%')
+    expect(wrapper.find('[data-test=update-download]').exists()).toBe(false)
+
+    update.status = { state: 'downloaded', version: '0.2.0' }
+    await flushPromises()
+    await wrapper.find('[data-test=update-install]').trigger('click')
+    expect(api.update.install).toHaveBeenCalledTimes(1)
+
+    update.status = { state: 'error', message: '连不上' }
+    await flushPromises()
+    expect(wrapper.find('[data-test=update-status]').text()).toBe('检查更新失败：连不上')
+    expect(check.attributes('disabled')).toBeUndefined()
+  })
+
+  it('「完成」与 Esc 关闭', async () => {
     installFakeApi()
     const wrapper = mount(SettingsModal, { attachTo: document.body })
     await flushPromises()
-
-    expect(wrapper.find('[data-test=update-check]').text()).toBe('检查更新')
-    expect(wrapper.find('[data-test=update-status]').text()).toBe('即将支持')
 
     await wrapper.find('[data-test=settings-done]').trigger('click')
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))

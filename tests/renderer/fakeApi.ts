@@ -1,6 +1,6 @@
 import { vi } from 'vitest'
 import type { TagTermApi } from '@shared/api'
-import type { LaunchCommand, Session, Settings, ShellKind } from '@shared/models'
+import type { LaunchCommand, Session, Settings, ShellKind, UpdateStatus } from '@shared/models'
 
 type Overrides = {
   [K in keyof TagTermApi]?: Partial<TagTermApi[K]>
@@ -42,6 +42,14 @@ export function createFakeApi(overrides: Overrides = {}): TagTermApi {
       pickDirectory: vi.fn(async () => null),
       onChanged: vi.fn(() => () => {}),
       ...overrides.session,
+    },
+    update: {
+      getStatus: vi.fn(async (): Promise<UpdateStatus> => ({ state: 'idle' })),
+      check: vi.fn(async () => {}),
+      download: vi.fn(async () => {}),
+      install: vi.fn(async () => {}),
+      onStatus: vi.fn(() => () => {}),
+      ...overrides.update,
     },
     pty: {
       open: vi.fn(async () => ({ created: true, pid: 4242 })),
