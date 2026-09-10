@@ -1,6 +1,6 @@
 /**
  * 无人值守烟测：设置 TAGTERM_SMOKE=1 启动时，页面加载后核查安全基线与三层贯通
- * （真实会话新建 → 打开两个终端 → 切换 / 关闭标签页 → 中文 echo 往返），
+ * （真实会话新建 → 打开两个终端 → 切换 / 关闭标签页 → 中文 echo 往返 → 右键 / Ctrl+V 粘贴），
  * 再在主进程侧核查「关窗只隐藏、pty 存活、托盘恢复」，最后清理会话并走正常退出路径（before-quit killAll）。
  * 以 JSON 打印到 stdout。生产运行不触发。
  */
@@ -28,6 +28,7 @@ const SMOKE_SCRIPT = `(async () => {
     return true
   }
   const outputs = {}
+  window.__smokeOutputs = outputs
   let dataEvents = 0
   api.pty.onData((id, d) => { outputs[id] = (outputs[id] ?? '') + d; dataEvents += 1 })
 
@@ -43,6 +44,13 @@ const SMOKE_SCRIPT = `(async () => {
   const gotPrompt1 = await waitFor(() => /C:\\\\Windows\\\\Temp>/.test(outputs[s1.id] ?? ''))
   api.pty.write(s1.id, 'echo 你好，TagTerm\\r')
   const gotEcho = await waitFor(() => (outputs[s1.id] ?? '').includes('你好，TagTerm'))
+
+  // 右键无选区 → 读剪贴板粘贴并执行
+  await navigator.clipboard.writeText('echo 右键粘贴OK\\r')
+  $('[data-test=terminal-pane] .xterm')?.dispatchEvent(
+    new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 }),
+  )
+  const gotRightClickPaste = await waitFor(() => (outputs[s1.id] ?? '').includes('右键粘贴OK'))
 
   // 打开第二个会话 → 两个实例并存，只有一个可见
   $$('[data-test=session-row]')[1]?.click()
@@ -80,13 +88,29 @@ const SMOKE_SCRIPT = `(async () => {
     statusVersion: $('[data-test=status-version]')?.textContent ?? null,
     sessionIds: [s1.id, s2.id],
     sessionRoundTrip: { before: before.length, rowCountAfterCreate: rowCount, statusAfterCreate: statusSessions },
-    terminal: { gotPrompt1, gotEcho, gotPrompt2, hosts: hosts.length, visibleHosts, hasXterm: !!$('[data-test=terminal-pane] .xterm'), hasCanvas: !!$('[data-test=terminal-pane] canvas'), dataEvents },
+    terminal: { gotPrompt1, gotEcho, gotRightClickPaste, gotPrompt2, hosts: hosts.length, visibleHosts, hasXterm: !!$('[data-test=terminal-pane] .xterm'), hasCanvas: !!$('[data-test=terminal-pane] canvas'), dataEvents },
     tabs: { tabNames, activeTab, activeAfterSwitch, tabsAfterClose, s2AliveAfterClose, hostsAfterClose },
     strip: { launchers, sideHidden },
   }
 })()`
 
+/** 聚焦当前可见终端的输入框，并把一条命令写进剪贴板，供 Ctrl+V 真实按键测试 */
+const FOCUS_AND_PREPARE_CLIPBOARD = `(async () => {
+  const host = [...document.querySelectorAll('[data-test=terminal-pane] > div')].find((h) => h.style.display === 'block')
+  host?.querySelector('textarea')?.focus()
+  await navigator.clipboard.writeText('echo 快捷键粘贴OK\\r')
+  return document.activeElement?.tagName ?? null
+})()`
+
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/** 渲染进程脚本卡住时也要退出并留下线索 */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} 超时 ${ms}ms`)), ms)),
+  ])
+}
 
 export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
   const consoleErrors: string[] = []
@@ -98,9 +122,27 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
     await sleep(800)
     let result: Record<string, unknown> = {}
     try {
-      result = (await win.webContents.executeJavaScript(SMOKE_SCRIPT)) as Record<string, unknown>
+      result = (await withTimeout(
+        win.webContents.executeJavaScript(SMOKE_SCRIPT),
+        60000,
+        '渲染进程烟测脚本',
+      )) as Record<string, unknown>
       const sessionIds = (result['sessionIds'] as string[] | undefined) ?? []
       const pids = sessionIds.map((id) => deps.pty.getPid(id))
+
+      // Ctrl+V 真实按键 → 浏览器原生 paste → xterm 粘贴 → pty 执行
+      const focused = (await withTimeout(
+        win.webContents.executeJavaScript(FOCUS_AND_PREPARE_CLIPBOARD),
+        10000,
+        '剪贴板准备',
+      )) as string
+      win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'V', modifiers: ['control'] })
+      win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'V', modifiers: ['control'] })
+      await sleep(600)
+      const gotCtrlVPaste = (await win.webContents.executeJavaScript(
+        `(window.__smokeOutputs?.[${JSON.stringify(sessionIds[0])}] ?? '').includes('快捷键粘贴OK')`,
+      )) as boolean
+      const clipboard = { focused, gotCtrlVPaste }
 
       // 关窗 → 只隐藏；pty 存活；托盘「显示窗口」恢复
       win.close()
@@ -117,7 +159,9 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
       // 清理烟测会话（正常退出路径由 before-quit killAll 结束 pty）
       for (const id of sessionIds) await deps.store.remove(id)
       const remaining = deps.store.list().length
-      console.log('[smoke] ' + JSON.stringify({ ...result, lifecycle, remaining, consoleErrors }))
+      console.log(
+        '[smoke] ' + JSON.stringify({ ...result, clipboard, lifecycle, remaining, consoleErrors }),
+      )
     } catch (err) {
       console.log('[smoke] ' + JSON.stringify({ error: String(err), ...result, consoleErrors }))
     }

@@ -4,7 +4,8 @@
  */
 import { app, BrowserWindow, dialog, ipcMain, type Tray } from 'electron'
 import { existsSync } from 'node:fs'
-import { release } from 'node:os'
+import { release, tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { EventArgs, EventChannel } from '@shared/ipc'
 import { DEFAULT_AGENTS } from '@shared/models'
 import { createMainWindow, showMainWindow } from './window'
@@ -24,6 +25,10 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason) => {
   console.error('[main] 未处理的 Promise 拒绝', reason)
 })
+
+// 烟测实例与用户正在运行的实例隔离：独立 userData（单实例锁以此为键）与独立数据目录，不碰真实 sessions.json
+const isSmoke = !!process.env['TAGTERM_SMOKE']
+if (isSmoke) app.setPath('userData', join(tmpdir(), 'tagterm-smoke'))
 
 // 单实例锁：二次启动只聚焦已有窗口
 if (!app.requestSingleInstanceLock()) {
@@ -68,7 +73,8 @@ const ptyManager = new PtyManager({
 console.log('[pty] node-pty 已加载')
 
 app.whenReady().then(async () => {
-  const store = new SessionStore(resolveDataDir(app.getPath('appData')), {
+  const dataDir = isSmoke ? app.getPath('userData') : resolveDataDir(app.getPath('appData'))
+  const store = new SessionStore(dataDir, {
     onChanged: (sessions) => broadcast('session:changed', sessions),
   })
   try {

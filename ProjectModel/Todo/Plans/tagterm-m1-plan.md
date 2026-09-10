@@ -629,6 +629,16 @@ Status: 🔴 Not started | 🟡 In progress | 🟢 Done | ⚠️ Blocked
 | 安装包未签名（`signtool` 走无证书流程） | 无代码签名证书 | 首次运行会有 SmartScreen 提示，属预期 |
 | asar 约 26 MB、win-unpacked 约 400 MB | 含 vue 运行时依赖（compiler-sfc 的 @babel）与 node-pty 全平台 prebuilds / third_party | M4 打磨时可用 `files` 排除非 win32-x64 的 prebuilds |
 
+### Slice 7（验收中发现的问题）
+
+| 问题 / 处理 | 原因 | 影响 |
+|------|------|------|
+| **Bug**：终端里 Ctrl+V 输出 `^V`、右键无反应，无法粘贴。修复：新增 `terminal/clipboardKeys.ts`（纯函数）+ 工厂内 `attachCustomKeyEventHandler`：Ctrl+V / Ctrl+Shift+V / Shift+Insert 交给浏览器原生 paste 由 xterm 处理；Ctrl+Shift+C 复制，Ctrl+C 有选区复制、无选区仍是中断；右键有选区复制、无选区读剪贴板粘贴 | xterm 默认把 Ctrl+V 当控制字符发给 pty | 烟测新增右键粘贴与真实 Ctrl+V（`sendInputEvent`）两项 |
+| 烟测实例改用独立 userData（`%TEMP%	agterm-smoke`）与独立数据目录 | 单实例锁以 userData 为键，用户正在运行的 TagTerm.exe 会让烟测实例立刻退出；烟测也不该碰真实 sessions.json | 烟测不再写 `%APPDATA%\TagTerm` |
+| 用户反馈「标签在哪里创建」 | M1 按计划不做标签（原型裁剪见 §5），M2 实现 | 不改 |
+| 用户反馈「已在 claude / pi 里时唤起与清屏按钮应失效」 | 依赖 agent 检测（M3）；原型在有 agent 时把唤起区改为「当前：Claude Code，运行中」+「退出 Claude Code」 | M3 实现 |
+| 用户反馈「唤起命令应可自定义，不限于 claude / gemini / pi」 | 新产品决策（原计划 §9 #6 只做 PATH 探测，可配置 UI 归 M4） | 待用户决定：M1 现在做 / 归 M3 与 agent 一起做 / 归 M4 |
+
 ## 12. M1 验收指引（Slice 7 HITL 输入）
 
 > 自动化已覆盖的项在「已自动验证」列标 ✅（vitest 60 例 + `TAGTERM_SMOKE=1` 烟测，含打包版）；需要你亲手操作的在「你要做的」列。每步给出预期现象，不符即记为问题。
@@ -655,6 +665,7 @@ pnpm dev            :: 开发模式；或用打包版 dist\win-unpacked\TagTerm.
 | 7 | 再新建 2 个不同目录的会话，各自敲 `claude`，在标签页 / 左栏之间来回切换 | 各自内容不丢、TUI 不乱（切换时闪一下属 ConPTY 重绘，正常） | ✅（双会话切换不丢缓冲）/ ❌ TUI 效果需人工 |
 | 8 | 点某个标签页的 ×（tooltip「关闭标签页（会话继续在后台保持）」） | 标签页消失、激活右侧邻居（最右则左侧）；任务管理器里该 cmd.exe / claude 仍在；从左栏点回来内容与进程原样 | ✅ |
 | 9 | 路径条：点「复制」；点 `claude` / `gemini` / `pi` 按钮；点「清屏」 | 「已复制」1.2 s 后复原，剪贴板为完整路径；唤起按钮效果等同在终端敲 `claude⏎`；清屏后只剩提示符 | ✅ |
+| 9b | 复制一段文本，在终端 Ctrl+V；再选中终端里一段文字后 Ctrl+C、右键 | Ctrl+V 粘贴出文本（不是 `^V`）；有选区时 Ctrl+C 复制、右键复制，无选区时右键粘贴、Ctrl+C 中断 | ✅ |
 | 10 | 在某个终端敲 `exit` | 终端末尾出现 `[进程已退出，代码 0]`；在该终端按回车或在左栏再点该会话 → 重新起 shell，出现新提示符 | ✅（单测）/ ❌ 观感需人工 |
 | 11 | 路径条点「移除会话」 | 弹 `移除会话 "x"？终端进程会被结束。`；确认后左栏、标签页同时消失，`%APPDATA%\TagTerm\sessions.json` 中该条已删，任务管理器中其 cmd.exe 消失 | ✅ |
 | 12 | 点窗口 × | 窗口消失、托盘出现 TagTerm 图标；任务管理器里所有 cmd.exe / claude 仍在运行（正在跑的 claude 不中断） | ✅（隐藏 + pty 存活）/ ❌ 托盘图标可见性需人工 |
