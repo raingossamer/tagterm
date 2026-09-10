@@ -1,17 +1,47 @@
 import { vi } from 'vitest'
 import type { TagTermApi } from '@shared/api'
+import type { Session, ShellKind } from '@shared/models'
+
+type Overrides = {
+  [K in keyof TagTermApi]?: Partial<TagTermApi[K]>
+}
 
 /**
  * 渲染进程测试用的 window.tagterm 假实现：SDK 风格，每个函数独立 mock。
- * 传入 overrides 覆盖需要的函数，其余为 vi.fn()。
+ * 传入 overrides 覆盖需要的函数，其余为带合理缺省返回值的 vi.fn()。
  */
-export function installFakeApi(overrides: Partial<TagTermApi> = {}): TagTermApi {
+export function installFakeApi(overrides: Overrides = {}): TagTermApi {
   const api: TagTermApi = {
     app: {
       getVersion: vi.fn(async () => '0.0.0-test'),
+      listShells: vi.fn(async (): Promise<ShellKind[]> => ['cmd.exe', 'powershell.exe']),
       ...overrides.app,
+    },
+    session: {
+      list: vi.fn(async () => [] as Session[]),
+      create: vi.fn(async (input) => makeSession({ cwd: input.cwd, name: input.name ?? 'new' })),
+      update: vi.fn(async (id, patch) => makeSession({ id, ...patch })),
+      remove: vi.fn(async () => {}),
+      pickDirectory: vi.fn(async () => null),
+      onChanged: vi.fn(() => () => {}),
+      ...overrides.session,
     },
   }
   Object.defineProperty(window, 'tagterm', { value: api, configurable: true, writable: true })
   return api
+}
+
+let seq = 0
+/** 构造一条测试会话，字段可覆盖 */
+export function makeSession(partial: Partial<Session> = {}): Session {
+  seq += 1
+  return {
+    id: `s${seq}`,
+    name: `session-${seq}`,
+    cwd: `D:\\Projects\\p${seq}`,
+    shell: 'cmd.exe',
+    sortOrder: seq,
+    createdAt: '2026-09-10T00:00:00.000Z',
+    ...partial,
+  }
 }

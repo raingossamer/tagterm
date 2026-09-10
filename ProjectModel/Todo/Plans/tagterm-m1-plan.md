@@ -378,11 +378,11 @@ export class TerminalPool {
 建立 pnpm + electron-vite + Vue 3 + Pinia + TS 工程，锁定 §2 依赖版本，写入 `.npmrc` 与 `pnpm.onlyBuiltDependencies`，安装 node-pty 并跑通 `electron-rebuild`。窗口打开后显示原型的空状态「选一个会话开始」，状态栏经 preload → IPC 取到应用版本并显示 —— 这是贯穿三层的 tracer bullet。安全参数与 CSP 一次到位。vitest 两个 project 配好并有 smoke 测试。`git init` 并做首个 commit。
 
 **Acceptance criteria**:
-- [ ] `pnpm install` 成功；主进程启动日志打印 node-pty 已加载（证明原生模块在 Electron 下可用）
-- [ ] `pnpm dev` 打开窗口，空状态文案、字体、配色与原型一致；状态栏显示版本号（来自主进程）
-- [ ] DevTools 无 CSP 报错；渲染进程里 `window.process` / `require` 不存在
-- [ ] `pnpm test`、`pnpm typecheck` 通过
-- [ ] 首个 commit 已提交
+- [x] `pnpm install` 成功；主进程启动日志打印 node-pty 已加载（证明原生模块在 Electron 下可用）
+- [x] `pnpm dev` 打开窗口，空状态文案、字体、配色与原型一致；状态栏显示版本号（来自主进程）
+- [x] DevTools 无 CSP 报错；渲染进程里 `window.process` / `require` 不存在
+- [x] `pnpm test`、`pnpm typecheck` 通过
+- [x] 首个 commit 已提交
 
 **Implementation hints**:
 - 用脚本生成一个简单的 `resources/tray.png` 与 `icon.ico` 占位，后续可替换
@@ -557,7 +557,7 @@ Slice 1 → Slice 2 → Slice 3 → Slice 4 → Slice 5 → Slice 6 → Slice 7 
 
 | Slice | Status | Assignee | Notes |
 |-------|--------|----------|-------|
-| 1 脚手架与安全基线 | 🔴 Not started | - | - |
+| 1 脚手架与安全基线 | 🟢 Done | Claude | 2026-09-10；commit d3c0882；偏差见 §11 |
 | 2 会话持久化与左栏列表 | 🔴 Not started | - | - |
 | 3 终端：PTY 与 xterm 单会话 | 🔴 Not started | - | - |
 | 4 多会话切换与标签页 | 🔴 Not started | - | - |
@@ -566,3 +566,14 @@ Slice 1 → Slice 2 → Slice 3 → Slice 4 → Slice 5 → Slice 6 → Slice 7 
 | 7 M1 验收（HITL） | 🔴 Not started | - | - |
 
 Status: 🔴 Not started | 🟡 In progress | 🟢 Done | ⚠️ Blocked
+
+## 11. 偏差记录（tdd 逐片追加）
+
+### Slice 1
+
+| 偏差 | 原因 | 影响 |
+|------|------|------|
+| 去掉 `postinstall: electron-rebuild -f -w node-pty`，并移除 `@electron/rebuild` 依赖 | node-pty 1.1.0 的 npm 包自带 `prebuilds/win32-x64`（N-API，Node 与 Electron 通用），运行时 `loadNativeModule` 直接加载；而该包内 winpty 的 gyp 依赖在本机执行 `GetCommitHash.bat` 失败，electron-rebuild 无法完成。Electron 44 下已验证原生模块可加载并起 cmd.exe | Slice 6 打包时 `asarUnpack` 需包含 `node_modules/node-pty/prebuilds/**`（而非 `build/Release`） |
+| `pnpm.onlyBuiltDependencies` 从 package.json 移到 `pnpm-workspace.yaml` | pnpm 11 不再读取 package.json 的 `pnpm` 字段 | 无 |
+| S1–S4 期间 `window-all-closed` 直接 `app.quit()` | 托盘尚未实现（S5），否则关窗后进程无法退出 | S5 改为常驻托盘、`window-all-closed` 不退出 |
+| 新增 `src/main/smoke.ts`：`TAGTERM_SMOKE=1` 时页面加载后核查安全基线并打印 JSON 退出 | 无人值守验收「DevTools 无 CSP 报错 / 无 window.process / require」等项 | 生产运行不触发；Design 目录结构需补记（design-doc-sync） |
