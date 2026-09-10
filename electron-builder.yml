@@ -1,0 +1,30 @@
+# electron-builder：nsis 安装包；node-pty 的原生 .node 与 ConPTY 附属文件必须在 asar 外
+appId: com.tagterm.app
+productName: TagTerm
+copyright: Copyright © 2026 k
+directories:
+  buildResources: resources
+  output: dist
+# node-pty 1.1.0 直接使用包内 prebuilds/win32-x64（N-API），不再用 electron-rebuild 重编（其 winpty gyp 在本机失败）
+npmRebuild: false
+buildDependenciesFromSource: false
+files:
+  - out/**
+  - resources/** # ?asset 导入解析为 out/main 相对的 ../../resources/*，打包后从 asar 内读取
+  - package.json
+  - '!**/*.pdb' # 调试符号不进包（node-pty prebuilds 里每个 .node 都带 pdb）
+asarUnpack:
+  - node_modules/node-pty/**
+win:
+  target:
+    - nsis
+  icon: resources/icon.ico
+  artifactName: ${productName} Setup ${version}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false # 卸载不删 %APPDATA%\TagTerm 的会话数据
+  shortcutName: TagTerm
+  createDesktopShortcut: true
+  createStartMenuShortcut: true

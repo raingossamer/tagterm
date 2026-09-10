@@ -472,7 +472,7 @@ export class TerminalPool {
 窗口 × → 隐藏到托盘；托盘图标、tooltip「TagTerm」、单击显示 / 聚焦窗口、右键菜单「显示窗口」「退出」；退出与 `before-quit` 统一 `killAll`；单实例锁；`window-all-closed` 不退出。
 
 **Acceptance criteria**:
-- [ ] 点 × 后窗口消失、托盘图标存在；终端进程仍在跑（正在运行的 `claude` 不中断）
+- [x] 点 × 后窗口消失、托盘图标存在；终端进程仍在跑（正在运行的 `claude` 不中断）
 - [ ] 从托盘恢复窗口，所有会话内容、标签页、active 原样
 - [ ] 托盘「退出」后任务管理器无残留 `cmd.exe` / `conhost.exe` / `OpenConsole.exe` / claude 的 node 进程
 - [ ] 再次启动应用只聚焦已有窗口，不开第二个实例
@@ -561,7 +561,7 @@ Slice 1 → Slice 2 → Slice 3 → Slice 4 → Slice 5 → Slice 6 → Slice 7 
 | 2 会话持久化与左栏列表 | 🟢 Done | Claude | 2026-09-10；commit 9b2ceb8；偏差见 §11 |
 | 3 终端：PTY 与 xterm 单会话 | 🟢 Done | Claude | 2026-09-10；commit 869e97b；偏差见 §11；「拖动窗口重排」「WebGL 上下文丢失回退」两项留 S7 人工验证 |
 | 4 多会话切换与标签页 | 🟢 Done | Claude | 2026-09-10；commit 5196e07；偏差见 §11；「3 个 claude TUI 来回切换不乱」「≥8 会话无 WebGL 告警」留 S7 人工验证 |
-| 5 托盘与生命周期 | 🔴 Not started | - | - |
+| 5 托盘与生命周期 | 🟢 Done | Claude | 2026-09-10；commit 1714485；「托盘恢复后内容原样」「无残留 conhost / claude 进程」「二次启动只聚焦」留 S7 人工验证 |
 | 6 打包 | 🔴 Not started | - | - |
 | 7 M1 验收（HITL） | 🔴 Not started | - | - |
 
@@ -609,3 +609,10 @@ Status: 🔴 Not started | 🟡 In progress | 🟢 Done | ⚠️ Blocked
 | 唤起按钮列表 = `DEFAULT_AGENTS`（claude / gemini / codex / pi）经 PATH 探测过滤，新增 invoke 通道 `app:list-agents`；探测泛化为 `main/pathProbe.ts`（原 `shells.ts` 并入） | 落实 Plan §9 #6 的推荐执行方案；本机显示 claude / gemini / pi | 「可配置列表」的设置 UI 未做（M4 配置项）；Design API 端点 / 目录结构需补记 |
 | `TerminalPool` 增加 `onExit` / `onRestartRequested` 回调与"已退出实例不再转发按键"的规则；重启 = `dispose` + `open`，由 `App.vue` 编排 | 落实 Plan §9 #1「退出后按回车或再次点击会话行即重启」 | 无 |
 | `App.vue` 监听 `workspace.activeId` 变化直接 `pool.show / hide` | 标签页点击、关闭邻居切换都只切 display，不必经过 selectSession 的 open 路径 | 无 |
+
+### Slice 5
+
+| 偏差 / 补充 | 原因 | 影响 |
+|------|------|------|
+| 图标改为 electron-vite 的 `?asset` 导入（`resources/tray.png` / `icon.ico` 随构建复制进 `out/main`） | 打包后 `resources/` 不在 asar 内，`__dirname` 相对路径失效 | `tsconfig.node.json` types 加 `electron-vite/node` |
+| 烟测在主进程侧核查关窗隐藏 / pty 存活 / 显示恢复，并改走 `app.quit()`（before-quit → killAll）退出；两条烟测 pty 的 pid 退出后已确认消失 | 覆盖 S5 验收项中可自动化的部分 | 「托盘「退出」后无残留 conhost / OpenConsole / claude 的 node 进程」仍需 S7 在真实 claude 运行时人工核对（见 Slice 3 风险） |
