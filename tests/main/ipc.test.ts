@@ -4,9 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { registerIpc, type IpcDeps } from '../../src/main/ipc'
 import { SessionStore } from '../../src/main/store/SessionStore'
+import { SettingsStore } from '../../src/main/store/SettingsStore'
 import { PtyManager } from '../../src/main/pty/PtyManager'
 import type { PtyExitEvent, PtyOpenResult } from '@shared/ipc'
-import type { Session } from '@shared/models'
+import type { Session, Settings } from '@shared/models'
 import { createFakeIpcMain, type FakeIpcMain } from './fakeIpcMain'
 import { waitFor } from './helpers'
 
@@ -15,6 +16,7 @@ describe('IPC 接口层', () => {
   let ipc: FakeIpcMain
   let deps: IpcDeps
   let store: SessionStore
+  let settings: SettingsStore
   let pty: PtyManager
   const output: Record<string, string> = {}
   const exits: PtyExitEvent[] = []
@@ -23,6 +25,8 @@ describe('IPC 接口层', () => {
     dir = mkdtempSync(join(tmpdir(), 'tagterm-ipc-'))
     store = new SessionStore(dir)
     await store.load()
+    settings = new SettingsStore(dir, { seedCommands: ['claude', 'pi'] })
+    await settings.load()
     pty = new PtyManager({
       onData: (id, d) => {
         output[id] = (output[id] ?? '') + d
@@ -34,10 +38,10 @@ describe('IPC 接口层', () => {
       version: '0.1.0',
       osBuild: 26200,
       store,
+      settings,
       pty,
       pickDirectory: async () => 'D:\\picked',
       listShells: () => ['cmd.exe', 'powershell.exe'],
-      listAgents: () => ['claude', 'pi'],
     }
     registerIpc(ipc, deps)
   })
@@ -80,9 +84,8 @@ describe('IPC 接口层', () => {
     await expect(ipc.invoke('session:pick-directory')).resolves.toBe('D:\\picked')
   })
 
-  it('app:list-shells / app:list-agents 返回本机可用的 shell 与唤起工具', async () => {
+  it('app:list-shells 返回本机可用的 shell', async () => {
     await expect(ipc.invoke('app:list-shells')).resolves.toEqual(['cmd.exe', 'powershell.exe'])
-    await expect(ipc.invoke('app:list-agents')).resolves.toEqual(['claude', 'pi'])
   })
 
   it('pty:open 按会话目录 / shell 起真实终端且幂等；写入 / 是否存活 / kill 经接口层生效', async () => {
@@ -119,5 +122,38 @@ describe('IPC 接口层', () => {
     await waitFor(() => exits.some((e) => e.sessionId === s.id))
     expect(pty.has(s.id)).toBe(false)
     await expect(ipc.invoke('session:list')).resolves.toEqual([])
+  })
+
+  it('settings:get 返回当前设置；settings:update 以补丁合并后返回全量', async () => {
+    const before = (await ipc.invoke('settings:get')) as Settings
+    expect(before.launchCommands.map((c) => c.command)).toEqual(['claude', 'pi'])
+
+    const after = (await ipc.invoke('settings:update', {
+      launchCommands: [{ label: '', command: 'gemini', pinned: false, sortOrder: 1 }],
+    })) as Settings
+    expect(after.launchCommands).toHaveLength(1)
+    expect(after.launchCommands[0]).toMatchObject({ command: 'gemini', pinned: false })
+    expect(after.terminalBackground).toEqual(before.terminalBackground)
+    await expect(ipc.invoke('settings:get')).resolves.toEqual(after)
+  })
+
+  it('settings:update 非法补丁在接口层被拒绝', async () => {
+    await expect(ipc.invoke('settings:update', { launchCommands: 'x' })).rejects.toThrow(/唤起命令/)
+    await expect(
+      ipc.invoke('settings:update', {
+        launchCommands: [{ label: 'a', command: '  ', pinned: true, sortOrder: 1 }],
+      }),
+    ).rejects.toThrow(/命令不能为空/)
+    await expect(
+      ipc.invoke('settings:update', {
+        launchCommands: [{ label: 'a', command: 'a', pinned: 'yes', sortOrder: 1 }],
+      }),
+    ).rejects.toThrow(/唤起命令/)
+    await expect(
+      ipc.invoke('settings:update', { terminalBackground: { imagePath: null, dimOpacity: 2 } }),
+    ).rejects.toThrow(/不透明度/)
+    await expect(
+      ipc.invoke('settings:update', { terminalBackground: { imagePath: 5, dimOpacity: 0.5 } }),
+    ).rejects.toThrow(/背景/)
   })
 })

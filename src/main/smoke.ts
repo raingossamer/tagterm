@@ -72,7 +72,7 @@ const SMOKE_SCRIPT = `(async () => {
   const hostsAfterClose = ($('[data-test=terminal-pane]')?.children ?? []).length
 
   // 唤起区、侧栏收起
-  const launchers = $$('[data-test=launch-agent]').map((b) => b.textContent.trim())
+  const launchers = $$('[data-test=launch-cmd]').map((b) => b.textContent.trim())
   $('[data-test=tab-side]')?.click()
   await sleep(50)
   const sideHidden = $('.app')?.classList.contains('side-hidden') ?? null

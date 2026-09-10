@@ -4,7 +4,8 @@ import { createPinia, setActivePinia } from 'pinia'
 import PathStrip from '../../../src/renderer/src/components/PathStrip.vue'
 import { useSessionsStore } from '../../../src/renderer/src/stores/sessions'
 import { useWorkspaceStore } from '../../../src/renderer/src/stores/workspace'
-import { installFakeApi, makeSession } from '../fakeApi'
+import { useSettingsStore } from '../../../src/renderer/src/stores/settings'
+import { installFakeApi, makeCommand, makeSession, makeSettings } from '../fakeApi'
 
 // happy-dom 没有 window.confirm，按需要的返回值打桩
 function stubConfirm(result: boolean) {
@@ -59,17 +60,24 @@ describe('PathStrip', () => {
     expect(useWorkspaceStore().activeId).toBeNull()
   })
 
-  it('唤起区只列已安装的工具，点击即向终端写入 `<cmd>\\r`；清屏按 shell 写 cls / clear', async () => {
-    const api = installFakeApi({ app: { listAgents: async () => ['claude', 'pi'] } })
+  it('唤起区平铺 pinned 命令（显示名），点击即向终端写入 `<command>\r`；清屏按 shell 写 cls / clear', async () => {
+    const api = installFakeApi()
+    useSettingsStore().settings = makeSettings({
+      launchCommands: [
+        makeCommand({ command: 'pi', sortOrder: 2 }),
+        makeCommand({ command: 'claude --continue', label: 'claude 续', sortOrder: 1 }),
+      ],
+    })
     const wrapper = mount(PathStrip)
     await flushPromises()
 
-    const launchers = wrapper.findAll('[data-test=launch-agent]')
-    expect(launchers.map((b) => b.text())).toEqual(['claude', 'pi'])
+    const launchers = wrapper.findAll('[data-test=launch-cmd]')
+    expect(launchers.map((b) => b.text())).toEqual(['claude 续', 'pi'])
     expect(wrapper.find('[data-test=launch-label]').text()).toBe('唤起')
+    expect(wrapper.find('[data-test=launch-more]').exists()).toBe(false)
 
     await launchers[0]!.trigger('click')
-    expect(api.pty.write).toHaveBeenCalledWith(session.id, 'claude\r')
+    expect(api.pty.write).toHaveBeenCalledWith(session.id, 'claude --continue\r')
 
     await wrapper.find('[data-test=strip-clear]').trigger('click')
     expect(api.pty.write).toHaveBeenCalledWith(session.id, 'cls\r')
@@ -78,6 +86,67 @@ describe('PathStrip', () => {
     await flushPromises()
     await wrapper.find('[data-test=strip-clear]').trigger('click')
     expect(api.pty.write).toHaveBeenCalledWith(session.id, 'clear\r')
+  })
+
+  it('非 pinned 命令收进「更多 ▾」：点开列出、点选即执行并收起；没有任何命令时只剩「唤起」与「编辑」', async () => {
+    const api = installFakeApi()
+    const settings = useSettingsStore()
+    settings.settings = makeSettings({
+      launchCommands: [
+        makeCommand({ command: 'claude', sortOrder: 1 }),
+        makeCommand({ command: 'pi --model x', label: 'pi x', pinned: false, sortOrder: 2 }),
+      ],
+    })
+    const wrapper = mount(PathStrip)
+    await flushPromises()
+
+    expect(wrapper.find('[data-test=launch-more-item]').exists()).toBe(false)
+    await wrapper.find('[data-test=launch-more]').trigger('click')
+    const items = wrapper.findAll('[data-test=launch-more-item]')
+    expect(items.map((b) => b.text())).toEqual(['pi x'])
+    await items[0]!.trigger('click')
+    expect(api.pty.write).toHaveBeenCalledWith(session.id, 'pi --model x\r')
+    expect(wrapper.find('[data-test=launch-more-item]').exists()).toBe(false)
+
+    settings.settings = makeSettings({ launchCommands: [] })
+    await flushPromises()
+    expect(wrapper.find('[data-test=launch-cmd]').exists()).toBe(false)
+    expect(wrapper.find('[data-test=launch-more]').exists()).toBe(false)
+    expect(wrapper.find('[data-test=launch-label]').text()).toBe('唤起')
+    expect(wrapper.find('[data-test=launch-edit]').text()).toBe('编辑')
+    expect(wrapper.find('[data-test=strip-clear]').exists()).toBe(true)
+    expect(wrapper.find('[data-test=strip-remove]').exists()).toBe(true)
+  })
+
+  it('「更多 ▾」弹出层：再点按钮或点击弹出层外部即收起', async () => {
+    installFakeApi()
+    useSettingsStore().settings = makeSettings({
+      launchCommands: [makeCommand({ command: 'pi', pinned: false })],
+    })
+    const wrapper = mount(PathStrip, { attachTo: document.body })
+
+    await wrapper.find('[data-test=launch-more]').trigger('click')
+    expect(wrapper.find('[data-test=launch-more-pop]').exists()).toBe(true)
+    await wrapper.find('[data-test=launch-more]').trigger('click')
+    expect(wrapper.find('[data-test=launch-more-pop]').exists()).toBe(false)
+
+    await wrapper.find('[data-test=launch-more]').trigger('click')
+    document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    await flushPromises()
+    expect(wrapper.find('[data-test=launch-more-pop]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('「编辑」打开唤起命令弹窗，弹窗关闭后消失', async () => {
+    installFakeApi()
+    const wrapper = mount(PathStrip)
+
+    expect(wrapper.find('[data-test=launch-modal]').exists()).toBe(false)
+    await wrapper.find('[data-test=launch-edit]').trigger('click')
+    expect(wrapper.find('[data-test=launch-modal]').exists()).toBe(true)
+
+    await wrapper.find('[data-test=lc-cancel]').trigger('click')
+    expect(wrapper.find('[data-test=launch-modal]').exists()).toBe(false)
   })
 
   it('取消确认则不移除', async () => {

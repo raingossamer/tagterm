@@ -1,30 +1,48 @@
 <script setup lang="ts">
-// 路径条：当前会话的固定路径、复制、唤起区（已安装的工具按钮）、清屏、移除会话
-import { computed, onMounted, ref } from 'vue'
-import type { AgentKind } from '@shared/models'
+// 路径条：当前会话的固定路径、复制、唤起区（settings.json 里的命令：pinned 平铺、其余收进「更多 ▾」、「编辑」）、清屏、移除会话
+import { computed, onUnmounted, ref } from 'vue'
 import { useSessionsStore } from '../stores/sessions'
+import { useSettingsStore } from '../stores/settings'
 import { useWorkspaceStore } from '../stores/workspace'
 import { useCopy } from '../composables/useCopy'
+import LaunchCommandsModal from './LaunchCommandsModal.vue'
 
 const sessions = useSessionsStore()
+const settings = useSettingsStore()
 const workspace = useWorkspaceStore()
 const { isCopied, copy } = useCopy()
-const agents = ref<AgentKind[]>([])
+const isMoreOpen = ref(false)
+const isEditOpen = ref(false)
+const moreEl = ref<HTMLElement | null>(null)
 
 const session = computed(() => (workspace.activeId ? sessions.byId(workspace.activeId) : undefined))
-
-onMounted(async () => {
-  try {
-    agents.value = await window.tagterm.app.listAgents()
-  } catch (err) {
-    console.error('[strip] 探测唤起工具失败', err)
-  }
-})
 
 /** 唤起按钮本质是向终端写入 `<cmd>\r` */
 function runCommand(cmd: string): void {
   if (!session.value) return
   window.tagterm.pty.write(session.value.id, `${cmd}\r`)
+}
+
+/** 「更多 ▾」弹出层：点击弹出层外部即收起（监听只在打开期间挂着） */
+function onDocumentMousedown(e: MouseEvent): void {
+  if (!moreEl.value?.contains(e.target as Node)) closeMore()
+}
+function toggleMore(): void {
+  if (isMoreOpen.value) closeMore()
+  else {
+    isMoreOpen.value = true
+    document.addEventListener('mousedown', onDocumentMousedown)
+  }
+}
+function closeMore(): void {
+  isMoreOpen.value = false
+  document.removeEventListener('mousedown', onDocumentMousedown)
+}
+onUnmounted(closeMore)
+
+function runFromMore(cmd: string): void {
+  closeMore()
+  runCommand(cmd)
 }
 
 function clearScreen(): void {
@@ -50,19 +68,44 @@ async function removeSession(): Promise<void> {
     <span class="launch">
       <span class="lab" data-test="launch-label">唤起</span>
       <button
-        v-for="agent in agents"
-        :key="agent"
+        v-for="c in settings.pinnedCommands"
+        :key="c.id"
         class="btn sm mono"
-        data-test="launch-agent"
-        @click="runCommand(agent)"
+        :title="c.command"
+        data-test="launch-cmd"
+        @click="runCommand(c.command)"
       >
-        {{ agent }}
+        {{ c.label }}
+      </button>
+      <span v-if="settings.moreCommands.length" ref="moreEl" class="more">
+        <button class="btn sm" data-test="launch-more" @click="toggleMore">更多 ▾</button>
+        <div v-if="isMoreOpen" class="pop" data-test="launch-more-pop">
+          <button
+            v-for="c in settings.moreCommands"
+            :key="c.id"
+            class="item mono"
+            :title="c.command"
+            data-test="launch-more-item"
+            @click="runFromMore(c.command)"
+          >
+            {{ c.label }}
+          </button>
+        </div>
+      </span>
+      <button
+        class="btn sm"
+        title="编辑唤起命令"
+        data-test="launch-edit"
+        @click="isEditOpen = true"
+      >
+        编辑
       </button>
       <button class="btn sm" data-test="strip-clear" @click="clearScreen">清屏</button>
       <button class="btn sm danger" data-test="strip-remove" @click="removeSession">
         移除会话
       </button>
     </span>
+    <LaunchCommandsModal v-if="isEditOpen" @close="isEditOpen = false" />
   </div>
 </template>
 
@@ -96,5 +139,34 @@ async function removeSession(): Promise<void> {
   font-size: 12px;
   color: var(--muted);
   margin-right: 2px;
+}
+.more {
+  position: relative;
+}
+.pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 160px;
+  max-height: 60vh;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  z-index: 10;
+}
+.pop .item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  border-radius: 5px;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.pop .item:hover {
+  background: #f0f2f5;
 }
 </style>

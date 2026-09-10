@@ -40,7 +40,6 @@ const api: TagTermApi = {
     getVersion: () => invoke('app:get-version'),
     getOsBuild: () => invoke('app:get-os-build'),
     listShells: () => invoke('app:list-shells'),
-    listAgents: () => invoke('app:list-agents'),
   },
   session: {
     list: () => invoke('session:list'),
@@ -49,6 +48,11 @@ const api: TagTermApi = {
     remove: (id) => invoke('session:remove', id),
     pickDirectory: () => invoke('session:pick-directory'),
     onChanged: (cb) => subscribe('session:changed', cb),
+  },
+  settings: {
+    get: () => invoke('settings:get'),
+    update: (patch) => invoke('settings:update', patch),
+    onChanged: (cb) => subscribe('settings:changed', cb),
   },
   pty: {
     open: (sessionId, size) => invoke('pty:open', sessionId, size),
