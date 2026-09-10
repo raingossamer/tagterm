@@ -1,0 +1,161 @@
+/* 全局样式：原型的 reset 与跨组件公共类（.btn / .dot / .chip / .field 等） */
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+body {
+  font: 14px/1.45 var(--font);
+  color: var(--text);
+  background: var(--bg);
+  overflow: hidden;
+}
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+button {
+  cursor: pointer;
+  background: none;
+  border: 0;
+  padding: 0;
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* 状态点：idle 灰空心 / working 绿 / blocked 黄脉冲 / done 蓝 */
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+  border: 1.5px solid var(--st-idle);
+  background: transparent;
+}
+.dot.working {
+  background: var(--st-work);
+  border-color: var(--st-work);
+}
+.dot.blocked {
+  background: var(--st-block);
+  border-color: var(--st-block);
+  animation: pulse 1.2s infinite;
+}
+.dot.done {
+  background: var(--st-done);
+  border-color: var(--st-done);
+}
+@keyframes pulse {
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--st-block) 30%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dot.blocked {
+    animation: none;
+  }
+}
+
+/* 按钮 */
+.btn {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.btn:hover {
+  background: #f0f2f5;
+}
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn.primary:hover {
+  background: #0953b5;
+}
+.btn.danger {
+  color: #b42318;
+}
+.btn.danger:hover {
+  background: #fcebea;
+}
+.btn.sm {
+  padding: 3px 9px;
+  font-size: 12px;
+}
+.btn.mono {
+  font-family: var(--mono);
+}
+
+/* 标签 chip */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  font-size: 12.5px;
+}
+.chip i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--c);
+}
+.chip em {
+  font-style: normal;
+  color: var(--muted);
+  font-size: 11px;
+}
+.chip.on {
+  border-color: var(--c);
+  background: color-mix(in srgb, var(--c) 12%, #fff);
+  color: color-mix(in srgb, var(--c) 70%, #000);
+}
+.chip.on em {
+  color: inherit;
+  opacity: 0.7;
+}
+.hint {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 2px 0;
+}
+.link {
+  color: var(--accent);
+  font-size: 12px;
+  margin-left: auto;
+}
+
+/* 表单字段 */
+.field {
+  margin-bottom: 12px;
+}
+.field label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.field input,
+.field select {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+.field input.mono {
+  font-family: var(--mono);
+}

@@ -1,0 +1,27 @@
+/* 设计变量：原型 :root 原样搬入，组件内不写裸色值 */
+:root {
+  --bg: #e9ecf0;
+  --panel: #f6f7f9;
+  --panel2: #ffffff;
+  --line: #d3d8df;
+  --text: #1d2126;
+  --muted: #68717d;
+  --accent: #0a5fd1;
+  --accent-soft: #e1ecfa;
+  --t-bg: #0c0c0c;
+  --t-fg: #cccccc;
+  --t-dim: #767676;
+  --t-green: #16c60c;
+  --t-yellow: #f9f1a5;
+  --t-red: #e74856;
+  --t-cyan: #61d6d6;
+  --t-blue: #3b78ff;
+  --st-work: #16a34a;
+  --st-block: #e0a400;
+  --st-done: #2f6fdb;
+  --st-idle: #9aa3ae;
+  --font:
+    'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans SC',
+    system-ui, sans-serif;
+  --mono: 'Cascadia Mono', 'Cascadia Code', Consolas, 'Microsoft YaHei', 'PingFang SC', monospace;
+}

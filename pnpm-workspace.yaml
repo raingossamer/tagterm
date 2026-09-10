@@ -1,0 +1,5 @@
+# pnpm 10+ 的设置文件：放行需要执行 install 脚本的依赖（electron 下载二进制、esbuild 下载平台包）
+onlyBuiltDependencies:
+  - electron
+  - esbuild
+  - node-pty
