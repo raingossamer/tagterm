@@ -1,18 +1,35 @@
 /**
- * 无人值守烟测：设置 TAGTERM_SMOKE=1 启动时，页面加载后核查安全基线与三层贯通，
- * 以 JSON 打印到 stdout 后退出。生产运行不触发。
+ * 无人值守烟测：设置 TAGTERM_SMOKE=1 启动时，页面加载后核查安全基线与三层贯通
+ * （含一次真实的会话新建 → 列出 → 移除往返），以 JSON 打印到 stdout 后退出。生产运行不触发。
  */
 import { app, type BrowserWindow } from 'electron'
 
-const SMOKE_SCRIPT = `(async () => ({
-  hasProcess: typeof window.process !== 'undefined',
-  hasRequire: typeof window.require !== 'undefined',
-  hasApi: typeof window.tagterm === 'object' && window.tagterm !== null,
-  version: await window.tagterm.app.getVersion(),
-  emptyTitle: document.querySelector('[data-test=empty-title]')?.textContent ?? null,
-  statusVersion: document.querySelector('[data-test=status-version]')?.textContent ?? null,
-  bodyFont: getComputedStyle(document.body).fontFamily,
-}))()`
+const SMOKE_SCRIPT = `(async () => {
+  const api = window.tagterm
+  const before = await api.session.list()
+  const created = await api.session.create({ cwd: 'C:\\\\Windows\\\\Temp', name: 'smoke-临时' })
+  await new Promise((r) => setTimeout(r, 200))
+  const rowCount = document.querySelectorAll('[data-test=session-row]').length
+  const statusSessions = document.querySelector('[data-test=status-sessions]')?.textContent ?? null
+  await api.session.remove(created.id)
+  const after = await api.session.list()
+  return {
+    hasProcess: typeof window.process !== 'undefined',
+    hasRequire: typeof window.require !== 'undefined',
+    hasApi: typeof api === 'object' && api !== null,
+    version: await api.app.getVersion(),
+    shells: await api.app.listShells(),
+    emptyTitle: document.querySelector('[data-test=empty-title]')?.textContent ?? null,
+    statusVersion: document.querySelector('[data-test=status-version]')?.textContent ?? null,
+    sessionRoundTrip: {
+      before: before.length,
+      createdName: created.name,
+      rowCountAfterCreate: rowCount,
+      statusAfterCreate: statusSessions,
+      after: after.length,
+    },
+  }
+})()`
 
 export function runSmokeCheck(win: BrowserWindow): void {
   const consoleErrors: string[] = []
