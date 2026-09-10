@@ -13,6 +13,7 @@ import EmptyState from './components/EmptyState.vue'
 import StatusBar from './components/StatusBar.vue'
 import NewSessionModal from './components/NewSessionModal.vue'
 import { useSessionsStore } from './stores/sessions'
+import { useSettingsStore } from './stores/settings'
 import { useWorkspaceStore } from './stores/workspace'
 import { TerminalPool } from './terminal/TerminalPool'
 import { TERMINAL_POOL_KEY } from './terminal/poolKey'
@@ -20,6 +21,7 @@ import { createXtermFactory } from './terminal/xtermFactory'
 import { buildTerminalOptions } from './terminal/theme'
 
 const sessions = useSessionsStore()
+const settings = useSettingsStore()
 const workspace = useWorkspaceStore()
 const isNewModalOpen = ref(false)
 const loadError = ref('')
@@ -98,6 +100,7 @@ onMounted(async () => {
   document.addEventListener('keydown', onKeydown)
   try {
     osBuild = await window.tagterm.app.getOsBuild()
+    await settings.load()
     await sessions.load()
   } catch (err) {
     loadError.value = err instanceof Error ? err.message : String(err)

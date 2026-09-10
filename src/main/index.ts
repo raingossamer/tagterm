@@ -13,6 +13,7 @@ import { createTray } from './tray'
 import { registerIpc } from './ipc'
 import { runSmokeCheck } from './smoke'
 import { SessionStore } from './store/SessionStore'
+import { SettingsStore } from './store/SettingsStore'
 import { resolveDataDir } from './store/paths'
 import { PtyManager } from './pty/PtyManager'
 import { detectAvailableShells, findOnPath } from './pathProbe'
@@ -74,11 +75,23 @@ console.log('[pty] node-pty 已加载')
 
 app.whenReady().then(async () => {
   const dataDir = isSmoke ? app.getPath('userData') : resolveDataDir(app.getPath('appData'))
+  const pathEnv = process.env['PATH'] ?? ''
+  const availableShells = detectAvailableShells(pathEnv, existsSync)
+  const availableAgents = findOnPath(DEFAULT_AGENTS, pathEnv, existsSync)
+  console.log(`[main] 可用 shell：${availableShells.join(', ') || '无'}`)
+  console.log(`[main] 已安装的唤起工具：${availableAgents.join(', ') || '无'}`)
+
   const store = new SessionStore(dataDir, {
     onChanged: (sessions) => broadcast('session:changed', sessions),
   })
+  // 首次运行时 settings.json 的唤起命令来自 PATH 探测；之后完全以文件为准
+  const settings = new SettingsStore(dataDir, {
+    seedCommands: availableAgents,
+    onChanged: (next) => broadcast('settings:changed', next),
+  })
   try {
     await store.load()
+    await settings.load()
   } catch (err) {
     // 坏文件不静默清空：提示后退出，由用户处理文件
     dialog.showErrorBox('TagTerm 无法加载数据', err instanceof Error ? err.message : String(err))
@@ -86,20 +99,14 @@ app.whenReady().then(async () => {
     return
   }
 
-  const pathEnv = process.env['PATH'] ?? ''
-  const availableShells = detectAvailableShells(pathEnv, existsSync)
-  const availableAgents = findOnPath(DEFAULT_AGENTS, pathEnv, existsSync)
-  console.log(`[main] 可用 shell：${availableShells.join(', ') || '无'}`)
-  console.log(`[main] 已安装的唤起工具：${availableAgents.join(', ') || '无'}`)
-
   registerIpc(ipcMain, {
     version: app.getVersion(),
     osBuild: osBuildNumber(),
     store,
+    settings,
     pty: ptyManager,
     pickDirectory,
     listShells: () => availableShells,
-    listAgents: () => availableAgents,
   })
 
   mainWindow = createMainWindow({ shouldHideOnClose: () => !isQuitting })

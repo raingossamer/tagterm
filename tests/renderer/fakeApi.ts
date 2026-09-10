@@ -1,6 +1,6 @@
 import { vi } from 'vitest'
 import type { TagTermApi } from '@shared/api'
-import type { AgentKind, Session, ShellKind } from '@shared/models'
+import type { LaunchCommand, Session, Settings, ShellKind } from '@shared/models'
 
 type Overrides = {
   [K in keyof TagTermApi]?: Partial<TagTermApi[K]>
@@ -22,8 +22,13 @@ export function createFakeApi(overrides: Overrides = {}): TagTermApi {
       getVersion: vi.fn(async () => '0.0.0-test'),
       getOsBuild: vi.fn(async () => 26200),
       listShells: vi.fn(async (): Promise<ShellKind[]> => ['cmd.exe', 'powershell.exe']),
-      listAgents: vi.fn(async (): Promise<AgentKind[]> => ['claude', 'gemini', 'pi']),
       ...overrides.app,
+    },
+    settings: {
+      get: vi.fn(async () => makeSettings()),
+      update: vi.fn(async (patch) => ({ ...makeSettings(), ...patch }) as Settings),
+      onChanged: vi.fn(() => () => {}),
+      ...overrides.settings,
     },
     session: {
       list: vi.fn(async () => [] as Session[]),
@@ -58,6 +63,30 @@ export function makeSession(partial: Partial<Session> = {}): Session {
     shell: 'cmd.exe',
     sortOrder: seq,
     createdAt: '2026-09-10T00:00:00.000Z',
+    ...partial,
+  }
+}
+
+/** 构造一条唤起命令，字段可覆盖 */
+export function makeCommand(partial: Partial<LaunchCommand> & { command: string }): LaunchCommand {
+  return {
+    id: `c-${partial.command}`,
+    label: partial.command,
+    pinned: true,
+    sortOrder: 0,
+    ...partial,
+  }
+}
+
+/** 缺省设置：claude / gemini / pi 平铺，背景纯色 */
+export function makeSettings(partial: Partial<Settings> = {}): Settings {
+  return {
+    launchCommands: [
+      makeCommand({ command: 'claude', sortOrder: 1 }),
+      makeCommand({ command: 'gemini', sortOrder: 2 }),
+      makeCommand({ command: 'pi', sortOrder: 3 }),
+    ],
+    terminalBackground: { imagePath: null, dimOpacity: 0.6 },
     ...partial,
   }
 }

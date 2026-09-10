@@ -28,3 +28,32 @@ export interface SessionsFile {
   version: typeof SESSIONS_FILE_VERSION
   sessions: Session[]
 }
+
+// ---- settings.json（M1 追加，Plan §13）----
+
+/** 唤起命令：pinned 平铺在路径条，非 pinned 收进「更多 ▾」 */
+export interface LaunchCommand {
+  id: string // uuid v4
+  label: string // 按钮文字，缺省 = command
+  command: string // 写入终端的命令（不含回车）
+  pinned: boolean
+  sortOrder: number // 越小越靠前（平铺区与「更多」各自按此排序）
+}
+
+export interface TerminalBackground {
+  imagePath: string | null // 用户选择的图片绝对路径；null = 纯色
+  dimOpacity: number // 0–1，图片上方黑色遮罩的不透明度，保证文字可读
+}
+
+export const DEFAULT_TERMINAL_BACKGROUND: TerminalBackground = { imagePath: null, dimOpacity: 0.6 }
+
+export interface Settings {
+  launchCommands: LaunchCommand[]
+  terminalBackground: TerminalBackground
+}
+
+export const SETTINGS_FILE_VERSION = 1
+
+export interface SettingsFile extends Settings {
+  version: typeof SETTINGS_FILE_VERSION
+}

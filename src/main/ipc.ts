@@ -10,11 +10,14 @@ import type {
   PtySize,
   SendArgs,
   SendChannel,
+  LaunchCommandInput,
   SessionPatch,
+  SettingsPatch,
 } from '@shared/ipc'
-import { SHELL_KINDS, type AgentKind, type ShellKind } from '@shared/models'
+import { SHELL_KINDS, type ShellKind, type TerminalBackground } from '@shared/models'
 import type { PtyManager } from './pty/PtyManager'
 import type { SessionStore } from './store/SessionStore'
+import type { SettingsStore } from './store/SettingsStore'
 
 export interface IpcMainLike {
   handle(channel: string, listener: (event: unknown, ...args: any[]) => unknown): void
@@ -27,13 +30,12 @@ export interface IpcDeps {
   /** Windows 构建号（os.release 的第三段），供 xterm windowsPty 选项 */
   osBuild: number
   store: SessionStore
+  settings: SettingsStore
   pty: PtyManager
   /** 系统目录选择框（平台层注入，服务层不 import electron） */
   pickDirectory: () => Promise<string | null>
   /** 本机可用 shell（启动时探测） */
   listShells: () => ShellKind[]
-  /** 已安装的唤起工具（启动时探测） */
-  listAgents: () => AgentKind[]
 }
 
 export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
@@ -50,7 +52,6 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   handle('app:get-version', () => deps.version)
   handle('app:get-os-build', () => deps.osBuild)
   handle('app:list-shells', () => deps.listShells())
-  handle('app:list-agents', () => deps.listAgents())
 
   handle('session:list', () => deps.store.list())
   handle('session:create', (input) => deps.store.create(assertCreateInput(input)))
@@ -61,6 +62,9 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
     await deps.store.remove(sessionId)
   })
   handle('session:pick-directory', () => deps.pickDirectory())
+
+  handle('settings:get', () => deps.settings.get())
+  handle('settings:update', (patch) => deps.settings.update(assertSettingsPatch(patch)))
 
   // 幂等：无 pty 则按会话 cwd / shell spawn，有则复用；每次打开都更新 lastOpenedAt
   handle('pty:open', async (id, size) => {
@@ -138,4 +142,48 @@ function assertPatch(patch: unknown): SessionPatch {
     out.sortOrder = o.sortOrder as number
   }
   return out
+}
+
+function assertSettingsPatch(patch: unknown): SettingsPatch {
+  const o = (patch ?? {}) as Record<string, unknown>
+  const out: SettingsPatch = {}
+  if (o.launchCommands !== undefined) {
+    if (!Array.isArray(o.launchCommands)) throw new Error('唤起命令列表格式不正确')
+    out.launchCommands = o.launchCommands.map(assertLaunchCommand)
+  }
+  if (o.terminalBackground !== undefined) {
+    out.terminalBackground = assertTerminalBackground(o.terminalBackground)
+  }
+  return out
+}
+
+function assertLaunchCommand(item: unknown): LaunchCommandInput {
+  const o = (item ?? {}) as Record<string, unknown>
+  if (typeof o.command !== 'string' || !o.command.trim()) throw new Error('唤起命令不能为空')
+  if (
+    (o.id !== undefined && typeof o.id !== 'string') ||
+    typeof o.label !== 'string' ||
+    typeof o.pinned !== 'boolean' ||
+    !Number.isInteger(o.sortOrder)
+  ) {
+    throw new Error('唤起命令格式不正确')
+  }
+  return {
+    id: o.id as string | undefined,
+    label: o.label.trim() || o.command.trim(),
+    command: o.command.trim(),
+    pinned: o.pinned,
+    sortOrder: o.sortOrder as number,
+  }
+}
+
+function assertTerminalBackground(bg: unknown): TerminalBackground {
+  const o = (bg ?? {}) as Record<string, unknown>
+  if (o.imagePath !== null && typeof o.imagePath !== 'string') {
+    throw new Error('终端背景图片路径格式不正确')
+  }
+  if (typeof o.dimOpacity !== 'number' || !(o.dimOpacity >= 0 && o.dimOpacity <= 1)) {
+    throw new Error('遮罩不透明度必须在 0 到 1 之间')
+  }
+  return { imagePath: o.imagePath, dimOpacity: o.dimOpacity }
 }

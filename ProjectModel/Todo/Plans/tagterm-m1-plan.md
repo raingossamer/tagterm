@@ -564,7 +564,7 @@ Slice 1 → Slice 2 → Slice 3 → Slice 4 → Slice 5 → Slice 6 → Slice 7 
 | 5 托盘与生命周期 | 🟢 Done | Claude | 2026-09-10；commit 1714485；「托盘恢复后内容原样」「无残留 conhost / claude 进程」「二次启动只聚焦」留 S7 人工验证 |
 | 6 打包 | 🟢 Done | Claude | 2026-09-10；commit 122ca4d；产出 dist/TagTerm Setup 0.1.0.exe（118 MB）与 dist/win-unpacked；「可安装 / 卸载不删数据」留 S7 人工验证 |
 | 7 M1 验收（HITL） | 🟡 In progress | 你 | 验收指引见 §12；已修粘贴 bug（682cdc8）；反馈催生 S8–S10（§13） |
-| 8 唤起命令自定义（收藏夹式） | 🔴 Not started | - | §13 |
+| 8 唤起命令自定义（收藏夹式） | 🟢 Done | Claude | 2026-09-11；偏差见 §11；81 例单测 + 烟测（settings.json 生成、按钮来自设置）绿；「重启后仍如此」「拖拽手感」留人工验收 |
 | 9 设置窗口与终端背景图 | 🔴 Not started | - | §13 |
 | 10 检查更新 | 🔴 Not started | - | §13；更新源地址待用户提供 |
 
@@ -637,10 +637,21 @@ Status: 🔴 Not started | 🟡 In progress | 🟢 Done | ⚠️ Blocked
 | 问题 / 处理 | 原因 | 影响 |
 |------|------|------|
 | **Bug**：终端里 Ctrl+V 输出 `^V`、右键无反应，无法粘贴。修复：新增 `terminal/clipboardKeys.ts`（纯函数）+ 工厂内 `attachCustomKeyEventHandler`：Ctrl+V / Ctrl+Shift+V / Shift+Insert 交给浏览器原生 paste 由 xterm 处理；Ctrl+Shift+C 复制，Ctrl+C 有选区复制、无选区仍是中断；右键有选区复制、无选区读剪贴板粘贴 | xterm 默认把 Ctrl+V 当控制字符发给 pty | 烟测新增右键粘贴与真实 Ctrl+V（`sendInputEvent`）两项 |
-| 烟测实例改用独立 userData（`%TEMP%	agterm-smoke`）与独立数据目录 | 单实例锁以 userData 为键，用户正在运行的 TagTerm.exe 会让烟测实例立刻退出；烟测也不该碰真实 sessions.json | 烟测不再写 `%APPDATA%\TagTerm` |
+| 烟测实例改用独立 userData（`%TEMP%\tagterm-smoke`）与独立数据目录 | 单实例锁以 userData 为键，用户正在运行的 TagTerm.exe 会让烟测实例立刻退出；烟测也不该碰真实 sessions.json | 烟测不再写 `%APPDATA%\TagTerm` |
 | 用户反馈「标签在哪里创建」 | M1 按计划不做标签（原型裁剪见 §5），M2 实现 | 不改 |
 | 用户反馈「已在 claude / pi 里时唤起与清屏按钮应失效」 | 依赖 agent 检测（M3）；原型在有 agent 时把唤起区改为「当前：Claude Code，运行中」+「退出 Claude Code」 | M3 实现 |
-| 用户反馈「唤起命令应可自定义，不限于 claude / gemini / pi」 | 新产品决策（原计划 §9 #6 只做 PATH 探测，可配置 UI 归 M4） | 待用户决定：M1 现在做 / 归 M3 与 agent 一起做 / 归 M4 |
+| 用户反馈「唤起命令应可自定义，不限于 claude / gemini / pi」 | 新产品决策（原计划 §9 #6 只做 PATH 探测，可配置 UI 归 M4） | 用户决定 M1 现在做 → Slice 8（§13） |
+
+### Slice 8
+
+| 偏差 / 决定 | 原因 | 影响 |
+|------|------|------|
+| 删除 `app:list-agents` 通道与 `tagterm.app.listAgents()` | 路径条改为读 settings.json 后该通道无消费者；PATH 探测结果只用于首次生成 settings.json 的种子（`SettingsStore` 构造参数 `seedCommands`） | Design 文档尚未记录该通道，由 design-doc-sync 直接以新契约同步 |
+| `settings.json` 落盘布尔字段 `pinned` | §13 数据模型如此；与 `sql.md`「约定」草案条目「布尔字段不落盘（当前无）」冲突，§13 为已批准的 Spec | **规范候选**（auto 模式累积，全部切片完成时判定）：把该草案条目改为「布尔字段可落盘，用 JSON 布尔而非 0/1」 |
+| `settings:update` 是补丁语义（给出的字段整体替换），首次生成默认设置时不广播 `settings:changed` | 唤起命令列表在编辑弹窗里整体编辑、整体提交，逐条 CRUD 通道没有必要；首次生成发生在窗口创建前，无人可收 | 渲染进程 `settings` store 只有 `load` / `saveLaunchCommands`，S9 加 `saveTerminalBackground` |
+| 新命令的 `id` 由主进程分配（补丁项 `id` 可缺省），接口层同时做 trim 与「显示名缺省 = 命令」 | 主键生成留在主进程（`sql.md` 约定 `crypto.randomUUID()`）；接口层守卫不信任渲染进程的规整 | 渲染进程 `normalizeLaunchCommands` 与接口层各做一次规整，属有意的双重防护 |
+| 「更多 ▾」为路径条内的绝对定位弹出层，点击外部 / 再点按钮 / 点选命令即收起；拖拽排序只在编辑弹窗内（HTML5 DnD，排序为纯函数 `moveItem`） | §13「待你确认」#2 用户未反对 | 无 |
+| 编辑弹窗「完成」时命令留空的行静默丢弃（提示文案注明），不阻断保存 | 减少一次确认；空行通常是「新增」后未填 | 无 |
 
 ## 12. M1 验收指引（Slice 7 HITL 输入）
 
