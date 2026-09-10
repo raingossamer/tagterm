@@ -495,7 +495,7 @@ export class TerminalPool {
 **Acceptance criteria**:
 - [ ] 安装包可安装、启动、开终端、跑 `claude`
 - [ ] 安装版读写的仍是 `%APPDATA%\TagTerm`；卸载不删数据
-- [ ] 若镜像下载或签名等环境问题卡住，退而交付 `pnpm build:dir` 的免安装目录，安装包推到 M4
+- [x] 若镜像下载或签名等环境问题卡住，退而交付 `pnpm build:dir` 的免安装目录，安装包推到 M4
 
 ---
 
@@ -562,8 +562,8 @@ Slice 1 → Slice 2 → Slice 3 → Slice 4 → Slice 5 → Slice 6 → Slice 7 
 | 3 终端：PTY 与 xterm 单会话 | 🟢 Done | Claude | 2026-09-10；commit 869e97b；偏差见 §11；「拖动窗口重排」「WebGL 上下文丢失回退」两项留 S7 人工验证 |
 | 4 多会话切换与标签页 | 🟢 Done | Claude | 2026-09-10；commit 5196e07；偏差见 §11；「3 个 claude TUI 来回切换不乱」「≥8 会话无 WebGL 告警」留 S7 人工验证 |
 | 5 托盘与生命周期 | 🟢 Done | Claude | 2026-09-10；commit 1714485；「托盘恢复后内容原样」「无残留 conhost / claude 进程」「二次启动只聚焦」留 S7 人工验证 |
-| 6 打包 | 🔴 Not started | - | - |
-| 7 M1 验收（HITL） | 🔴 Not started | - | - |
+| 6 打包 | 🟢 Done | Claude | 2026-09-10；commit 122ca4d；产出 dist/TagTerm Setup 0.1.0.exe（118 MB）与 dist/win-unpacked；「可安装 / 卸载不删数据」留 S7 人工验证 |
+| 7 M1 验收（HITL） | 🟡 In progress | 你 | 验收指引见 §12；tdd auto 在此暂停等待你的验收结论 |
 
 Status: 🔴 Not started | 🟡 In progress | 🟢 Done | ⚠️ Blocked
 
@@ -616,3 +616,55 @@ Status: 🔴 Not started | 🟡 In progress | 🟢 Done | ⚠️ Blocked
 |------|------|------|
 | 图标改为 electron-vite 的 `?asset` 导入（`resources/tray.png` / `icon.ico` 随构建复制进 `out/main`） | 打包后 `resources/` 不在 asar 内，`__dirname` 相对路径失效 | `tsconfig.node.json` types 加 `electron-vite/node` |
 | 烟测在主进程侧核查关窗隐藏 / pty 存活 / 显示恢复，并改走 `app.quit()`（before-quit → killAll）退出；两条烟测 pty 的 pid 退出后已确认消失 | 覆盖 S5 验收项中可自动化的部分 | 「托盘「退出」后无残留 conhost / OpenConsole / claude 的 node 进程」仍需 S7 在真实 claude 运行时人工核对（见 Slice 3 风险） |
+
+
+### Slice 6
+
+| 偏差 / 补充 | 原因 | 影响 |
+|------|------|------|
+| `electron-builder.yml` 设 `npmRebuild: false` | electron-builder 默认再跑一次 electron-rebuild，撞上 Slice 1 记录的 node-pty winpty gyp 问题 | 与 Slice 1 偏差一致：node-pty 用包内预编译产物 |
+| `pnpm-workspace.yaml` overrides：`app-builder-lib>@electron/get` 钉 3.1.0 | app-builder-lib 26.15.3 声明 `^3.0.0` 却用到 3.1.0 才有的 `ElectronDownloadCacheMode`，pnpm 解析到 3.0.0 时打包报 `reading 'ReadWrite'` | 升级 electron-builder 后可去掉 |
+| `files` 加入 `resources/**` | electron-vite 的 `?asset` 在主进程里解析为 `path.join(__dirname, '../../resources/x')`，打包后需从 asar 内读取 | 无 |
+| `package.json` 增加 `packageManager: pnpm@11.17.0` | electron-builder 检测包管理器 | 无 |
+| 安装包未签名（`signtool` 走无证书流程） | 无代码签名证书 | 首次运行会有 SmartScreen 提示，属预期 |
+| asar 约 26 MB、win-unpacked 约 400 MB | 含 vue 运行时依赖（compiler-sfc 的 @babel）与 node-pty 全平台 prebuilds / third_party | M4 打磨时可用 `files` 排除非 win32-x64 的 prebuilds |
+
+## 12. M1 验收指引（Slice 7 HITL 输入）
+
+> 自动化已覆盖的项在「已自动验证」列标 ✅（vitest 60 例 + `TAGTERM_SMOKE=1` 烟测，含打包版）；需要你亲手操作的在「你要做的」列。每步给出预期现象，不符即记为问题。
+
+### 准备
+
+```bat
+pnpm install
+pnpm dev            :: 开发模式；或用打包版 dist\win-unpacked\TagTerm.exe（安装包见 §11 Slice 6）
+```
+
+启动日志应出现 `[pty] node-pty 已加载`、`[main] 可用 shell：cmd.exe, powershell.exe`、`[main] 已安装的唤起工具：claude, gemini, pi`。
+
+### 逐步操作
+
+| # | 你要做的 | 预期现象 | 已自动验证 |
+|---|---------|---------|:---:|
+| 1 | 首次启动 | 窗口 1200×760，左栏只有品牌行 + 「新建会话」，右侧黑底空状态「选一个会话开始」三行文案，状态栏「0 个会话 … TagTerm v0.1.0」；DevTools（Ctrl+Shift+I）Console 无红色报错，输入 `window.process` / `require` 均为 undefined | ✅ |
+| 2 | 点「新建会话」，目录留空直接回车 | 不创建；目录框占位变「需要一个目录」并获得焦点 | ✅ |
+| 3 | 点「浏览…」选一个真实项目目录（如 `C:\Users\21477\Desktop\tagterm`），名称留空，回车 | 弹窗关闭，左栏出现一行：名称 = 目录末段、下方 mono 显示路径末两段；该行左侧蓝条；右侧出现标签页 + 路径条 + 终端，终端显示 `C:\该目录>` 提示符 | ✅（提示符 / 名称缺省） |
+| 4 | 在终端敲 `dir`、`echo 你好`，再 `type` 一个含中文的文件名 | 输出正常，中文不乱码；输入中文也不乱码 | ✅（`echo 你好，TagTerm` 往返） |
+| 5 | 在终端敲 `claude` | TUI 正常绘制、方向键 / 回车可用、Ctrl+C 可中断、中文占两格不错位 | ❌ 需人工 |
+| 6 | 拖动窗口大小；点 ☰ 收起再展开左栏 | 终端重排、TUI 不错位；提示符行随宽度变化 | ❌ 需人工（fit → resize 已单测） |
+| 7 | 再新建 2 个不同目录的会话，各自敲 `claude`，在标签页 / 左栏之间来回切换 | 各自内容不丢、TUI 不乱（切换时闪一下属 ConPTY 重绘，正常） | ✅（双会话切换不丢缓冲）/ ❌ TUI 效果需人工 |
+| 8 | 点某个标签页的 ×（tooltip「关闭标签页（会话继续在后台保持）」） | 标签页消失、激活右侧邻居（最右则左侧）；任务管理器里该 cmd.exe / claude 仍在；从左栏点回来内容与进程原样 | ✅ |
+| 9 | 路径条：点「复制」；点 `claude` / `gemini` / `pi` 按钮；点「清屏」 | 「已复制」1.2 s 后复原，剪贴板为完整路径；唤起按钮效果等同在终端敲 `claude⏎`；清屏后只剩提示符 | ✅ |
+| 10 | 在某个终端敲 `exit` | 终端末尾出现 `[进程已退出，代码 0]`；在该终端按回车或在左栏再点该会话 → 重新起 shell，出现新提示符 | ✅（单测）/ ❌ 观感需人工 |
+| 11 | 路径条点「移除会话」 | 弹 `移除会话 "x"？终端进程会被结束。`；确认后左栏、标签页同时消失，`%APPDATA%\TagTerm\sessions.json` 中该条已删，任务管理器中其 cmd.exe 消失 | ✅ |
+| 12 | 点窗口 × | 窗口消失、托盘出现 TagTerm 图标；任务管理器里所有 cmd.exe / claude 仍在运行（正在跑的 claude 不中断） | ✅（隐藏 + pty 存活）/ ❌ 托盘图标可见性需人工 |
+| 13 | 单击托盘图标（或右键「显示窗口」） | 窗口恢复，所有会话内容、标签页、active 原样 | ✅（恢复）/ ❌ 内容原样需人工 |
+| 14 | 窗口打开时再双击一次 TagTerm.exe | 不开第二个实例，只聚焦已有窗口 | ❌ 需人工 |
+| 15 | 托盘右键「退出」 | 应用退出；任务管理器无残留 `cmd.exe` / `conhost.exe` / `OpenConsole.exe` / claude 的 `node.exe`（**重点核对**：见 §11 Slice 3 风险） | ✅（cmd.exe）/ ❌ 子进程需人工 |
+| 16 | 重新启动应用 | 左栏会话列表仍在（读自 `sessions.json`），终端为空白待点开；点开后需重新输入 `claude` | ✅ |
+| 17 | 同时打开 ≥ 8 个会话 | DevTools Console 无 WebGL 上下文丢失告警；只有当前可见终端有 canvas（DevTools Elements 里 `[data-test=terminal-pane]` 下只有一个 host 含 `canvas`） | ❌ 需人工 |
+| 18 | 安装包（若已产出）：安装 → 启动 → 开终端 → 跑 `claude` → 卸载 | 安装版读写仍是 `%APPDATA%\TagTerm\sessions.json`；卸载后该文件仍在 | ❌ 需人工 |
+
+### 你确认后
+
+把 §10 Slice 7 置为 🟢 Done；发现的问题我修复并提交后，自动进入 `design-doc-sync` 收尾。
