@@ -1,6 +1,7 @@
 /**
  * 真实 xterm 实例工厂：把 xterm + fit / unicode11 / search / webgl addon 封装成 TerminalInstance。
  * WebGL 只在 setWebgl(true) 时加载；上下文丢失即退回 DOM 渲染器，内容不丢。
+ * 剪贴板：Ctrl+V 等粘贴键交给浏览器原生 paste 事件（xterm 自行处理），右键无选区时读剪贴板粘贴。
  */
 import { Terminal, type ITerminalOptions } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -9,6 +10,7 @@ import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import type { TerminalFactory, TerminalInstance, TerminalSize } from './TerminalInstance'
+import { clipboardActionForKey, clipboardActionForRightClick } from './clipboardKeys'
 
 export function createXtermFactory(getOptions: () => ITerminalOptions): TerminalFactory {
   return (): TerminalInstance => {
@@ -25,8 +27,38 @@ export function createXtermFactory(getOptions: () => ITerminalOptions): Terminal
       webgl = null
     }
 
+    const copySelection = (): void => {
+      const text = term.getSelection()
+      if (text) void navigator.clipboard.writeText(text)
+      term.clearSelection()
+    }
+    const pasteFromClipboard = async (): Promise<void> => {
+      const text = await navigator.clipboard.readText()
+      if (text) term.paste(text)
+    }
+
+    // 返回 false 表示 xterm 不处理该键：粘贴键由此落到浏览器原生 paste 事件，xterm 的 paste 监听器接手
+    term.attachCustomKeyEventHandler((ev) => {
+      const action = clipboardActionForKey(ev, term.hasSelection())
+      if (action === 'copy') {
+        ev.preventDefault()
+        copySelection()
+        return false
+      }
+      return action !== 'paste'
+    })
+
+    const onContextMenu = (e: MouseEvent): void => {
+      e.preventDefault()
+      if (clipboardActionForRightClick(term.hasSelection()) === 'copy') copySelection()
+      else void pasteFromClipboard()
+    }
+
     return {
-      open: (host) => term.open(host),
+      open: (host) => {
+        term.open(host)
+        host.addEventListener('contextmenu', onContextMenu)
+      },
       write: (data) => term.write(data),
       focus: () => term.focus(),
       fit: (): TerminalSize | null => {
@@ -55,6 +87,7 @@ export function createXtermFactory(getOptions: () => ITerminalOptions): Terminal
         }
       },
       dispose: () => {
+        term.element?.parentElement?.removeEventListener('contextmenu', onContextMenu)
         disposeWebgl()
         term.dispose()
       },
