@@ -564,8 +564,8 @@ Slice 1 → Slice 2 → Slice 3 → Slice 4 → Slice 5 → Slice 6 → Slice 7 
 | 5 托盘与生命周期 | 🟢 Done | Claude | 2026-09-10；commit 1714485；「托盘恢复后内容原样」「无残留 conhost / claude 进程」「二次启动只聚焦」留 S7 人工验证 |
 | 6 打包 | 🟢 Done | Claude | 2026-09-10；commit 122ca4d；产出 dist/TagTerm Setup 0.1.0.exe（118 MB）与 dist/win-unpacked；「可安装 / 卸载不删数据」留 S7 人工验证 |
 | 7 M1 验收（HITL） | 🟡 In progress | 你 | 验收指引见 §12；已修粘贴 bug（682cdc8）；反馈催生 S8–S10（§13） |
-| 8 唤起命令自定义（收藏夹式） | 🟢 Done | Claude | 2026-09-11；偏差见 §11；81 例单测 + 烟测（settings.json 生成、按钮来自设置）绿；「重启后仍如此」「拖拽手感」留人工验收 |
-| 9 设置窗口与终端背景图 | 🔴 Not started | - | §13 |
+| 8 唤起命令自定义（收藏夹式） | 🟢 Done | Claude | 2026-09-11；commit 1ffa0f6；偏差见 §11；81 例单测 + 烟测（settings.json 生成、按钮来自设置）绿；「重启后仍如此」「拖拽手感」留人工验收 |
+| 9 设置窗口与终端背景图 | 🟢 Done | Claude | 2026-09-11；偏差见 §11；单测 + 烟测（广播打开设置弹窗、设图后面板出现 data: URL 与遮罩、清除）绿；「托盘菜单可见」「图片实际观感」留人工验收 |
 | 10 检查更新 | 🔴 Not started | - | §13；更新源地址待用户提供 |
 
 Status: 🔴 Not started | 🟡 In progress | 🟢 Done | ⚠️ Blocked
@@ -652,6 +652,18 @@ Status: 🔴 Not started | 🟡 In progress | 🟢 Done | ⚠️ Blocked
 | 新命令的 `id` 由主进程分配（补丁项 `id` 可缺省），接口层同时做 trim 与「显示名缺省 = 命令」 | 主键生成留在主进程（`sql.md` 约定 `crypto.randomUUID()`）；接口层守卫不信任渲染进程的规整 | 渲染进程 `normalizeLaunchCommands` 与接口层各做一次规整，属有意的双重防护 |
 | 「更多 ▾」为路径条内的绝对定位弹出层，点击外部 / 再点按钮 / 点选命令即收起；拖拽排序只在编辑弹窗内（HTML5 DnD，排序为纯函数 `moveItem`） | §13「待你确认」#2 用户未反对 | 无 |
 | 编辑弹窗「完成」时命令留空的行静默丢弃（提示文案注明），不阻断保存 | 减少一次确认；空行通常是「新增」后未填 | 无 |
+
+### Slice 9
+
+| 偏差 / 决定 | 原因 | 影响 |
+|------|------|------|
+| xterm 背景**始终透明**（`allowTransparency: true`，主题 `background: '#0C0C0C00'`），纯黑 / 背景图 / 黑色遮罩全部由 TerminalPane 的容器提供 | `allowTransparency` 必须在 `term.open()` 前设定，运行时切换要重开终端；容器承担背景则换图 / 清除即时生效 | 与 frontend.md「默认选项 Campbell 配色 bg `#0C0C0C`」有出入：颜色值仍是 Campbell，只是 alpha 为 0；无图时视觉完全相同（容器底色 `--t-bg`） |
+| TerminalPane 结构改为 `.term-wrap`（底色 + `[data-test=terminal-bg]` 图片层 + `[data-test=terminal-dim]` 遮罩）> `.term[data-test=terminal-pane]`（实例池容器，绝对定位铺满） | 实例池容器的子节点必须只有终端 host（烟测按此计数），背景层不能混进去 | 无 |
+| 托盘菜单模板抽成纯函数 `main/trayMenu.ts`（不 import electron），`tray.ts` 只做 `Menu.buildFromTemplate` | 让「设置」项与回调可单测；平台层继续保持薄 | backend.md 模块表需加 trayMenu（design-doc-sync） |
+| 新增通道：`app:get-data-dir`、`app:pick-image`、`settings:read-background-image`（data: URL；未设置 / 文件不存在 → null）、事件 `app:open-settings`；`SettingsStore.readBackgroundImage()` 委托 `store/backgroundImage.ts`（按扩展名映射 MIME，不支持的扩展名抛错，文件不存在返回 null 并 warn） | 图片经主进程读成 data: URL，渲染进程不碰文件系统，CSP 只放行 `img-src data:` | 主进程持有的是路径，data: URL 只在渲染进程内存里镜像；大图（数 MB）经 IPC 传一次，可接受 |
+| 遮罩滑块：拖动（input）只走渲染进程 `settings.previewDim` 即时预览，松手（change）才 `settings:update` 落盘；选图 / 清除即时落盘 | §13 写「改动即时预览、关闭即保存」；改为每次操作即保存后弹窗没有"未保存状态"，Esc / 点遮罩关闭也不会丢改动 | 语义等价，实现更简单 |
+| 设置弹窗「更新」段为占位：`检查更新` 按钮 disabled + 「即将支持」 | 按 §13 S9 要求先占位，S10 接入 | S10 替换 |
+| 设置入口只有托盘右键「设置」（按 §13）；主窗口内暂无入口 | 保持切片范围 | 若人工验收觉得难找，M4 打磨时加左栏 ⚙ |
 
 ## 12. M1 验收指引（Slice 7 HITL 输入）
 

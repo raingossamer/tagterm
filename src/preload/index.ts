@@ -40,6 +40,9 @@ const api: TagTermApi = {
     getVersion: () => invoke('app:get-version'),
     getOsBuild: () => invoke('app:get-os-build'),
     listShells: () => invoke('app:list-shells'),
+    getDataDir: () => invoke('app:get-data-dir'),
+    pickImage: () => invoke('app:pick-image'),
+    onOpenSettings: (cb) => subscribe('app:open-settings', cb),
   },
   session: {
     list: () => invoke('session:list'),
@@ -52,6 +55,7 @@ const api: TagTermApi = {
   settings: {
     get: () => invoke('settings:get'),
     update: (patch) => invoke('settings:update', patch),
+    readBackgroundImage: () => invoke('settings:read-background-image'),
     onChanged: (cb) => subscribe('settings:changed', cb),
   },
   pty: {

@@ -3,6 +3,7 @@
 // 提供 TerminalPool 单例，并把「选中会话 → 打开终端」「pty 退出 → 重启」「会话被移除 → 销毁实例」编排在这里
 import { onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import type { Session } from '@shared/models'
+import type { Unsubscribe } from '@shared/api'
 import SideHead from './components/SideHead.vue'
 import SessionGroups from './components/SessionGroups.vue'
 import SideFoot from './components/SideFoot.vue'
@@ -12,6 +13,7 @@ import TerminalPane from './components/TerminalPane.vue'
 import EmptyState from './components/EmptyState.vue'
 import StatusBar from './components/StatusBar.vue'
 import NewSessionModal from './components/NewSessionModal.vue'
+import SettingsModal from './components/SettingsModal.vue'
 import { useSessionsStore } from './stores/sessions'
 import { useSettingsStore } from './stores/settings'
 import { useWorkspaceStore } from './stores/workspace'
@@ -24,6 +26,8 @@ const sessions = useSessionsStore()
 const settings = useSettingsStore()
 const workspace = useWorkspaceStore()
 const isNewModalOpen = ref(false)
+const isSettingsOpen = ref(false)
+let unsubscribeOpenSettings: Unsubscribe | null = null
 const loadError = ref('')
 
 let osBuild = 0
@@ -98,6 +102,10 @@ function onKeydown(e: KeyboardEvent): void {
 
 onMounted(async () => {
   document.addEventListener('keydown', onKeydown)
+  // 托盘「设置」→ 主进程广播 → 打开设置弹窗
+  unsubscribeOpenSettings = window.tagterm.app.onOpenSettings(() => {
+    isSettingsOpen.value = true
+  })
   try {
     osBuild = await window.tagterm.app.getOsBuild()
     await settings.load()
@@ -106,7 +114,10 @@ onMounted(async () => {
     loadError.value = err instanceof Error ? err.message : String(err)
   }
 })
-onUnmounted(() => document.removeEventListener('keydown', onKeydown))
+onUnmounted(() => {
+  document.removeEventListener('keydown', onKeydown)
+  unsubscribeOpenSettings?.()
+})
 </script>
 
 <template>
@@ -127,6 +138,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
       <StatusBar />
     </main>
     <NewSessionModal v-if="isNewModalOpen" @close="isNewModalOpen = false" @created="onCreated" />
+    <SettingsModal v-if="isSettingsOpen" @close="isSettingsOpen = false" />
   </div>
 </template>
 

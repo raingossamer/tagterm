@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { registerIpc, type IpcDeps } from '../../src/main/ipc'
@@ -40,6 +40,8 @@ describe('IPC 接口层', () => {
       store,
       settings,
       pty,
+      dataDir: dir,
+      pickImage: async () => join(dir, 'picked.png'),
       pickDirectory: async () => 'D:\\picked',
       listShells: () => ['cmd.exe', 'powershell.exe'],
     }
@@ -135,6 +137,26 @@ describe('IPC 接口层', () => {
     expect(after.launchCommands[0]).toMatchObject({ command: 'gemini', pinned: false })
     expect(after.terminalBackground).toEqual(before.terminalBackground)
     await expect(ipc.invoke('settings:get')).resolves.toEqual(after)
+  })
+
+  it('app:get-data-dir / app:pick-image 返回装配层注入的值', async () => {
+    await expect(ipc.invoke('app:get-data-dir')).resolves.toBe(dir)
+    await expect(ipc.invoke('app:pick-image')).resolves.toBe(join(dir, 'picked.png'))
+  })
+
+  it('settings:read-background-image：未设置或文件不存在返回 null，存在则返回 data: URL', async () => {
+    await expect(ipc.invoke('settings:read-background-image')).resolves.toBeNull()
+
+    const file = join(dir, 'bg.png')
+    await ipc.invoke('settings:update', {
+      terminalBackground: { imagePath: file, dimOpacity: 0.5 },
+    })
+    await expect(ipc.invoke('settings:read-background-image')).resolves.toBeNull()
+
+    writeFileSync(file, Buffer.from('89504e470d0a1a0a', 'hex'))
+    await expect(ipc.invoke('settings:read-background-image')).resolves.toBe(
+      'data:image/png;base64,iVBORw0KGgo=',
+    )
   })
 
   it('settings:update 非法补丁在接口层被拒绝', async () => {

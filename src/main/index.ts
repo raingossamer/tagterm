@@ -17,6 +17,7 @@ import { SettingsStore } from './store/SettingsStore'
 import { resolveDataDir } from './store/paths'
 import { PtyManager } from './pty/PtyManager'
 import { detectAvailableShells, findOnPath } from './pathProbe'
+import { IMAGE_EXTENSIONS } from './store/backgroundImage'
 
 // 顶层异常：记录日志 + 弹框，不静默
 process.on('uncaughtException', (err) => {
@@ -51,6 +52,24 @@ async function pickDirectory(): Promise<string | null> {
     ? await dialog.showOpenDialog(mainWindow, options)
     : await dialog.showOpenDialog(options)
   return result.canceled ? null : (result.filePaths[0] ?? null)
+}
+
+async function pickImage(): Promise<string | null> {
+  const options = {
+    title: '选择终端背景图片',
+    properties: ['openFile' as const],
+    filters: [{ name: '图片', extensions: IMAGE_EXTENSIONS }],
+  }
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, options)
+    : await dialog.showOpenDialog(options)
+  return result.canceled ? null : (result.filePaths[0] ?? null)
+}
+
+/** 托盘「设置」：显示窗口并让渲染进程打开设置弹窗 */
+function openSettings(): void {
+  showWindow()
+  broadcast('app:open-settings')
 }
 
 /** Windows 构建号：os.release() 形如 "10.0.26200" */
@@ -105,12 +124,14 @@ app.whenReady().then(async () => {
     store,
     settings,
     pty: ptyManager,
+    dataDir,
     pickDirectory,
+    pickImage,
     listShells: () => availableShells,
   })
 
   mainWindow = createMainWindow({ shouldHideOnClose: () => !isQuitting })
-  tray = createTray({ onShow: showWindow, onQuit: quitApp })
+  tray = createTray({ onShow: showWindow, onOpenSettings: openSettings, onQuit: quitApp })
   if (process.env['TAGTERM_SMOKE'])
     runSmokeCheck(mainWindow, { store, pty: ptyManager, quit: quitApp })
 })

@@ -32,8 +32,12 @@ export interface IpcDeps {
   store: SessionStore
   settings: SettingsStore
   pty: PtyManager
+  /** 数据目录（设置「关于」显示） */
+  dataDir: string
   /** 系统目录选择框（平台层注入，服务层不 import electron） */
   pickDirectory: () => Promise<string | null>
+  /** 系统文件对话框选图片（平台层注入） */
+  pickImage: () => Promise<string | null>
   /** 本机可用 shell（启动时探测） */
   listShells: () => ShellKind[]
 }
@@ -52,6 +56,8 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   handle('app:get-version', () => deps.version)
   handle('app:get-os-build', () => deps.osBuild)
   handle('app:list-shells', () => deps.listShells())
+  handle('app:get-data-dir', () => deps.dataDir)
+  handle('app:pick-image', () => deps.pickImage())
 
   handle('session:list', () => deps.store.list())
   handle('session:create', (input) => deps.store.create(assertCreateInput(input)))
@@ -65,6 +71,7 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
 
   handle('settings:get', () => deps.settings.get())
   handle('settings:update', (patch) => deps.settings.update(assertSettingsPatch(patch)))
+  handle('settings:read-background-image', () => deps.settings.readBackgroundImage())
 
   // 幂等：无 pty 则按会话 cwd / shell spawn，有则复用；每次打开都更新 lastOpenedAt
   handle('pty:open', async (id, size) => {
