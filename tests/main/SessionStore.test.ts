@@ -98,6 +98,23 @@ describe('SessionStore', () => {
     expect(received.map((l) => l.map((s) => s.name))).toEqual([['a'], ['a2'], []])
   })
 
+  it('get 按 id 取会话，不存在则报错；touchOpened 写入 lastOpenedAt 并落盘', async () => {
+    const store = new SessionStore(dir)
+    await store.load()
+    const a = await store.create({ cwd: 'D:\\a' })
+    expect(store.get(a.id)).toEqual(a)
+    expect(() => store.get('missing')).toThrow('会话不存在')
+
+    await store.touchOpened(a.id)
+    const opened = store.get(a.id).lastOpenedAt
+    expect(opened).toBeDefined()
+    expect(new Date(opened!).toISOString()).toBe(opened)
+
+    const reloaded = new SessionStore(dir)
+    await reloaded.load()
+    expect(reloaded.get(a.id).lastOpenedAt).toBe(opened)
+  })
+
   it('文件版本高于程序支持的版本时拒绝加载并提示升级', async () => {
     writeFileSync(join(dir, 'sessions.json'), JSON.stringify({ version: 99, sessions: [] }), 'utf8')
     const store = new SessionStore(dir)

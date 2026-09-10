@@ -3,7 +3,15 @@
  * 运行在 sandbox: true 下，只能用 contextBridge / ipcRenderer。
  */
 import { contextBridge, ipcRenderer } from 'electron'
-import type { EventArgs, EventChannel, InvokeArgs, InvokeChannel, InvokeResult } from '@shared/ipc'
+import type {
+  EventArgs,
+  EventChannel,
+  InvokeArgs,
+  InvokeChannel,
+  InvokeResult,
+  SendArgs,
+  SendChannel,
+} from '@shared/ipc'
 import type { TagTermApi, Unsubscribe } from '@shared/api'
 
 function invoke<K extends InvokeChannel>(
@@ -11,6 +19,10 @@ function invoke<K extends InvokeChannel>(
   ...args: InvokeArgs<K>
 ): Promise<InvokeResult<K>> {
   return ipcRenderer.invoke(channel, ...args)
+}
+
+function send<K extends SendChannel>(channel: K, ...args: SendArgs<K>): void {
+  ipcRenderer.send(channel, ...args)
 }
 
 /** 订阅主进程事件，返回取消订阅函数（实例池销毁时调用，避免监听器泄漏） */
@@ -26,6 +38,7 @@ function subscribe<K extends EventChannel>(
 const api: TagTermApi = {
   app: {
     getVersion: () => invoke('app:get-version'),
+    getOsBuild: () => invoke('app:get-os-build'),
     listShells: () => invoke('app:list-shells'),
   },
   session: {
@@ -35,6 +48,15 @@ const api: TagTermApi = {
     remove: (id) => invoke('session:remove', id),
     pickDirectory: () => invoke('session:pick-directory'),
     onChanged: (cb) => subscribe('session:changed', cb),
+  },
+  pty: {
+    open: (sessionId, size) => invoke('pty:open', sessionId, size),
+    write: (sessionId, data) => send('pty:write', sessionId, data),
+    resize: (sessionId, size) => invoke('pty:resize', sessionId, size),
+    kill: (sessionId) => invoke('pty:kill', sessionId),
+    isAlive: (sessionId) => invoke('pty:is-alive', sessionId),
+    onData: (cb) => subscribe('pty:data', cb),
+    onExit: (cb) => subscribe('pty:exit', cb),
   },
 }
 

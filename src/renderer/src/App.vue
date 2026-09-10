@@ -1,30 +1,73 @@
 <script setup lang="ts">
-// 应用骨架：左栏（会话列表）+ 右栏（工作区 / 空状态 + 状态栏），布局照原型 .app 双栏 grid
-import { onMounted, onUnmounted, ref } from 'vue'
+// 应用骨架：左栏（会话列表）+ 右栏（工作区 / 空状态 + 状态栏），布局照原型 .app 双栏 grid；
+// 提供 TerminalPool 单例，并把「选中会话 → 打开终端」「会话被移除 → 销毁实例」编排在这里
+import { onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import type { Session } from '@shared/models'
 import SideHead from './components/SideHead.vue'
 import SessionGroups from './components/SessionGroups.vue'
 import SideFoot from './components/SideFoot.vue'
 import PathStrip from './components/PathStrip.vue'
+import TerminalPane from './components/TerminalPane.vue'
 import EmptyState from './components/EmptyState.vue'
 import StatusBar from './components/StatusBar.vue'
 import NewSessionModal from './components/NewSessionModal.vue'
 import { useSessionsStore } from './stores/sessions'
 import { useWorkspaceStore } from './stores/workspace'
+import { TerminalPool } from './terminal/TerminalPool'
+import { TERMINAL_POOL_KEY } from './terminal/poolKey'
+import { createXtermFactory } from './terminal/xtermFactory'
+import { buildTerminalOptions } from './terminal/theme'
 
 const sessions = useSessionsStore()
 const workspace = useWorkspaceStore()
 const isNewModalOpen = ref(false)
 const loadError = ref('')
 
-function selectSession(id: string): void {
+let osBuild = 0
+const pool = new TerminalPool({
+  pty: window.tagterm.pty,
+  createTerminal: createXtermFactory(() => buildTerminalOptions(osBuild)),
+})
+provide(TERMINAL_POOL_KEY, pool)
+
+async function selectSession(id: string): Promise<void> {
+  const session = sessions.byId(id)
+  if (!session) return
   workspace.select(id)
+  try {
+    await pool.open(session)
+  } catch (err) {
+    console.error('[terminal] 打开终端失败', err)
+  }
+  if (workspace.activeId === id) pool.show(id)
 }
 
 function onCreated(session: Session): void {
   isNewModalOpen.value = false
-  selectSession(session.id)
+  void selectSession(session.id)
 }
+
+// 没有活动会话时隐藏全部实例（空状态）
+watch(
+  () => workspace.activeId,
+  (id) => {
+    if (id === null) pool.hide()
+  },
+)
+
+// 会话被移除（本窗口或主进程广播）→ 销毁其实例并关其标签页
+watch(
+  () => sessions.sessions,
+  (list) => {
+    const alive = new Set(list.map((s) => s.id))
+    for (const id of pool.sessionIds()) {
+      if (!alive.has(id)) {
+        pool.dispose(id)
+        workspace.onSessionRemoved(id)
+      }
+    }
+  },
+)
 
 function onKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape') isNewModalOpen.value = false
@@ -33,6 +76,7 @@ function onKeydown(e: KeyboardEvent): void {
 onMounted(async () => {
   document.addEventListener('keydown', onKeydown)
   try {
+    osBuild = await window.tagterm.app.getOsBuild()
     await sessions.load()
   } catch (err) {
     loadError.value = err instanceof Error ? err.message : String(err)
@@ -50,11 +94,11 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
       <SideFoot @new-session="isNewModalOpen = true" />
     </aside>
     <main class="main">
-      <div v-if="workspace.hasActive" class="work">
+      <div v-show="workspace.hasActive" class="work">
         <PathStrip />
-        <div class="term"></div>
+        <TerminalPane />
       </div>
-      <EmptyState v-else />
+      <EmptyState v-if="!workspace.hasActive" />
       <StatusBar />
     </main>
     <NewSessionModal v-if="isNewModalOpen" @close="isNewModalOpen = false" @created="onCreated" />
@@ -99,11 +143,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKeydown))
   flex: 1;
   display: flex;
   flex-direction: column;
-  min-height: 0;
-}
-.term {
-  flex: 1;
-  background: var(--t-bg);
   min-height: 0;
 }
 </style>

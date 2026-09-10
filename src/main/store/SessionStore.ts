@@ -84,10 +84,20 @@ export class SessionStore {
   }
 
   /** 找不到即抛错（message 面向用户可读） */
-  private get(id: string): Session {
+  get(id: string): Session {
     const session = this.sessions.find((s) => s.id === id)
     if (!session) throw new Error(`会话不存在：${id}`)
     return session
+  }
+
+  /** 每次打开终端时写 lastOpenedAt */
+  async touchOpened(id: string): Promise<void> {
+    const session = this.get(id)
+    this.sessions[this.sessions.indexOf(session)] = {
+      ...session,
+      lastOpenedAt: new Date().toISOString(),
+    }
+    await this.save()
   }
 
   private nextSortOrder(): number {

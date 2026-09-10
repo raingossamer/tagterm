@@ -401,11 +401,11 @@ export class TerminalPool {
 `SessionStore` 读写 `%APPDATA%\TagTerm\sessions.json`（v1、原子写、目录自动创建、坏文件报错不静默清空）。`session:*` IPC 与 preload。渲染进程 `sessions` store 以主进程广播为准。左栏按原型平铺渲染会话行（状态点、名称、路径末两段、hover、active 左侧蓝条）。新建会话弹窗：名称、目录（可手输或「浏览…」调系统对话框）、shell 下拉；目录必填，名称缺省取末段；Enter 创建。路径条显示路径、复制、移除会话（带确认）。点击会话成为 active（终端区暂为黑底占位，S3 接上）。状态栏显示「N 个会话」。
 
 **Acceptance criteria**:
-- [ ] 新建后 `sessions.json` 为 `{ "version": 1, "sessions": [...] }`；重启应用列表仍在
-- [ ] 写入不留 `.tmp` 残留；`TagTerm` 目录不存在时自动创建
-- [ ] 目录为空时不允许创建并聚焦目录框（原型行为）；名称留空取目录末段
-- [ ] 移除会话弹确认，确认后列表与文件同时更新
-- [ ] 复制按钮复制路径并短暂显示「已复制」
+- [x] 新建后 `sessions.json` 为 `{ "version": 1, "sessions": [...] }`；重启应用列表仍在
+- [x] 写入不留 `.tmp` 残留；`TagTerm` 目录不存在时自动创建
+- [x] 目录为空时不允许创建并聚焦目录框（原型行为）；名称留空取目录末段
+- [x] 移除会话弹确认，确认后列表与文件同时更新
+- [x] 复制按钮复制路径并短暂显示「已复制」
 
 **Implementation hints**:
 - `SessionStore` 测试用真实临时目录，覆盖：新建→列出→重新 load、更新、删除、坏 JSON、无 .tmp 残留
@@ -558,7 +558,7 @@ Slice 1 → Slice 2 → Slice 3 → Slice 4 → Slice 5 → Slice 6 → Slice 7 
 | Slice | Status | Assignee | Notes |
 |-------|--------|----------|-------|
 | 1 脚手架与安全基线 | 🟢 Done | Claude | 2026-09-10；commit d3c0882；偏差见 §11 |
-| 2 会话持久化与左栏列表 | 🔴 Not started | - | - |
+| 2 会话持久化与左栏列表 | 🟢 Done | Claude | 2026-09-10；commit 9b2ceb8；偏差见 §11 |
 | 3 终端：PTY 与 xterm 单会话 | 🔴 Not started | - | - |
 | 4 多会话切换与标签页 | 🔴 Not started | - | - |
 | 5 托盘与生命周期 | 🔴 Not started | - | - |
@@ -577,3 +577,14 @@ Status: 🔴 Not started | 🟡 In progress | 🟢 Done | ⚠️ Blocked
 | `pnpm.onlyBuiltDependencies` 从 package.json 移到 `pnpm-workspace.yaml` | pnpm 11 不再读取 package.json 的 `pnpm` 字段 | 无 |
 | S1–S4 期间 `window-all-closed` 直接 `app.quit()` | 托盘尚未实现（S5），否则关窗后进程无法退出 | S5 改为常驻托盘、`window-all-closed` 不退出 |
 | 新增 `src/main/smoke.ts`：`TAGTERM_SMOKE=1` 时页面加载后核查安全基线并打印 JSON 退出 | 无人值守验收「DevTools 无 CSP 报错 / 无 window.process / require」等项 | 生产运行不触发；Design 目录结构需补记（design-doc-sync） |
+
+### Slice 2
+
+| 偏差 / 补充 | 原因 | 影响 |
+|------|------|------|
+| 新增 invoke 通道 `app:list-shells`（返回 PATH 上存在的 `ShellKind[]`），探测逻辑为纯函数 `main/shells.ts` | 落实 Plan §9 #2/#3「Shell 下拉只显示已安装的 shell」需要主进程探测 | Design backend.md「API 端点」与 frontend.md「API 调用层」需补记该通道（design-doc-sync） |
+| `SessionStore` 构造签名为 `(dir, { onChanged? })`，每次落盘后回调全量列表，由装配层广播 `session:changed` | 遵循 backend.md 模块边界「数据变更后通过回调通知装配层广播」；Plan §3.4 只写了 `(dir)` | 无 |
+| `SessionStore.touchOpened` 未在本片实现 | 只有 `pty:open` 用到，留到 Slice 3 一起做，避免无测试的预写 | 无 |
+| 渲染进程新增 `composables/path.ts`（`pathTail`）与 `composables/useCopy.ts` | 原型 `tail()` 与「已复制」反馈的纯逻辑抽出，组件只渲染 | frontend.md 目录结构需补记 `path.ts` |
+| `workspace` store 在本片已带 `openTabs` / `closeTab`（S4 才接 TabBar） | `select` 语义（选中即加标签页）与 `onSessionRemoved`（关其标签页并切邻居）本片就需要，closeTab 是同一条规则 | S4 只需补 `toggleSide` 与 TabBar 组件 |
+| 数据目录与 Electron 的 userData 同为 `%APPDATA%\TagTerm`（Windows 路径不区分大小写），目录内同时存在 Chromium 缓存文件 | `package.json` name 为 tagterm，Electron 默认 userData = `%APPDATA%\<name>` | 无功能影响；S6「卸载不删数据」时注意该目录 |
