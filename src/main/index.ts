@@ -15,6 +15,7 @@ import { registerIpc } from './ipc'
 import { runSmokeCheck } from './smoke'
 import { SessionStore } from './store/SessionStore'
 import { SettingsStore } from './store/SettingsStore'
+import { TagStore } from './store/TagStore'
 import { resolveDataDir } from './store/paths'
 import { PtyManager } from './pty/PtyManager'
 import { Updater } from './updater/Updater'
@@ -121,9 +122,15 @@ app.whenReady().then(async () => {
     seedCommands: availableAgents,
     onChanged: (next) => broadcast('settings:changed', next),
   })
+  const tags = new TagStore(dataDir, {
+    onChanged: (result) => broadcast('tag:changed', result),
+  })
   try {
     await store.load()
     await settings.load()
+    await tags.load()
+    // 两份文件都加载后再清掉崩溃遗留的悬空关联（此时渲染进程尚未订阅，不广播）
+    await tags.pruneDangling(store.list().map((s) => s.id))
   } catch (err) {
     // 坏文件不静默清空：提示后退出，由用户处理文件
     dialog.showErrorBox('TagTerm 无法加载数据', err instanceof Error ? err.message : String(err))
@@ -136,6 +143,7 @@ app.whenReady().then(async () => {
     osBuild: osBuildNumber(),
     store,
     settings,
+    tags,
     updater,
     pty: ptyManager,
     dataDir,
@@ -146,7 +154,7 @@ app.whenReady().then(async () => {
 
   mainWindow = createMainWindow({ shouldHideOnClose: () => !isQuitting })
   tray = createTray({ onShow: showWindow, onOpenSettings: openSettings, onQuit: quitApp })
-  if (isSmoke) runSmokeCheck(mainWindow, { store, pty: ptyManager, quit: quitApp })
+  if (isSmoke) runSmokeCheck(mainWindow, { store, tags, pty: ptyManager, quit: quitApp })
   // 未打包（开发）时 electron-updater 会直接报错，只在打包版自动检查
   else if (app.isPackaged) updater.scheduleAutoCheck(10_000)
 })

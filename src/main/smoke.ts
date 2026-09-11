@@ -5,13 +5,15 @@
  * 以 JSON 打印到 stdout。生产运行不触发。
  */
 import { app, type BrowserWindow } from 'electron'
-import { writeFileSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { PtyManager } from './pty/PtyManager'
 import type { SessionStore } from './store/SessionStore'
+import type { TagStore } from './store/TagStore'
 
 export interface SmokeDeps {
   store: SessionStore
+  tags: TagStore
   pty: PtyManager
   quit: () => void
 }
@@ -80,6 +82,16 @@ const SMOKE_SCRIPT = `(async () => {
   const sideHidden = $('.app')?.classList.contains('side-hidden') ?? null
   $('[data-test=tab-side]')?.click()
 
+  // 标签：创建并挂到第一个会话 → 该行出现色点；删标签后色点消失
+  const rowOf = (name) => $$('[data-test=session-row]').find((r) => r.textContent.includes(name))
+  const dotsOf = (name) => rowOf(name)?.querySelectorAll('[data-test=row-tag-dot]').length ?? -1
+  const tagA = await api.tag.create('smoke-标签')
+  await api.tag.attach(s1.id, tagA.id)
+  const gotTagDot = await waitFor(() => dotsOf('smoke-临时') === 1)
+  const tagDotColor = rowOf('smoke-临时')?.querySelector('[data-test=row-tag-dot]')?.style.background ?? null
+  await api.tag.remove(tagA.id)
+  const tagDotCleared = await waitFor(() => dotsOf('smoke-临时') === 0)
+
   return {
     hasProcess: typeof window.process !== 'undefined',
     hasRequire: typeof window.require !== 'undefined',
@@ -93,6 +105,7 @@ const SMOKE_SCRIPT = `(async () => {
     terminal: { gotPrompt1, gotEcho, gotRightClickPaste, gotPrompt2, hosts: hosts.length, visibleHosts, hasXterm: !!$('[data-test=terminal-pane] .xterm'), hasCanvas: !!$('[data-test=terminal-pane] canvas'), dataEvents },
     tabs: { tabNames, activeTab, activeAfterSwitch, tabsAfterClose, s2AliveAfterClose, hostsAfterClose },
     strip: { launchers, sideHidden },
+    tags: { gotTagDot, tagDotColor, tagDotCleared },
   }
 })()`
 
@@ -219,12 +232,24 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
       await sleep(200)
       Object.assign(lifecycle, { visibleAfterShow: win.isVisible() })
 
-      // 清理烟测会话（正常退出路径由 before-quit killAll 结束 pty）
+      // 清理烟测会话（正常退出路径由 before-quit killAll 结束 pty）；tags.json 应已落盘且只剩空集合
       for (const id of sessionIds) await deps.store.remove(id)
       const remaining = deps.store.list().length
+      const tagsFile = {
+        exists: existsSync(join(app.getPath('userData'), 'tags.json')),
+        remaining: deps.tags.list(),
+      }
       console.log(
         '[smoke] ' +
-          JSON.stringify({ ...result, clipboard, settings, lifecycle, remaining, consoleErrors }),
+          JSON.stringify({
+            ...result,
+            clipboard,
+            settings,
+            lifecycle,
+            remaining,
+            tagsFile,
+            consoleErrors,
+          }),
       )
     } catch (err) {
       console.log('[smoke] ' + JSON.stringify({ error: String(err), ...result, consoleErrors }))

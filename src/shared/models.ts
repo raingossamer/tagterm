@@ -67,3 +67,39 @@ export interface UpdateStatus {
   percent?: number // downloading：0–100 整数
   message?: string // error
 }
+
+// ---- tags.json（M2）----
+
+/** 标签八色轮转表（原型 TAG_COLORS）：新建按当前标签数轮转，管理弹窗点色块换下一色 */
+export const TAG_COLORS = [
+  '#2F6FDB',
+  '#2A9D5C',
+  '#C98A0C',
+  '#7B4FD1',
+  '#D14343',
+  '#1E9BA8',
+  '#C8449A',
+  '#6B7280',
+] as const
+export type TagColor = (typeof TAG_COLORS)[number]
+
+export interface Tag {
+  id: string // uuid v4
+  name: string // trim 后非空，精确匹配唯一（区分大小写）
+  color: TagColor
+  sortOrder: number // 创建顺序：现有最大值 + 1；无排序 UI
+}
+
+/** 会话与标签的多对多关联；(sessionId, tagId) 联合唯一 */
+export interface SessionTag {
+  sessionId: string
+  tagId: string
+}
+
+export const TAGS_FILE_VERSION = 1
+
+export interface TagsFile {
+  version: typeof TAGS_FILE_VERSION
+  tags: Tag[]
+  sessionTags: SessionTag[]
+}

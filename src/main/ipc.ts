@@ -13,11 +13,19 @@ import type {
   LaunchCommandInput,
   SessionPatch,
   SettingsPatch,
+  TagPatch,
 } from '@shared/ipc'
-import { SHELL_KINDS, type ShellKind, type TerminalBackground } from '@shared/models'
+import {
+  SHELL_KINDS,
+  TAG_COLORS,
+  type ShellKind,
+  type TagColor,
+  type TerminalBackground,
+} from '@shared/models'
 import type { PtyManager } from './pty/PtyManager'
 import type { SessionStore } from './store/SessionStore'
 import type { SettingsStore } from './store/SettingsStore'
+import type { TagStore } from './store/TagStore'
 import type { Updater } from './updater/Updater'
 
 export interface IpcMainLike {
@@ -32,6 +40,7 @@ export interface IpcDeps {
   osBuild: number
   store: SessionStore
   settings: SettingsStore
+  tags: TagStore
   updater: Updater
   pty: PtyManager
   /** 数据目录（设置「关于」显示） */
@@ -64,16 +73,35 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   handle('session:list', () => deps.store.list())
   handle('session:create', (input) => deps.store.create(assertCreateInput(input)))
   handle('session:update', (id, patch) => deps.store.update(assertId(id), assertPatch(patch)))
+  // 跨 store 级联在编排层顺序执行：结束 pty → 删会话 → 删其标签关联（两次写、两次广播）
   handle('session:remove', async (id) => {
     const sessionId = assertId(id)
     deps.pty.kill(sessionId)
     await deps.store.remove(sessionId)
+    await deps.tags.detachAllOf(sessionId)
   })
   handle('session:pick-directory', () => deps.pickDirectory())
 
   handle('settings:get', () => deps.settings.get())
   handle('settings:update', (patch) => deps.settings.update(assertSettingsPatch(patch)))
   handle('settings:read-background-image', () => deps.settings.readBackgroundImage())
+
+  handle('tag:list', () => deps.tags.list())
+  handle('tag:create', (name, color) =>
+    deps.tags.create(assertTagName(name), assertTagColorOpt(color)),
+  )
+  handle('tag:update', (id, patch) => deps.tags.update(assertTagId(id), assertTagPatch(patch)))
+  handle('tag:remove', (id) => deps.tags.remove(assertTagId(id)))
+  // 会话是否存在由编排层核对（TagStore 不认识会话）
+  handle('session-tag:attach', (sessionId, tagId) => {
+    const sid = assertId(sessionId)
+    const tid = assertTagId(tagId)
+    deps.store.get(sid)
+    return deps.tags.attach(sid, tid)
+  })
+  handle('session-tag:detach', (sessionId, tagId) =>
+    deps.tags.detach(assertId(sessionId), assertTagId(tagId)),
+  )
 
   handle('update:get-status', () => deps.updater.status())
   handle('update:check', () => deps.updater.check())
@@ -189,6 +217,39 @@ function assertLaunchCommand(item: unknown): LaunchCommandInput {
     pinned: o.pinned,
     sortOrder: o.sortOrder as number,
   }
+}
+
+function assertTagId(id: unknown): string {
+  if (typeof id !== 'string' || !id) throw new Error('标签 id 不能为空')
+  return id
+}
+
+function assertTagName(name: unknown): string {
+  if (typeof name !== 'string' || !name.trim()) throw new Error('标签名不能为空')
+  return name
+}
+
+function assertTagColor(color: unknown): TagColor {
+  if (typeof color !== 'string' || !(TAG_COLORS as readonly string[]).includes(color)) {
+    throw new Error(`不支持的颜色：${String(color)}`)
+  }
+  return color as TagColor
+}
+
+function assertTagColorOpt(color: unknown): TagColor | undefined {
+  return color === undefined ? undefined : assertTagColor(color)
+}
+
+function assertTagPatch(patch: unknown): TagPatch {
+  const o = (patch ?? {}) as Record<string, unknown>
+  const out: TagPatch = {}
+  if (o.name !== undefined) out.name = assertTagName(o.name)
+  if (o.color !== undefined) out.color = assertTagColor(o.color)
+  if (o.sortOrder !== undefined) {
+    if (!Number.isInteger(o.sortOrder)) throw new Error('排序值必须是整数')
+    out.sortOrder = o.sortOrder as number
+  }
+  return out
 }
 
 function assertTerminalBackground(bg: unknown): TerminalBackground {

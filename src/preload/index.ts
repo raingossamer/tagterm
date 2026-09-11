@@ -65,6 +65,15 @@ const api: TagTermApi = {
     install: () => invoke('update:install'),
     onStatus: (cb) => subscribe('update:status', cb),
   },
+  tag: {
+    list: () => invoke('tag:list'),
+    create: (name, color) => invoke('tag:create', name, color),
+    update: (id, patch) => invoke('tag:update', id, patch),
+    remove: (id) => invoke('tag:remove', id),
+    attach: (sessionId, tagId) => invoke('session-tag:attach', sessionId, tagId),
+    detach: (sessionId, tagId) => invoke('session-tag:detach', sessionId, tagId),
+    onChanged: (cb) => subscribe('tag:changed', cb),
+  },
   pty: {
     open: (sessionId, size) => invoke('pty:open', sessionId, size),
     write: (sessionId, data) => send('pty:write', sessionId, data),

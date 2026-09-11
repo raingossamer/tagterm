@@ -9,8 +9,10 @@ import type {
   PtySize,
   SessionPatch,
   SettingsPatch,
+  TagListResult,
+  TagPatch,
 } from './ipc'
-import type { Session, Settings, ShellKind, UpdateStatus } from './models'
+import type { Session, Settings, ShellKind, Tag, TagColor, UpdateStatus } from './models'
 
 export type Unsubscribe = () => void
 
@@ -43,6 +45,15 @@ export interface TagTermApi {
     download(): Promise<void>
     install(): Promise<void>
     onStatus(cb: (status: UpdateStatus) => void): Unsubscribe
+  }
+  tag: {
+    list(): Promise<TagListResult>
+    create(name: string, color?: TagColor): Promise<Tag>
+    update(id: string, patch: TagPatch): Promise<Tag>
+    remove(id: string): Promise<void>
+    attach(sessionId: string, tagId: string): Promise<void>
+    detach(sessionId: string, tagId: string): Promise<void>
+    onChanged(cb: (result: TagListResult) => void): Unsubscribe
   }
   pty: {
     open(sessionId: string, size: PtySize): Promise<PtyOpenResult>
