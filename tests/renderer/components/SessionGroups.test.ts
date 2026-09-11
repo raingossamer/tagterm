@@ -148,4 +148,41 @@ describe('SessionGroups', () => {
     expect(useWorkspaceStore().hoveredId).toBeNull()
     expect(apiRows.map((r) => r.classes().includes('peer'))).toEqual([false, false])
   })
+
+  it('分组随 filter store 的选中 / 模式 / 搜索词变化：任一 → 只剩选中标签组；搜索无匹配 → 整体空态', async () => {
+    const s1 = makeSession({ name: 'api', sortOrder: 1 })
+    const s2 = makeSession({ name: 'web', sortOrder: 2 })
+    useSessionsStore().sessions = [s1, s2]
+    const simba = makeTag({ name: 'simba', sortOrder: 1 })
+    const java = makeTag({ name: 'java', sortOrder: 2 })
+    const tags = useTagsStore()
+    tags.tags = [simba, java]
+    tags.sessionTags = [
+      { sessionId: s1.id, tagId: simba.id },
+      { sessionId: s2.id, tagId: java.id },
+    ]
+    tags.sessionTags.push({ sessionId: s1.id, tagId: java.id })
+    const filter = useFilterStore()
+    const wrapper = mount(SessionGroups)
+    const titles = () => wrapper.findAll('[data-test=group-title]').map((t) => t.text())
+    expect(titles()).toEqual(['simba', 'java'])
+
+    filter.toggle(simba.id)
+    await wrapper.vm.$nextTick()
+    expect(titles()).toEqual(['simba'])
+
+    filter.toggle(java.id)
+    filter.setMode('all')
+    await wrapper.vm.$nextTick()
+    expect(titles()).toEqual(['simba ∩ java'])
+    expect(wrapper.findAll('[data-test=session-row]').map((r) => r.text())).toEqual([
+      expect.stringContaining('api'),
+    ])
+
+    filter.clear()
+    filter.setSearch('zzz')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findAll('[data-test=group-head]')).toHaveLength(0)
+    expect(wrapper.text()).toContain('没有匹配的会话。换个标签组合，或新建一个会话。')
+  })
 })
