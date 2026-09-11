@@ -5,7 +5,8 @@ import PathStrip from '../../../src/renderer/src/components/PathStrip.vue'
 import { useSessionsStore } from '../../../src/renderer/src/stores/sessions'
 import { useWorkspaceStore } from '../../../src/renderer/src/stores/workspace'
 import { useSettingsStore } from '../../../src/renderer/src/stores/settings'
-import { installFakeApi, makeCommand, makeSession, makeSettings } from '../fakeApi'
+import { useTagsStore } from '../../../src/renderer/src/stores/tags'
+import { installFakeApi, makeCommand, makeSession, makeSettings, makeTag } from '../fakeApi'
 
 // happy-dom 没有 window.confirm，按需要的返回值打桩
 function stubConfirm(result: boolean) {
@@ -159,5 +160,50 @@ describe('PathStrip', () => {
 
     expect(api.session.remove).not.toHaveBeenCalled()
     expect(useWorkspaceStore().activeId).toBe(session.id)
+  })
+
+  it('标签胶囊按 sortOrder 显示（带色），点 × 调 tag.detach；「+ 标签」打开弹出层，点击外部 / Esc 关闭', async () => {
+    const api = installFakeApi()
+    const java = makeTag({ name: 'java', color: '#C98A0C', sortOrder: 2 })
+    const simba = makeTag({ name: 'simba', color: '#2F6FDB', sortOrder: 1 })
+    const tags = useTagsStore()
+    tags.tags = [java, simba]
+    tags.sessionTags = [
+      { sessionId: session.id, tagId: java.id },
+      { sessionId: session.id, tagId: simba.id },
+    ]
+    const wrapper = mount(PathStrip, { attachTo: document.body })
+
+    const pills = wrapper.findAll('[data-test=strip-tag]')
+    expect(pills.map((p) => p.text())).toEqual(['simba×', 'java×'])
+    expect(pills[0]!.attributes('style')).toContain('#2F6FDB')
+    expect(pills[0]!.find('[data-test=strip-untag]').attributes('title')).toBe('从这个标签移除')
+    await pills[1]!.find('[data-test=strip-untag]').trigger('click')
+    expect(api.tag.detach).toHaveBeenCalledWith(session.id, java.id)
+
+    const add = wrapper.find('[data-test=strip-add-tag]')
+    expect(add.text()).toBe('+ 标签')
+    expect(wrapper.find('[data-test=tag-pop]').exists()).toBe(false)
+    await add.trigger('click')
+    expect(wrapper.find('[data-test=tag-pop]').exists()).toBe(true)
+    expect(wrapper.findAll('[data-test=tag-pop-opt]')).toHaveLength(2)
+
+    // 点弹出层内部不关闭；点击外部关闭
+    wrapper
+      .find('[data-test=tag-pop]')
+      .element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    await flushPromises()
+    expect(wrapper.find('[data-test=tag-pop]').exists()).toBe(true)
+    document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    await flushPromises()
+    expect(wrapper.find('[data-test=tag-pop]').exists()).toBe(false)
+
+    // Esc 关闭
+    await add.trigger('click')
+    expect(wrapper.find('[data-test=tag-pop]').exists()).toBe(true)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    expect(wrapper.find('[data-test=tag-pop]').exists()).toBe(false)
+    wrapper.unmount()
   })
 })
