@@ -1,8 +1,14 @@
-# pnpm 10+ 的设置文件：放行需要执行 install 脚本的依赖（electron 下载二进制、esbuild 下载平台包）
-onlyBuiltDependencies:
-  - electron
-  - esbuild
-  - node-pty
+# pnpm 11 的设置文件。allowBuilds 决定哪些依赖可以跑 install 脚本（strictDepBuilds 默认 true：
+# 有脚本但未在此声明的包会让 install 直接报错 ERR_PNPM_IGNORED_BUILDS，CI 里尤其如此）：
+# - electron：postinstall 下载 Electron 二进制，必须放行
+# - esbuild：postinstall 校验 / 安装平台二进制（平台包 @esbuild/win32-x64 已随可选依赖装好），放行无害
+# - node-pty：直接加载包内 prebuilds/win32-x64 的 N-API 预编译产物，不做 node-gyp rebuild，明确禁止
+# - electron-winstaller：Squirrel 安装器（本项目用 nsis），其 postinstall 会下载 Squirrel 二进制，明确禁止
+allowBuilds:
+  electron: true
+  esbuild: true
+  node-pty: false
+  electron-winstaller: false
 
 # app-builder-lib 26.15.3 声明 @electron/get ^3.0.0 但代码用到 3.1.0 才有的 ElectronDownloadCacheMode，
 # pnpm 会给它解析到 3.0.0 导致打包时 "Cannot read properties of undefined (reading 'ReadWrite')"
