@@ -269,4 +269,38 @@ describe('IPC 接口层', () => {
     expect(result.sessionTags).toEqual([])
     expect(result.tags).toEqual([a])
   })
+
+  it('session:create 带 tagIds：建会话后逐个 attach；tagIds 非字符串数组被拒绝；含不存在的标签 → reject 但会话已创建（不回滚）', async () => {
+    const a = (await ipc.invoke('tag:create', 'simba')) as Tag
+    const b = (await ipc.invoke('tag:create', 'java')) as Tag
+    const s = (await ipc.invoke('session:create', {
+      cwd: process.cwd(),
+      tagIds: [a.id, b.id],
+    })) as Session
+    const result = (await ipc.invoke('tag:list')) as TagListResult
+    expect(result.sessionTags).toEqual([
+      { sessionId: s.id, tagId: a.id },
+      { sessionId: s.id, tagId: b.id },
+    ])
+
+    await expect(ipc.invoke('session:create', { cwd: process.cwd(), tagIds: 'x' })).rejects.toThrow(
+      '标签 id 列表格式不正确',
+    )
+    await expect(
+      ipc.invoke('session:create', { cwd: process.cwd(), tagIds: [a.id, 5] }),
+    ).rejects.toThrow('标签 id 列表格式不正确')
+
+    await expect(
+      ipc.invoke('session:create', {
+        cwd: process.cwd(),
+        name: 'partial',
+        tagIds: [a.id, 'ghost'],
+      }),
+    ).rejects.toThrow('标签不存在：ghost')
+    const sessions = (await ipc.invoke('session:list')) as Session[]
+    const partial = sessions.find((x) => x.name === 'partial')!
+    expect(partial).toBeDefined()
+    const after = (await ipc.invoke('tag:list')) as TagListResult
+    expect(after.sessionTags).toContainEqual({ sessionId: partial.id, tagId: a.id })
+  })
 })

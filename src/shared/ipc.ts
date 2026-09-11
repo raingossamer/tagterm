@@ -18,6 +18,7 @@ export interface CreateSessionInput {
   cwd: string
   name?: string // 缺省 = 目录末段
   shell?: ShellKind // 缺省 = cmd.exe
+  tagIds?: string[] // M2：建会话后逐个 attach；attach 失败不回滚、错误原样 reject
 }
 
 export type SessionPatch = Partial<Pick<Session, 'name' | 'shell' | 'startupCmd' | 'sortOrder'>>
