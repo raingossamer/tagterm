@@ -1,7 +1,8 @@
 /**
  * 无人值守烟测：设置 TAGTERM_SMOKE=1 启动时，页面加载后核查安全基线与三层贯通
- * （真实会话新建 → 打开两个终端 → 切换 / 关闭标签页 → 中文 echo 往返 → 右键 / Ctrl+V 粘贴），
- * 再在主进程侧核查「关窗只隐藏、pty 存活、托盘恢复」，最后清理会话并走正常退出路径（before-quit killAll）。
+ * （真实会话新建 → 打开两个终端 → 切换 / 关闭标签页 → 中文 echo 往返 → 右键 / Ctrl+V 粘贴 →
+ * 标签链路：建标签 / 挂标签 / 分组与副本 / 任一 / 全部 / 搜索 / 路径条胶囊与弹出层 / 删标签 → 真实 Ctrl+K 聚焦搜索），
+ * 再在主进程侧核查「关窗只隐藏、pty 存活、托盘恢复」与 tags.json 落盘，最后清理会话并走正常退出路径（before-quit killAll）。
  * 以 JSON 打印到 stdout。生产运行不触发。
  */
 import { app, type BrowserWindow } from 'electron'
@@ -82,30 +83,65 @@ const SMOKE_SCRIPT = `(async () => {
   const sideHidden = $('.app')?.classList.contains('side-hidden') ?? null
   $('[data-test=tab-side]')?.click()
 
-  // 标签：创建并挂到第一个会话 → 该行出现色点；删标签后色点消失
+  // 标签链路：两个标签，s1 挂 A、s2 挂 A + B → 左栏 A / B 两组且 s2 出现两次、tooltip 带「同时在」
   const rowOf = (name) => $$('[data-test=session-row]').find((r) => r.textContent.includes(name))
+  const rowsOf = (name) => $$('[data-test=session-row]').filter((r) => r.textContent.includes(name))
   const dotsOf = (name) => rowOf(name)?.querySelectorAll('[data-test=row-tag-dot]').length ?? -1
-  const tagA = await api.tag.create('smoke-标签')
+  const groupTitles = () => $$('[data-test=group-title]').map((g) => g.textContent)
+  const tagA = await api.tag.create('smoke-标签A')
+  const tagB = await api.tag.create('smoke-标签B')
   await api.tag.attach(s1.id, tagA.id)
-  const gotTagDot = await waitFor(() => dotsOf('smoke-临时') === 1)
+  await api.tag.attach(s2.id, tagA.id)
+  await api.tag.attach(s2.id, tagB.id)
+  const gotTagDot = await waitFor(() => dotsOf('smoke-临时') === 1 && rowsOf('smoke-2').length === 2)
   const tagDotColor = rowOf('smoke-临时')?.querySelector('[data-test=row-tag-dot]')?.style.background ?? null
-  // 筛选与搜索：点 chip「任一」只剩该标签一组；搜索框输入即过滤；无匹配显示整体空态
-  $$('[data-test=tag-chip]').find((c) => c.textContent.includes('smoke-标签'))?.click()
+  const groupsTagged = groupTitles()
+  const s2Tooltip = rowOf('smoke-2')?.getAttribute('title') ?? null
+  // 筛选：点 chip A「任一」→ 只剩 A 组；再选 B 切「全部」→ 单组 A ∩ B 只含 s2；清除后恢复
+  const chipOf = (name) => $$('[data-test=tag-chip]').find((c) => c.textContent.includes(name))
+  const chipCounts = $$('[data-test=chip-count]').map((c) => c.textContent)
+  chipOf('smoke-标签A')?.click()
   await sleep(50)
-  const groupsWhenFiltered = $$('[data-test=group-title]').map((g) => g.textContent)
+  const groupsAny = groupTitles()
+  chipOf('smoke-标签B')?.click()
+  $('[data-test=mode-all]')?.click()
+  await sleep(50)
+  const groupsAll = groupTitles()
+  const rowsAll = $$('[data-test=session-row] .name').map((n) => n.textContent)
+  $('[data-test=mode-any]')?.click()
   $('[data-test=filter-clear]')?.click()
+  await sleep(50)
+  const groupsCleared = groupTitles()
+  // 搜索：输入即过滤；无匹配显示整体空态
   const searchInput = $('[data-test=search-input]')
   const setSearch = (v) => { searchInput.value = v; searchInput.dispatchEvent(new Event('input', { bubbles: true })) }
   setSearch('smoke-2')
   await sleep(50)
-  const rowsWhenSearching = $$('[data-test=session-row] .name').map((n) => n.textContent)
+  const rowsWhenSearching = [...new Set($$('[data-test=session-row] .name').map((n) => n.textContent))]
   setSearch('zzz-no-match')
   await sleep(50)
   const emptyText = $('.groups')?.textContent?.trim() ?? null
   setSearch('')
   await sleep(50)
+  // 路径条：选中 s2 → 两个胶囊；点 B 的 × → detach；「+ 标签」弹出层列出全部标签并标 ✓；Esc 关闭
+  rowOf('smoke-2')?.click()
+  await sleep(100)
+  const pillsBefore = $$('[data-test=strip-tag]').map((p) => p.textContent.replace('×', ''))
+  $$('[data-test=strip-tag]').find((p) => p.textContent.includes('smoke-标签B'))?.querySelector('[data-test=strip-untag]')?.click()
+  const pillRemoved = await waitFor(() => $$('[data-test=strip-tag]').length === 1)
+  $('[data-test=strip-add-tag]')?.click()
+  await sleep(50)
+  const popOptions = $$('[data-test=tag-pop-opt]').map((o) => [o.textContent.replace('✓', ''), !!o.querySelector('[data-test=tag-pop-check]')])
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  await sleep(50)
+  const popClosed = !$('[data-test=tag-pop]')
+  rowOf('smoke-临时')?.click()
+  await sleep(100)
+  // 删标签 → 分组与色点消失
   await api.tag.remove(tagA.id)
-  const tagDotCleared = await waitFor(() => dotsOf('smoke-临时') === 0)
+  await api.tag.remove(tagB.id)
+  const tagDotCleared = await waitFor(() => dotsOf('smoke-临时') === 0 && groupTitles().length === 1)
+  const groupsAfterRemove = groupTitles()
 
   return {
     hasProcess: typeof window.process !== 'undefined',
@@ -120,7 +156,10 @@ const SMOKE_SCRIPT = `(async () => {
     terminal: { gotPrompt1, gotEcho, gotRightClickPaste, gotPrompt2, hosts: hosts.length, visibleHosts, hasXterm: !!$('[data-test=terminal-pane] .xterm'), hasCanvas: !!$('[data-test=terminal-pane] canvas'), dataEvents },
     tabs: { tabNames, activeTab, activeAfterSwitch, tabsAfterClose, s2AliveAfterClose, hostsAfterClose },
     strip: { launchers, sideHidden },
-    tags: { gotTagDot, tagDotColor, groupsWhenFiltered, rowsWhenSearching, emptyText, tagDotCleared },
+    tags: {
+      gotTagDot, tagDotColor, groupsTagged, s2Tooltip, chipCounts, groupsAny, groupsAll, rowsAll, groupsCleared,
+      rowsWhenSearching, emptyText, pillsBefore, pillRemoved, popOptions, popClosed, tagDotCleared, groupsAfterRemove,
+    },
   }
 })()`
 
