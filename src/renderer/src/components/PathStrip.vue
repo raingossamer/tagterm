@@ -1,44 +1,36 @@
 <script setup lang="ts">
-// 路径条：当前会话的固定路径、复制、唤起区（settings.json 里的命令：pinned 平铺、其余收进「更多 ▾」、「编辑」）、清屏、移除会话
-import { computed, onUnmounted, ref } from 'vue'
+// 路径条：当前会话的固定路径、复制、标签胶囊（× 直接 detach）、「+ 标签」弹出层、
+// 唤起区（settings.json 里的命令：pinned 平铺、其余收进「更多 ▾」、「编辑」）、清屏、移除会话
+import { computed, ref } from 'vue'
 import { useSessionsStore } from '../stores/sessions'
 import { useSettingsStore } from '../stores/settings'
+import { useTagsStore } from '../stores/tags'
 import { useWorkspaceStore } from '../stores/workspace'
 import { useCopy } from '../composables/useCopy'
+import { usePopover } from '../composables/usePopover'
 import LaunchCommandsModal from './LaunchCommandsModal.vue'
+import TagPopover from './TagPopover.vue'
 
 const sessions = useSessionsStore()
 const settings = useSettingsStore()
+const tags = useTagsStore()
 const workspace = useWorkspaceStore()
 const { isCopied, copy } = useCopy()
-const isMoreOpen = ref(false)
 const isEditOpen = ref(false)
+// 两个弹出层：点击容器（按钮 + 弹出层）外部即关闭；TagPopover 的 Esc 由它自己 emit close
 const moreEl = ref<HTMLElement | null>(null)
+const tagPopEl = ref<HTMLElement | null>(null)
+const { isOpen: isMoreOpen, toggle: toggleMore, close: closeMore } = usePopover(moreEl)
+const { isOpen: isTagPopOpen, toggle: toggleTagPop, close: closeTagPop } = usePopover(tagPopEl)
 
 const session = computed(() => (workspace.activeId ? sessions.byId(workspace.activeId) : undefined))
+const sessionTags = computed(() => (session.value ? tags.tagsOf(session.value.id) : []))
 
 /** 唤起按钮本质是向终端写入 `<cmd>\r` */
 function runCommand(cmd: string): void {
   if (!session.value) return
   window.tagterm.pty.write(session.value.id, `${cmd}\r`)
 }
-
-/** 「更多 ▾」弹出层：点击弹出层外部即收起（监听只在打开期间挂着） */
-function onDocumentMousedown(e: MouseEvent): void {
-  if (!moreEl.value?.contains(e.target as Node)) closeMore()
-}
-function toggleMore(): void {
-  if (isMoreOpen.value) closeMore()
-  else {
-    isMoreOpen.value = true
-    document.addEventListener('mousedown', onDocumentMousedown)
-  }
-}
-function closeMore(): void {
-  isMoreOpen.value = false
-  document.removeEventListener('mousedown', onDocumentMousedown)
-}
-onUnmounted(closeMore)
 
 function runFromMore(cmd: string): void {
   closeMore()
@@ -65,6 +57,24 @@ async function removeSession(): Promise<void> {
     <button class="btn sm" title="复制路径" data-test="strip-copy" @click="copy(session.cwd)">
       {{ isCopied ? '已复制' : '复制' }}
     </button>
+    <span
+      v-for="t in sessionTags"
+      :key="t.id"
+      class="stag"
+      :style="{ '--c': t.color }"
+      data-test="strip-tag"
+      >{{ t.name
+      }}<button
+        title="从这个标签移除"
+        data-test="strip-untag"
+        @click="tags.detach(session.id, t.id)"
+        v-text="'×'"
+      ></button
+    ></span>
+    <span ref="tagPopEl" class="tagadd">
+      <button class="btn sm" data-test="strip-add-tag" @click="toggleTagPop">+ 标签</button>
+      <TagPopover v-if="isTagPopOpen" :session-id="session.id" @close="closeTagPop" />
+    </span>
     <span class="launch">
       <span class="lab" data-test="launch-label">唤起</span>
       <button
@@ -128,6 +138,29 @@ async function removeSession(): Promise<void> {
   border: 1px solid var(--line);
   border-radius: 5px;
   user-select: all;
+}
+.stag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  padding: 2px 5px 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--c) 12%, #fff);
+  color: color-mix(in srgb, var(--c) 70%, #000);
+  border: 1px solid color-mix(in srgb, var(--c) 35%, #fff);
+}
+.stag button {
+  opacity: 0.55;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.stag button:hover {
+  opacity: 1;
+}
+.tagadd {
+  position: relative;
 }
 .launch {
   margin-left: auto;
