@@ -1,0 +1,69 @@
+# 手动触发：在 Actions 页选此工作流 → Run workflow（默认 main 最新提交）。
+# 读取 package.json 的 version，跑测试与类型检查，electron-builder 打 nsis 安装包，
+# 把 latest.yml / TagTerm-Setup-x.y.z.exe / .blockmap 传到 Release vx.y.z（不存在则创建；已存在则追加 / 覆盖同名文件）。
+# 发布新版本的步骤：改 package.json 的 version → 提交推送 → 来这里点 Run workflow。
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: 先建成草稿 Release（人工检查后再发布）
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4 # 版本取 package.json 的 packageManager
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # 本地 .npmrc 指向国内镜像，CI 用官方源
+      - name: Use official registries
+        shell: bash
+        run: sed -i '/^registry=/d;/mirror=/d' .npmrc && cat .npmrc
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm typecheck
+
+      - run: pnpm test
+
+      - name: Read version
+        id: ver
+        shell: bash
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - run: pnpm build
+
+      - name: Smoke test packaged app
+        shell: bash
+        env:
+          TAGTERM_SMOKE: '1'
+        run: |
+          ./dist/win-unpacked/TagTerm.exe > smoke.log 2>&1 || true
+          grep -E '^\[smoke\]' smoke.log || { echo "no smoke output"; cat smoke.log; exit 1; }
+          grep -E '^\[smoke\]' smoke.log | grep -q '"consoleErrors":\[\]' || { echo "smoke reported console errors"; exit 1; }
+
+      - name: Publish release v${{ steps.ver.outputs.version }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.version }}
+          name: TagTerm ${{ steps.ver.outputs.version }}
+          draft: ${{ inputs.draft }}
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          files: |
+            dist/latest.yml
+            dist/TagTerm-Setup-${{ steps.ver.outputs.version }}.exe
+            dist/TagTerm-Setup-${{ steps.ver.outputs.version }}.exe.blockmap
