@@ -1,5 +1,5 @@
 /**
- * 工作区 UI 状态（只在渲染进程）：打开的标签页、当前会话、侧栏收起、每会话运行态。
+ * 工作区 UI 状态（只在渲染进程）：打开的标签页、当前会话、侧栏收起、每会话运行态、悬停会话（副本一起高亮）。
  * 标签页语义照原型：选中即加标签页；关闭当前页激活 openTabs[min(i, len-1)]；全关回到空状态。
  */
 import { defineStore } from 'pinia'
@@ -15,6 +15,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const activeId = ref<string | null>(null)
   const sideHidden = ref(false)
   const runtime = ref<Record<string, SessionRuntimeState>>({})
+  /** 鼠标悬停的会话：同一会话在各分组的副本一起高亮 */
+  const hoveredId = ref<string | null>(null)
 
   const isOpen = (id: string): boolean => openTabs.value.includes(id)
   const hasActive = computed(() => activeId.value !== null)
@@ -53,11 +55,16 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     runtime.value[id] = { alive: true }
   }
 
+  function setHovered(id: string | null): void {
+    hoveredId.value = id
+  }
+
   return {
     openTabs,
     activeId,
     sideHidden,
     runtime,
+    hoveredId,
     isOpen,
     hasActive,
     isAlive,
@@ -67,5 +74,6 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     toggleSide,
     setExited,
     markAlive,
+    setHovered,
   }
 })
