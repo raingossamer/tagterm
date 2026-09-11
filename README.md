@@ -2,7 +2,7 @@
 
 一个 Windows 桌面小工具：**把常用项目目录保存成终端会话**，点一下就打开固定在该目录的 cmd / PowerShell，多个会话像浏览器标签页一样切换，关窗进托盘、终端进程不中断。适合同时在多个项目里跑 `claude`、`gemini`、`codex`、`pi` 这类命令行 AI 工具的人。
 
-## 功能（v0.1.x）
+## 功能（v0.2.x）
 
 - **会话即路径**：新建会话只需选一个目录（名称缺省取目录末段，可选 cmd.exe / PowerShell / pwsh），列表持久化在 `%APPDATA%\TagTerm\sessions.json`。
 - **真实终端**：node-pty（ConPTY）+ xterm.js，UTF-8 中文不乱码；一个会话一个终端实例，切换不丢内容；仅当前可见终端启用 WebGL 渲染。
@@ -12,12 +12,13 @@
 - **托盘常驻**：点 × 只隐藏到托盘，所有终端继续运行；托盘菜单：显示窗口 / 设置 / 退出（退出会结束全部终端）。单实例，二次启动只聚焦已有窗口。
 - **设置**：终端背景图（自选图片 + 黑色遮罩滑块，保证文字可读）；关于（版本、数据目录）。
 - **检查更新**：设置里「检查更新」→ 下载 → 立即安装并重启；启动 10 秒后自动检查一次（只提示，不自动下载）。
+- **标签**（v0.2）：一个会话可挂多个标签，左栏按标签分组（同一会话出现在它每个标签下，悬停时副本一起高亮，分组可折叠并记住）；顶部 chips 按「任一」（并集）/「全部」（交集）筛选；搜索框按名称或路径过滤（Ctrl+K 聚焦，终端里也生效）；路径条上直接加减标签，「管理标签」改名 / 换色 / 删除；新建会话时预选当前筛选的标签。数据在 `tags.json`。
 
 ## 安装
 
 到 [Releases](https://github.com/nujabes226/tagterm/releases) 下载 `TagTerm-Setup-x.y.z.exe` 运行即可（安装包未签名，首次运行 SmartScreen 会提示）。要求 Windows 10 1809+。
 
-数据只有三个 JSON 文件，都在 `%APPDATA%\TagTerm\`：`sessions.json`（会话）、`settings.json`（唤起命令与背景）、M2 起 `tags.json`（标签）。卸载不会删除它们。
+数据只有三个 JSON 文件，都在 `%APPDATA%\TagTerm\`：`sessions.json`（会话）、`settings.json`（唤起命令与背景）、`tags.json`（标签与会话标签关联，创建第一个标签时生成）。卸载不会删除它们。
 
 ## 开发
 
@@ -46,7 +47,7 @@ Electron 44 · Vue 3.5 + Pinia · TypeScript 5.9 · electron-vite 5 · node-pty 
 src/shared/     两进程共用：数据模型、IPC 契约（通道名 + 参数 / 返回类型）、window.tagterm 的类型
 src/main/       主进程：装配（index）/ 接口层（ipc）/ 服务层（pty、store、updater）/ 平台层（window、tray）
 src/preload/    contextBridge 暴露 SDK 风格的 window.tagterm
-src/renderer/   Vue 渲染进程：stores（镜像主进程数据）、terminal（xterm 实例池）、components
+src/renderer/   Vue 渲染进程：stores（镜像主进程数据 + 筛选 UI 状态）、composables（分组算法等纯计算）、terminal（xterm 实例池）、components
 tests/          与 src 对应的单元 / 集成测试
 ```
 
@@ -60,7 +61,7 @@ tests/          与 src 对应的单元 / 集成测试
 
 ## 路线图
 
-- M2：标签（一个会话可挂多个标签，按标签分组 / 交叉筛选 / 搜索）
+- ~~M2：标签~~ 已在 v0.2.0 交付
 - M3：识别会话里正在运行的 AI 工具及其状态（运行中 / 等待你 / 已完成），托盘角标与系统通知
 - M4：全局快捷键、拖拽排序、配置导入导出
 
