@@ -5,8 +5,11 @@
 import type {
   LaunchCommand,
   Session,
+  SessionTag,
   Settings,
   ShellKind,
+  Tag,
+  TagColor,
   TerminalBackground,
   UpdateStatus,
 } from './models'
@@ -25,6 +28,15 @@ export type LaunchCommandInput = Omit<LaunchCommand, 'id'> & { id?: string }
 export interface SettingsPatch {
   launchCommands?: LaunchCommandInput[]
   terminalBackground?: TerminalBackground
+}
+
+// ---- 标签（M2）----
+
+export type TagPatch = Partial<Pick<Tag, 'name' | 'color' | 'sortOrder'>>
+
+export interface TagListResult {
+  tags: Tag[]
+  sessionTags: SessionTag[]
 }
 
 export interface PtySize {
@@ -62,6 +74,12 @@ export interface IpcInvokeMap {
   'update:check': { args: []; result: void } // 结果经 update:status 事件回报
   'update:download': { args: []; result: void }
   'update:install': { args: []; result: void } // 先结束全部终端，再退出安装
+  'tag:list': { args: []; result: TagListResult }
+  'tag:create': { args: [name: string, color?: TagColor]; result: Tag } // 同名返回已有；颜色缺省轮转
+  'tag:update': { args: [id: string, patch: TagPatch]; result: Tag } // 改名撞名 reject
+  'tag:remove': { args: [id: string]; result: void } // 连带其全部关联，会话保留
+  'session-tag:attach': { args: [sessionId: string, tagId: string]; result: void } // 幂等
+  'session-tag:detach': { args: [sessionId: string, tagId: string]; result: void }
   'pty:open': { args: [sessionId: string, size: PtySize]; result: PtyOpenResult } // 幂等
   'pty:resize': { args: [sessionId: string, size: PtySize]; result: void }
   'pty:kill': { args: [sessionId: string]; result: void }
@@ -81,6 +99,7 @@ export interface IpcEventMap {
   'settings:changed': [settings: Settings] // 设置变更后广播全量
   'app:open-settings': [] // 托盘「设置」→ 渲染进程打开设置弹窗
   'update:status': [status: UpdateStatus] // 更新状态机每次变化
+  'tag:changed': [result: TagListResult] // 标签或关联变更后全量广播（启动清理不广播）
 }
 
 export type SendChannel = keyof IpcSendMap

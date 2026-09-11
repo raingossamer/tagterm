@@ -3,9 +3,11 @@
 import { computed } from 'vue'
 import SessionRow from './SessionRow.vue'
 import { useSessionsStore } from '../stores/sessions'
+import { useTagsStore } from '../stores/tags'
 import { useWorkspaceStore } from '../stores/workspace'
 
 const sessions = useSessionsStore()
+const tags = useTagsStore()
 const workspace = useWorkspaceStore()
 const emit = defineEmits<{ select: [id: string] }>()
 
@@ -24,6 +26,7 @@ const ordered = computed(() => [...sessions.sessions].sort((a, b) => a.sortOrder
           :key="s.id"
           :session="s"
           :active="s.id === workspace.activeId"
+          :tags="tags.tagsOf(s.id)"
           @select="emit('select', $event)"
         />
       </div>

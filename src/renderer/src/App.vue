@@ -1,5 +1,6 @@
 <script setup lang="ts">
 // 应用骨架：左栏（会话列表）+ 右栏（标签页 / 工作区 / 空状态 + 状态栏），布局照原型 .app 双栏 grid；
+// 启动依次加载 settings / update / sessions / tags（tags 的派生以会话列表为主表，放最后）；
 // 提供 TerminalPool 单例，并把「选中会话 → 打开终端」「pty 退出 → 重启」「会话被移除 → 销毁实例」编排在这里
 import { onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import type { Session } from '@shared/models'
@@ -16,6 +17,7 @@ import NewSessionModal from './components/NewSessionModal.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import { useSessionsStore } from './stores/sessions'
 import { useSettingsStore } from './stores/settings'
+import { useTagsStore } from './stores/tags'
 import { useUpdateStore } from './stores/update'
 import { useWorkspaceStore } from './stores/workspace'
 import { TerminalPool } from './terminal/TerminalPool'
@@ -25,6 +27,7 @@ import { buildTerminalOptions } from './terminal/theme'
 
 const sessions = useSessionsStore()
 const settings = useSettingsStore()
+const tags = useTagsStore()
 const update = useUpdateStore()
 const workspace = useWorkspaceStore()
 const isNewModalOpen = ref(false)
@@ -113,6 +116,7 @@ onMounted(async () => {
     await settings.load()
     await update.load()
     await sessions.load()
+    await tags.load()
   } catch (err) {
     loadError.value = err instanceof Error ? err.message : String(err)
   }

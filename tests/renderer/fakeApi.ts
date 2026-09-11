@@ -1,6 +1,15 @@
 import { vi } from 'vitest'
 import type { TagTermApi } from '@shared/api'
-import type { LaunchCommand, Session, Settings, ShellKind, UpdateStatus } from '@shared/models'
+import type { TagListResult } from '@shared/ipc'
+import {
+  TAG_COLORS,
+  type LaunchCommand,
+  type Session,
+  type Settings,
+  type ShellKind,
+  type Tag,
+  type UpdateStatus,
+} from '@shared/models'
 
 type Overrides = {
   [K in keyof TagTermApi]?: Partial<TagTermApi[K]>
@@ -51,6 +60,16 @@ export function createFakeApi(overrides: Overrides = {}): TagTermApi {
       onStatus: vi.fn(() => () => {}),
       ...overrides.update,
     },
+    tag: {
+      list: vi.fn(async (): Promise<TagListResult> => ({ tags: [], sessionTags: [] })),
+      create: vi.fn(async (name, color) => makeTag(color ? { name, color } : { name })),
+      update: vi.fn(async (id, patch) => makeTag({ id, ...patch })),
+      remove: vi.fn(async () => {}),
+      attach: vi.fn(async () => {}),
+      detach: vi.fn(async () => {}),
+      onChanged: vi.fn(() => () => {}),
+      ...overrides.tag,
+    },
     pty: {
       open: vi.fn(async () => ({ created: true, pid: 4242 })),
       write: vi.fn(),
@@ -75,6 +94,19 @@ export function makeSession(partial: Partial<Session> = {}): Session {
     shell: 'cmd.exe',
     sortOrder: seq,
     createdAt: '2026-09-10T00:00:00.000Z',
+    ...partial,
+  }
+}
+
+let tagSeq = 0
+/** 构造一个测试标签：颜色按八色表轮转，sortOrder 递增，字段可覆盖 */
+export function makeTag(partial: Partial<Tag> = {}): Tag {
+  tagSeq += 1
+  return {
+    id: `t${tagSeq}`,
+    name: `tag-${tagSeq}`,
+    color: TAG_COLORS[(tagSeq - 1) % TAG_COLORS.length]!,
+    sortOrder: tagSeq,
     ...partial,
   }
 }

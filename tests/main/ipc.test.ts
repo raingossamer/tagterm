@@ -5,11 +5,12 @@ import { join } from 'node:path'
 import { registerIpc, type IpcDeps } from '../../src/main/ipc'
 import { SessionStore } from '../../src/main/store/SessionStore'
 import { SettingsStore } from '../../src/main/store/SettingsStore'
+import { TagStore } from '../../src/main/store/TagStore'
 import { Updater } from '../../src/main/updater/Updater'
 import { FakeAutoUpdater } from './fakeAutoUpdater'
 import { PtyManager } from '../../src/main/pty/PtyManager'
-import type { PtyExitEvent, PtyOpenResult } from '@shared/ipc'
-import type { Session, Settings, UpdateStatus } from '@shared/models'
+import type { PtyExitEvent, PtyOpenResult, TagListResult } from '@shared/ipc'
+import type { Session, Settings, Tag, UpdateStatus } from '@shared/models'
 import { createFakeIpcMain, type FakeIpcMain } from './fakeIpcMain'
 import { waitFor } from './helpers'
 
@@ -19,6 +20,7 @@ describe('IPC 接口层', () => {
   let deps: IpcDeps
   let store: SessionStore
   let settings: SettingsStore
+  let tags: TagStore
   let pty: PtyManager
   let autoUpdater: FakeAutoUpdater
   const updateStatuses: UpdateStatus[] = []
@@ -31,6 +33,8 @@ describe('IPC 接口层', () => {
     await store.load()
     settings = new SettingsStore(dir, { seedCommands: ['claude', 'pi'] })
     await settings.load()
+    tags = new TagStore(dir)
+    await tags.load()
     pty = new PtyManager({
       onData: (id, d) => {
         output[id] = (output[id] ?? '') + d
@@ -50,6 +54,7 @@ describe('IPC 接口层', () => {
       osBuild: 26200,
       store,
       settings,
+      tags,
       updater,
       pty,
       dataDir: dir,
@@ -209,5 +214,59 @@ describe('IPC 接口层', () => {
     await expect(
       ipc.invoke('settings:update', { terminalBackground: { imagePath: 5, dimOpacity: 0.5 } }),
     ).rejects.toThrow(/背景/)
+  })
+
+  it('tag:create / list / update / remove 与 session-tag:attach / detach 经接口层落到 TagStore；attach 要求会话存在', async () => {
+    const s = (await ipc.invoke('session:create', { cwd: process.cwd() })) as Session
+    const a = (await ipc.invoke('tag:create', 'simba')) as Tag
+    const b = (await ipc.invoke('tag:create', 'java', '#D14343')) as Tag
+    expect(a).toMatchObject({ name: 'simba', color: '#2F6FDB' })
+    expect(b).toMatchObject({ name: 'java', color: '#D14343' })
+
+    await ipc.invoke('session-tag:attach', s.id, a.id)
+    await expect(ipc.invoke('session-tag:attach', 'missing', a.id)).rejects.toThrow(
+      '会话不存在：missing',
+    )
+    await expect(ipc.invoke('session-tag:attach', s.id, 'missing')).rejects.toThrow(
+      '标签不存在：missing',
+    )
+    const updated = (await ipc.invoke('tag:update', a.id, { name: 'simba-2' })) as Tag
+    expect(updated.name).toBe('simba-2')
+    await expect(ipc.invoke('tag:list')).resolves.toEqual({
+      tags: [updated, b],
+      sessionTags: [{ sessionId: s.id, tagId: a.id }],
+    })
+
+    await ipc.invoke('session-tag:detach', s.id, a.id)
+    await ipc.invoke('tag:remove', b.id)
+    await expect(ipc.invoke('tag:list')).resolves.toEqual({ tags: [updated], sessionTags: [] })
+  })
+
+  it('tag 相关非法参数在接口层被拒绝', async () => {
+    await expect(ipc.invoke('tag:create', '   ')).rejects.toThrow('标签名不能为空')
+    await expect(ipc.invoke('tag:create', 5)).rejects.toThrow('标签名不能为空')
+    await expect(ipc.invoke('tag:create', 'x', '#000000')).rejects.toThrow('不支持的颜色：#000000')
+    await expect(ipc.invoke('tag:update', '', { name: 'x' })).rejects.toThrow('标签 id 不能为空')
+    await expect(ipc.invoke('tag:update', 'id', { name: 7 })).rejects.toThrow('标签名不能为空')
+    await expect(ipc.invoke('tag:update', 'id', { color: 'red' })).rejects.toThrow(
+      '不支持的颜色：red',
+    )
+    await expect(ipc.invoke('tag:update', 'id', { sortOrder: 1.5 })).rejects.toThrow(
+      '排序值必须是整数',
+    )
+    await expect(ipc.invoke('tag:remove', 3)).rejects.toThrow('标签 id 不能为空')
+    await expect(ipc.invoke('session-tag:attach', 'x', '')).rejects.toThrow('标签 id 不能为空')
+    await expect(ipc.invoke('session-tag:detach', '', 'y')).rejects.toThrow('会话 id 不能为空')
+  })
+
+  it('session:remove 级联删掉该会话的标签关联（kill pty → 删会话 → 删关联）', async () => {
+    const s = (await ipc.invoke('session:create', { cwd: process.cwd() })) as Session
+    const a = (await ipc.invoke('tag:create', 'simba')) as Tag
+    await ipc.invoke('session-tag:attach', s.id, a.id)
+
+    await ipc.invoke('session:remove', s.id)
+    const result = (await ipc.invoke('tag:list')) as TagListResult
+    expect(result.sessionTags).toEqual([])
+    expect(result.tags).toEqual([a])
   })
 })

@@ -1,18 +1,26 @@
 <script setup lang="ts">
-// 一行会话：状态点 + 名称 + 路径末两段；tooltip 为完整路径；active 行左侧蓝条
-import type { Session } from '@shared/models'
+// 一行会话：状态点 + 名称 + 路径末两段 + 右侧标签色点；tooltip 为完整路径，多标签时追加「同时在：a、b」；
+// active 行左侧蓝条。M3 前状态点一律 idle
+import { computed } from 'vue'
+import type { Session, Tag } from '@shared/models'
 import StatusDot from './StatusDot.vue'
 import { pathTail } from '../composables/path'
 
-defineProps<{ session: Session; active: boolean }>()
+const props = defineProps<{ session: Session; active: boolean; tags: Tag[] }>()
 const emit = defineEmits<{ select: [id: string] }>()
+
+const tooltip = computed(() =>
+  props.tags.length > 1
+    ? `${props.session.cwd}\n同时在：${props.tags.map((t) => t.name).join('、')}`
+    : props.session.cwd,
+)
 </script>
 
 <template>
   <button
     class="row"
     :class="{ active }"
-    :title="session.cwd"
+    :title="tooltip"
     data-test="session-row"
     @click="emit('select', session.id)"
   >
@@ -20,6 +28,9 @@ const emit = defineEmits<{ select: [id: string] }>()
     <span class="txt">
       <div class="name">{{ session.name }}</div>
       <div class="path" data-test="row-path">{{ pathTail(session.cwd) }}</div>
+    </span>
+    <span class="dots" data-test="row-tags">
+      <i v-for="t in tags" :key="t.id" :style="{ background: t.color }" data-test="row-tag-dot" />
     </span>
   </button>
 </template>
@@ -70,5 +81,15 @@ const emit = defineEmits<{ select: [id: string] }>()
   overflow: hidden;
   text-overflow: ellipsis;
   font-family: var(--mono);
+}
+.row .dots {
+  display: flex;
+  gap: 3px;
+  flex: none;
+}
+.row .dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
 }
 </style>
