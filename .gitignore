@@ -4,3 +4,11 @@ dist/
 *.log
 .DS_Store
 Thumbs.db
+
+# 开发范式与需求资料：本地保留，不进仓库（与源码无关）
+ProjectModel/
+tagterm-brief.md
+tagterm-prototype.html
+CLAUDE.md
+AGENTS.md
+.github/copilot-instructions.md
