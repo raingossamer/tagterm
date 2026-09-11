@@ -1,13 +1,13 @@
 <script setup lang="ts">
 // 一行会话：状态点 + 名称 + 路径末两段 + 右侧标签色点；tooltip 为完整路径，多标签时追加「同时在：a、b」；
-// active 行左侧蓝条。M3 前状态点一律 idle
+// active 行左侧蓝条；peer = 同一会话在其他分组的副本正被悬停（一起高亮）。M3 前状态点一律 idle
 import { computed } from 'vue'
 import type { Session, Tag } from '@shared/models'
 import StatusDot from './StatusDot.vue'
 import { pathTail } from '../composables/path'
 
-const props = defineProps<{ session: Session; active: boolean; tags: Tag[] }>()
-const emit = defineEmits<{ select: [id: string] }>()
+const props = defineProps<{ session: Session; active: boolean; tags: Tag[]; peer: boolean }>()
+const emit = defineEmits<{ select: [id: string]; hover: [id: string]; leave: [id: string] }>()
 
 const tooltip = computed(() =>
   props.tags.length > 1
@@ -19,10 +19,12 @@ const tooltip = computed(() =>
 <template>
   <button
     class="row"
-    :class="{ active }"
+    :class="{ active, peer }"
     :title="tooltip"
     data-test="session-row"
     @click="emit('select', session.id)"
+    @mouseenter="emit('hover', session.id)"
+    @mouseleave="emit('leave', session.id)"
   >
     <StatusDot />
     <span class="txt">
