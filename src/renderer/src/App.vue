@@ -16,6 +16,7 @@ import EmptyState from './components/EmptyState.vue'
 import StatusBar from './components/StatusBar.vue'
 import NewSessionModal from './components/NewSessionModal.vue'
 import SettingsModal from './components/SettingsModal.vue'
+import ManageTagsModal from './components/ManageTagsModal.vue'
 import { useSessionsStore } from './stores/sessions'
 import { useSettingsStore } from './stores/settings'
 import { useTagsStore } from './stores/tags'
@@ -33,6 +34,7 @@ const update = useUpdateStore()
 const workspace = useWorkspaceStore()
 const isNewModalOpen = ref(false)
 const isSettingsOpen = ref(false)
+const isManageTagsOpen = ref(false)
 let unsubscribeOpenSettings: Unsubscribe | null = null
 const loadError = ref('')
 
@@ -135,7 +137,7 @@ onUnmounted(() => {
       <TagFilter />
       <div v-if="loadError" class="empty-side" data-test="load-error">{{ loadError }}</div>
       <SessionGroups v-else @select="selectSession" />
-      <SideFoot @new-session="isNewModalOpen = true" />
+      <SideFoot @new-session="isNewModalOpen = true" @manage-tags="isManageTagsOpen = true" />
     </aside>
     <main class="main">
       <TabBar @select="selectSession" @new-session="isNewModalOpen = true" />
@@ -148,6 +150,7 @@ onUnmounted(() => {
     </main>
     <NewSessionModal v-if="isNewModalOpen" @close="isNewModalOpen = false" @created="onCreated" />
     <SettingsModal v-if="isSettingsOpen" @close="isSettingsOpen = false" />
+    <ManageTagsModal v-if="isManageTagsOpen" @close="isManageTagsOpen = false" />
   </div>
 </template>
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// 左栏底部：「新建会话」（「管理标签」属 M2，M1 不渲染）
-const emit = defineEmits<{ newSession: [] }>()
+// 左栏底部：「新建会话」与「管理标签」
+const emit = defineEmits<{ newSession: []; manageTags: [] }>()
 </script>
 
 <template>
@@ -8,6 +8,7 @@ const emit = defineEmits<{ newSession: [] }>()
     <button class="btn primary" data-test="new-session" @click="emit('newSession')">
       新建会话
     </button>
+    <button class="btn" data-test="manage-tags" @click="emit('manageTags')">管理标签</button>
   </div>
 </template>
 
