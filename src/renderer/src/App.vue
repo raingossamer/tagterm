@@ -6,6 +6,7 @@ import { onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import type { Session } from '@shared/models'
 import type { Unsubscribe } from '@shared/api'
 import SideHead from './components/SideHead.vue'
+import TagFilter from './components/TagFilter.vue'
 import SessionGroups from './components/SessionGroups.vue'
 import SideFoot from './components/SideFoot.vue'
 import TabBar from './components/TabBar.vue'
@@ -131,6 +132,7 @@ onUnmounted(() => {
   <div class="app" :class="{ 'side-hidden': workspace.sideHidden }">
     <aside class="side">
       <SideHead />
+      <TagFilter />
       <div v-if="loadError" class="empty-side" data-test="load-error">{{ loadError }}</div>
       <SessionGroups v-else @select="selectSession" />
       <SideFoot @new-session="isNewModalOpen = true" />

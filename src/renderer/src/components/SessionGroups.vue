@@ -1,6 +1,7 @@
 <script setup lang="ts">
-// 会话列表：按 buildSessionGroups 的结果渲染分组（分组头 = 三角 + 色点 + 名称 + 数量，点击折叠 / 展开，
-// 折叠状态记在 filter store）；组内无会话显示「这个标签下还没有会话」，整体无匹配显示「没有匹配的会话…」
+// 会话列表：按 buildSessionGroups（输入 = 会话 / 标签 / 关联 + filter store 的选中 / 模式 / 搜索词）渲染分组
+//（分组头 = 三角 + 色点 + 名称 + 数量，点击折叠 / 展开，折叠状态记在 filter store）；
+// 组内无会话显示「这个标签下还没有会话」，整体无匹配显示「没有匹配的会话…」
 import { computed } from 'vue'
 import SessionRow from './SessionRow.vue'
 import { buildSessionGroups } from '../composables/useSessionGroups'
@@ -20,9 +21,9 @@ const groups = computed(() =>
     sessions: sessions.sessions,
     tags: tags.tags,
     sessionTags: tags.sessionTags,
-    selected: new Set(),
-    mode: 'any',
-    search: '',
+    selected: filter.selected,
+    mode: filter.mode,
+    search: filter.search,
   }),
 )
 // 与原型一致：没有分组或所有分组都为空 → 整体空态

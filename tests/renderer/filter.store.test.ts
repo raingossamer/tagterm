@@ -41,4 +41,29 @@ describe('filter store', () => {
     expect(filter.isCollapsed('t1')).toBe(true)
     expect(filter.collapsed).toEqual(new Set(['t1']))
   })
+
+  it('toggle 选中 / 取消标签，clear 清空选中，setMode / setSearch / deselect；这些都不持久化', () => {
+    const filter = useFilterStore()
+    expect(filter.selected.size).toBe(0)
+    expect(filter.mode).toBe('any')
+    expect(filter.search).toBe('')
+
+    filter.toggle('t1')
+    filter.toggle('t2')
+    expect(filter.selected).toEqual(new Set(['t1', 't2']))
+    filter.toggle('t1')
+    expect(filter.selected).toEqual(new Set(['t2']))
+    filter.setMode('all')
+    filter.setSearch(' api ')
+    expect(filter.mode).toBe('all')
+    expect(filter.search).toBe(' api ')
+    filter.deselect('t2')
+    filter.deselect('t2') // 不在集合里也不报错
+    expect(filter.selected.size).toBe(0)
+    filter.toggle('t3')
+    filter.clear()
+    expect(filter.selected.size).toBe(0)
+    expect(filter.mode).toBe('all') // clear 只清选中，不动模式与搜索词
+    expect(localStorage.length).toBe(0)
+  })
 })

@@ -89,6 +89,21 @@ const SMOKE_SCRIPT = `(async () => {
   await api.tag.attach(s1.id, tagA.id)
   const gotTagDot = await waitFor(() => dotsOf('smoke-临时') === 1)
   const tagDotColor = rowOf('smoke-临时')?.querySelector('[data-test=row-tag-dot]')?.style.background ?? null
+  // 筛选与搜索：点 chip「任一」只剩该标签一组；搜索框输入即过滤；无匹配显示整体空态
+  $$('[data-test=tag-chip]').find((c) => c.textContent.includes('smoke-标签'))?.click()
+  await sleep(50)
+  const groupsWhenFiltered = $$('[data-test=group-title]').map((g) => g.textContent)
+  $('[data-test=filter-clear]')?.click()
+  const searchInput = $('[data-test=search-input]')
+  const setSearch = (v) => { searchInput.value = v; searchInput.dispatchEvent(new Event('input', { bubbles: true })) }
+  setSearch('smoke-2')
+  await sleep(50)
+  const rowsWhenSearching = $$('[data-test=session-row] .name').map((n) => n.textContent)
+  setSearch('zzz-no-match')
+  await sleep(50)
+  const emptyText = $('.groups')?.textContent?.trim() ?? null
+  setSearch('')
+  await sleep(50)
   await api.tag.remove(tagA.id)
   const tagDotCleared = await waitFor(() => dotsOf('smoke-临时') === 0)
 
@@ -105,7 +120,7 @@ const SMOKE_SCRIPT = `(async () => {
     terminal: { gotPrompt1, gotEcho, gotRightClickPaste, gotPrompt2, hosts: hosts.length, visibleHosts, hasXterm: !!$('[data-test=terminal-pane] .xterm'), hasCanvas: !!$('[data-test=terminal-pane] canvas'), dataEvents },
     tabs: { tabNames, activeTab, activeAfterSwitch, tabsAfterClose, s2AliveAfterClose, hostsAfterClose },
     strip: { launchers, sideHidden },
-    tags: { gotTagDot, tagDotColor, tagDotCleared },
+    tags: { gotTagDot, tagDotColor, groupsWhenFiltered, rowsWhenSearching, emptyText, tagDotCleared },
   }
 })()`
 
@@ -114,6 +129,13 @@ const FOCUS_AND_PREPARE_CLIPBOARD = `(async () => {
   const host = [...document.querySelectorAll('[data-test=terminal-pane] > div')].find((h) => h.style.display === 'block')
   host?.querySelector('textarea')?.focus()
   await navigator.clipboard.writeText('echo 快捷键粘贴OK\\r')
+  return document.activeElement?.tagName ?? null
+})()`
+
+/** 聚焦当前可见终端的输入框（Ctrl+K 真实按键测试前） */
+const FOCUS_TERMINAL = `(() => {
+  const host = [...document.querySelectorAll('[data-test=terminal-pane] > div')].find((h) => h.style.display === 'block')
+  host?.querySelector('textarea')?.focus()
   return document.activeElement?.tagName ?? null
 })()`
 
@@ -210,6 +232,19 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
       )) as boolean
       const clipboard = { focused, gotCtrlVPaste }
 
+      // Ctrl+K 真实按键：焦点在 xterm 里也要聚焦搜索框，且 pty 未收到任何字节（输出不增长）
+      const outputKey = JSON.stringify(sessionIds[0])
+      const outputLenBefore = (await win.webContents.executeJavaScript(
+        `(window.__smokeOutputs?.[${outputKey}] ?? '').length`,
+      )) as number
+      const focusedBeforeCtrlK = (await win.webContents.executeJavaScript(FOCUS_TERMINAL)) as string
+      win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'K', modifiers: ['control'] })
+      win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'K', modifiers: ['control'] })
+      await sleep(400)
+      const search = (await win.webContents.executeJavaScript(
+        `({ focusedBeforeCtrlK: ${JSON.stringify(focusedBeforeCtrlK)}, focusedAfterCtrlK: document.activeElement?.getAttribute('data-test') ?? document.activeElement?.tagName ?? null, outputGrew: (window.__smokeOutputs?.[${outputKey}] ?? '').length > ${outputLenBefore} })`,
+      )) as Record<string, unknown>
+
       // 托盘「设置」的广播 → 设置弹窗；背景图设 / 清往返
       const pngPath = join(app.getPath('userData'), 'smoke-bg.png')
       writeFileSync(pngPath, PNG_1X1)
@@ -244,6 +279,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
           JSON.stringify({
             ...result,
             clipboard,
+            search,
             settings,
             lifecycle,
             remaining,
