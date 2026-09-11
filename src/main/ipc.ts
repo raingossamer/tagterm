@@ -71,7 +71,13 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   handle('app:pick-image', () => deps.pickImage())
 
   handle('session:list', () => deps.store.list())
-  handle('session:create', (input) => deps.store.create(assertCreateInput(input)))
+  // 编排：建会话 → 逐个 attach 标签；attach 抛错原样 reject（会话已创建，不回滚）
+  handle('session:create', async (input) => {
+    const { tagIds = [], ...create } = assertCreateInput(input)
+    const session = await deps.store.create(create)
+    for (const tagId of tagIds) await deps.tags.attach(session.id, tagId)
+    return session
+  })
   handle('session:update', (id, patch) => deps.store.update(assertId(id), assertPatch(patch)))
   // 跨 store 级联在编排层顺序执行：结束 pty → 删会话 → 删其标签关联（两次写、两次广播）
   handle('session:remove', async (id) => {
@@ -157,10 +163,17 @@ function assertCreateInput(input: unknown): CreateSessionInput {
   if (o.name !== undefined && typeof o.name !== 'string') throw new Error('名称必须是字符串')
   if (o.shell !== undefined && !isShellKind(o.shell))
     throw new Error(`不支持的 shell：${String(o.shell)}`)
+  if (
+    o.tagIds !== undefined &&
+    (!Array.isArray(o.tagIds) || !o.tagIds.every((id) => typeof id === 'string' && id))
+  ) {
+    throw new Error('标签 id 列表格式不正确')
+  }
   return {
     cwd: o.cwd.trim(),
     name: o.name as string | undefined,
     shell: o.shell as ShellKind | undefined,
+    tagIds: o.tagIds as string[] | undefined,
   }
 }
 

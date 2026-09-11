@@ -1,12 +1,18 @@
 <script setup lang="ts">
-// 新建会话弹窗：名称 / 目录（可手输或「浏览…」）/ Shell；目录必填，名称缺省由主进程取目录末段
+// 新建会话弹窗：名称 / 目录（可手输或「浏览…」）/ Shell / 标签 chips（打开时预选当前筛选选中的标签）+
+// 「新标签名，回车添加」（立即创建标签并选中，取消新建会话该标签也保留）；目录必填，名称缺省由主进程取目录末段；
+// 提交时把选中标签作为 tagIds 发送，attach 失败错误内联显示、弹窗保持打开（会话已创建）
 import { onMounted, ref } from 'vue'
 import type { Session, ShellKind } from '@shared/models'
 import { DEFAULT_SHELL } from '@shared/models'
+import { useFilterStore } from '../stores/filter'
 import { useSessionsStore } from '../stores/sessions'
+import { useTagsStore } from '../stores/tags'
 
 const emit = defineEmits<{ close: []; created: [session: Session] }>()
 const sessions = useSessionsStore()
+const tags = useTagsStore()
+const filter = useFilterStore()
 
 const name = ref('')
 const cwd = ref('')
@@ -16,6 +22,8 @@ const pathPlaceholder = ref('D:\\Projects\\...')
 const error = ref('')
 const nameInput = ref<HTMLInputElement | null>(null)
 const pathInput = ref<HTMLInputElement | null>(null)
+const selectedTags = ref<Set<string>>(new Set(filter.selected))
+const newTag = ref('')
 
 onMounted(async () => {
   nameInput.value?.focus()
@@ -29,6 +37,26 @@ onMounted(async () => {
     error.value = String(err)
   }
 })
+
+function toggleTag(id: string): void {
+  const next = new Set(selectedTags.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  selectedTags.value = next
+}
+
+/** 回车即创建标签（同名返回已有）并选中；此输入框内的 Enter 不触发创建会话（stop） */
+async function addTag(): Promise<void> {
+  if (!newTag.value.trim()) return
+  error.value = ''
+  try {
+    const tag = await tags.create(newTag.value)
+    selectedTags.value = new Set([...selectedTags.value, tag.id])
+    newTag.value = ''
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  }
+}
 
 async function browse(): Promise<void> {
   const picked = await window.tagterm.session.pickDirectory()
@@ -44,10 +72,12 @@ async function create(): Promise<void> {
   }
   error.value = ''
   try {
+    const tagIds = [...selectedTags.value]
     const session = await sessions.create({
       cwd: dir,
       name: name.value.trim() || undefined,
       shell: shell.value,
+      tagIds: tagIds.length ? tagIds : undefined,
     })
     emit('created', session)
   } catch (err) {
@@ -94,6 +124,33 @@ function onBackdropMousedown(e: MouseEvent): void {
           <option v-for="s in shells" :key="s" :value="s">{{ s }}</option>
         </select>
       </div>
+      <div class="field">
+        <label>标签（可多选）</label>
+        <div class="chips">
+          <template v-if="tags.sortedTags.length">
+            <button
+              v-for="t in tags.sortedTags"
+              :key="t.id"
+              type="button"
+              class="chip"
+              :class="{ on: selectedTags.has(t.id) }"
+              :style="{ '--c': t.color }"
+              data-test="ns-chip"
+              @click="toggleTag(t.id)"
+            >
+              <i></i>{{ t.name }}
+            </button>
+          </template>
+          <span v-else class="hint" data-test="ns-tags-hint">还没有标签</span>
+        </div>
+        <input
+          v-model="newTag"
+          class="new-tag"
+          placeholder="新标签名，回车添加"
+          data-test="ns-new-tag"
+          @keydown.enter.stop.prevent="addTag"
+        />
+      </div>
       <p v-if="error" class="error" data-test="ns-error">{{ error }}</p>
       <div class="actions">
         <button class="btn" type="button" data-test="ns-cancel" @click="emit('close')">取消</button>
@@ -136,6 +193,14 @@ function onBackdropMousedown(e: MouseEvent): void {
 .path-row input {
   flex: 1;
   min-width: 0;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.new-tag {
+  margin-top: 8px;
 }
 .error {
   margin: 0 0 8px;
