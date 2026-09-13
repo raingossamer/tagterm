@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 路径条：当前会话的固定路径、复制、标签胶囊（× 直接 detach）、「+ 标签」弹出层、
-// 唤起区（settings.json 里的命令：pinned 平铺、其余收进「更多 ▾」、「编辑」）、清屏、移除会话
+// 唤起区（settings.json 里的命令：pinned 平铺、其余收进「更多 ▾」、「编辑」）、清屏。移除会话的入口在左栏（垃圾桶 / 右键菜单）
 import { computed, ref } from 'vue'
 import { useSessionsStore } from '../stores/sessions'
 import { useSettingsStore } from '../stores/settings'
@@ -40,14 +40,6 @@ function runFromMore(cmd: string): void {
 function clearScreen(): void {
   if (!session.value) return
   runCommand(session.value.shell === 'cmd.exe' ? 'cls' : 'clear')
-}
-
-/** 移除只走主进程广播这一条路：session:changed 到达后由生命周期核心销毁实例并关标签页 */
-async function removeSession(): Promise<void> {
-  const s = session.value
-  if (!s) return
-  if (!window.confirm(`移除会话 "${s.name}"？终端进程会被结束。`)) return
-  await sessions.remove(s.id)
 }
 </script>
 
@@ -111,9 +103,6 @@ async function removeSession(): Promise<void> {
         编辑
       </button>
       <button class="btn sm" data-test="strip-clear" @click="clearScreen">清屏</button>
-      <button class="btn sm danger" data-test="strip-remove" @click="removeSession">
-        移除会话
-      </button>
     </span>
     <LaunchCommandsModal v-if="isEditOpen" @close="isEditOpen = false" />
   </div>
@@ -176,17 +165,19 @@ async function removeSession(): Promise<void> {
 .more {
   position: relative;
 }
+/* 「更多 ▾」弹出层：紧贴按钮左缘向下展开，至少与按钮同宽、随内容撑开、不超过 160px（超长省略） */
 .pop {
   position: absolute;
   top: calc(100% + 4px);
-  right: 0;
-  min-width: 160px;
+  left: 0;
+  min-width: 100%;
+  max-width: 160px;
   max-height: 60vh;
   overflow: auto;
   background: #fff;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
   padding: 4px;
   z-index: 10;
 }
@@ -194,10 +185,12 @@ async function removeSession(): Promise<void> {
   display: block;
   width: 100%;
   text-align: left;
-  padding: 6px 10px;
-  border-radius: 5px;
-  font-size: 12.5px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .pop .item:hover {
   background: #f0f2f5;

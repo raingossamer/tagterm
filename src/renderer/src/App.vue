@@ -16,6 +16,7 @@ import TerminalPane from './components/TerminalPane.vue'
 import EmptyState from './components/EmptyState.vue'
 import StatusBar from './components/StatusBar.vue'
 import NewSessionModal from './components/NewSessionModal.vue'
+import EditSessionModal from './components/EditSessionModal.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import ManageTagsModal from './components/ManageTagsModal.vue'
 import { useSessionsStore } from './stores/sessions'
@@ -34,6 +35,8 @@ const tags = useTagsStore()
 const update = useUpdateStore()
 const workspace = useWorkspaceStore()
 const isNewModalOpen = ref(false)
+/** 右键菜单「编辑会话」的目标；非空即显示编辑弹窗 */
+const editingSession = ref<Session | null>(null)
 const isSettingsOpen = ref(false)
 const isManageTagsOpen = ref(false)
 let unsubscribeOpenSettings: Unsubscribe | null = null
@@ -51,6 +54,10 @@ const detachCore = workspace.attachCore(core)
 function onCreated(session: Session): void {
   isNewModalOpen.value = false
   void workspace.select(session.id)
+}
+
+function onEdit(id: string): void {
+  editingSession.value = sessions.byId(id) ?? null
 }
 
 function onKeydown(e: KeyboardEvent): void {
@@ -87,7 +94,7 @@ onUnmounted(() => {
       <SideHead />
       <TagFilter />
       <div v-if="loadError" class="empty-side" data-test="load-error">{{ loadError }}</div>
-      <SessionGroups v-else @select="workspace.select" />
+      <SessionGroups v-else @select="workspace.select" @edit="onEdit" />
       <SideFoot @new-session="isNewModalOpen = true" @manage-tags="isManageTagsOpen = true" />
     </aside>
     <main class="main">
@@ -100,6 +107,12 @@ onUnmounted(() => {
       <StatusBar />
     </main>
     <NewSessionModal v-if="isNewModalOpen" @close="isNewModalOpen = false" @created="onCreated" />
+    <EditSessionModal
+      v-if="editingSession"
+      :session="editingSession"
+      @close="editingSession = null"
+      @saved="editingSession = null"
+    />
     <SettingsModal v-if="isSettingsOpen" @close="isSettingsOpen = false" />
     <ManageTagsModal v-if="isManageTagsOpen" @close="isManageTagsOpen = false" />
   </div>

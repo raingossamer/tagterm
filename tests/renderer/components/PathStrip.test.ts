@@ -9,13 +9,6 @@ import { useTagsStore } from '../../../src/renderer/src/stores/tags'
 import { installFakeApi, makeCommand, makeSession, makeSettings, makeTag } from '../fakeApi'
 import { installFakeWorkspace } from '../fakeWorkspace'
 
-// happy-dom 没有 window.confirm，按需要的返回值打桩
-function stubConfirm(result: boolean) {
-  const fn = vi.fn(() => result)
-  Object.defineProperty(window, 'confirm', { value: fn, configurable: true, writable: true })
-  return fn
-}
-
 describe('PathStrip', () => {
   const session = makeSession({ name: 'simba-api', cwd: 'D:\\Projects\\simba\\api' })
   let writeText: ReturnType<typeof vi.fn>
@@ -48,16 +41,11 @@ describe('PathStrip', () => {
     expect(copy.text()).toBe('复制')
   })
 
-  it('「移除会话」按原型文案确认；确认后调 SDK 移除；主进程广播移除后的列表到达时标签页关闭', async () => {
-    const api = installFakeApi()
-    const confirm = stubConfirm(true)
+  it('路径条不再有「移除会话」按钮（入口在左栏）；主进程广播移除后的列表到达时标签页关闭', async () => {
+    installFakeApi()
     const wrapper = mount(PathStrip)
 
-    await wrapper.find('[data-test=strip-remove]').trigger('click')
-    await flushPromises()
-
-    expect(confirm).toHaveBeenCalledWith('移除会话 "simba-api"？终端进程会被结束。')
-    expect(api.session.remove).toHaveBeenCalledWith(session.id)
+    expect(wrapper.find('[data-test=strip-remove]').exists()).toBe(false)
     expect(useWorkspaceStore().activeId).toBe(session.id)
 
     useSessionsStore().sessions = []
@@ -121,7 +109,6 @@ describe('PathStrip', () => {
     expect(wrapper.find('[data-test=launch-label]').text()).toBe('唤起')
     expect(wrapper.find('[data-test=launch-edit]').text()).toBe('编辑')
     expect(wrapper.find('[data-test=strip-clear]').exists()).toBe(true)
-    expect(wrapper.find('[data-test=strip-remove]').exists()).toBe(true)
   })
 
   it('「更多 ▾」弹出层：再点按钮或点击弹出层外部即收起', async () => {
@@ -153,18 +140,6 @@ describe('PathStrip', () => {
 
     await wrapper.find('[data-test=lc-cancel]').trigger('click')
     expect(wrapper.find('[data-test=launch-modal]').exists()).toBe(false)
-  })
-
-  it('取消确认则不移除', async () => {
-    const api = installFakeApi()
-    stubConfirm(false)
-    const wrapper = mount(PathStrip)
-
-    await wrapper.find('[data-test=strip-remove]').trigger('click')
-    await flushPromises()
-
-    expect(api.session.remove).not.toHaveBeenCalled()
-    expect(useWorkspaceStore().activeId).toBe(session.id)
   })
 
   it('标签胶囊按 sortOrder 显示（带色），点 × 调 tag.detach；「+ 标签」打开弹出层，点击外部 / Esc 关闭', async () => {
