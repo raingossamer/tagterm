@@ -7,6 +7,7 @@ import { useWorkspaceStore } from '../../../src/renderer/src/stores/workspace'
 import { useTagsStore } from '../../../src/renderer/src/stores/tags'
 import { useFilterStore } from '../../../src/renderer/src/stores/filter'
 import { makeSession, makeTag } from '../fakeApi'
+import { installFakeWorkspace } from '../fakeWorkspace'
 
 describe('SessionGroups', () => {
   beforeEach(() => {
@@ -18,7 +19,7 @@ describe('SessionGroups', () => {
     const a = makeSession({ name: 'simba-api', cwd: 'D:\\Projects\\simba\\api', sortOrder: 2 })
     const b = makeSession({ name: 'iot', cwd: 'C:\\work\\iot\\', sortOrder: 1 })
     useSessionsStore().sessions = [a, b]
-    useWorkspaceStore().activeId = a.id
+    await installFakeWorkspace().workspace.select(a.id)
 
     const wrapper = mount(SessionGroups)
     const rows = wrapper.findAll('[data-test=session-row]')
