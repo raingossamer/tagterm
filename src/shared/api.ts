@@ -3,6 +3,7 @@
  * 每个操作一个具体函数，渲染进程测试时按函数 mock；所有 on* 返回取消订阅函数。
  */
 import type {
+  AutoLaunchStatus,
   CreateSessionInput,
   PtyExitEvent,
   PtyOpenResult,
@@ -23,6 +24,8 @@ export interface TagTermApi {
     listShells(): Promise<ShellKind[]>
     getDataDir(): Promise<string>
     pickImage(): Promise<string | null>
+    getAutoLaunch(): Promise<AutoLaunchStatus>
+    setAutoLaunch(enabled: boolean): Promise<AutoLaunchStatus>
     onOpenSettings(cb: () => void): Unsubscribe
   }
   session: {

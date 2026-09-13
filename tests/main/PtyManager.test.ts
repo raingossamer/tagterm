@@ -52,6 +52,17 @@ describe('PtyManager', () => {
     expect(pm.has('b')).toBe(false)
   })
 
+  it('killAndWait 在 exit 回调触发后才 resolve；未运行的会话立即 resolve', async () => {
+    const pm = createManager()
+    pm.spawn('w', { cwd: process.cwd(), shell: 'cmd.exe', cols: 80, rows: 24 })
+
+    await pm.killAndWait('w')
+    expect(exits.some((e) => e.sessionId === 'w')).toBe(true)
+    expect(pm.has('w')).toBe(false)
+
+    await expect(pm.killAndWait('nope')).resolves.toBeUndefined()
+  })
+
   it('重复 spawn 同一会话报错；对不存在的会话 write / resize / kill 忽略不抛', () => {
     const pm = createManager()
     pm.spawn('dup', { cwd: process.cwd(), shell: 'cmd.exe', cols: 80, rows: 24 })

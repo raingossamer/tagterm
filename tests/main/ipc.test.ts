@@ -9,7 +9,7 @@ import { TagStore } from '../../src/main/store/TagStore'
 import { Updater } from '../../src/main/updater/Updater'
 import { FakeAutoUpdater } from './fakeAutoUpdater'
 import { PtyManager } from '../../src/main/pty/PtyManager'
-import type { PtyExitEvent, PtyOpenResult, TagListResult } from '@shared/ipc'
+import type { AutoLaunchStatus, PtyExitEvent, PtyOpenResult, TagListResult } from '@shared/ipc'
 import type { Session, Settings, Tag, UpdateStatus } from '@shared/models'
 import { createFakeIpcMain, type FakeIpcMain } from './fakeIpcMain'
 import { waitFor } from './helpers'
@@ -26,6 +26,11 @@ describe('IPC 接口层', () => {
   const updateStatuses: UpdateStatus[] = []
   const output: Record<string, string> = {}
   const exits: PtyExitEvent[] = []
+  /** 假进程树：是否报告「shell 里有子进程」，以及被查询的次数 */
+  let hasChildren = false
+  let childQueries = 0
+  /** 假登录项：开机自启状态 */
+  let autoLaunch: AutoLaunchStatus = { enabled: false, blockedBySystem: false }
 
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), 'tagterm-ipc-'))
@@ -61,11 +66,23 @@ describe('IPC 接口层', () => {
       pickImage: async () => join(dir, 'picked.png'),
       pickDirectory: async () => 'D:\\picked',
       listShells: () => ['cmd.exe', 'powershell.exe'],
+      hasChildProcesses: async () => {
+        childQueries += 1
+        return hasChildren
+      },
+      getAutoLaunch: () => autoLaunch,
+      setAutoLaunch: (enabled) => {
+        autoLaunch = { enabled, blockedBySystem: false }
+        return autoLaunch
+      },
     }
     registerIpc(ipc, deps)
   })
   afterEach(() => {
     pty.killAll()
+    hasChildren = false
+    childQueries = 0
+    autoLaunch = { enabled: false, blockedBySystem: false }
     exits.length = 0
     updateStatuses.length = 0
     for (const k of Object.keys(output)) delete output[k]
@@ -132,6 +149,64 @@ describe('IPC 接口层', () => {
     await expect(ipc.invoke('pty:open', 'missing', { cols: 80, rows: 24 })).rejects.toThrow(
       /会话不存在/,
     )
+  })
+
+  it('session:update 接受 cwd（trim 非空）；只改 name 不查子进程也不结束 pty', async () => {
+    const s = (await ipc.invoke('session:create', { cwd: process.cwd() })) as Session
+    const moved = (await ipc.invoke('session:update', s.id, { cwd: ' D:\\y ' })) as Session
+    expect(moved.cwd).toBe('D:\\y')
+    expect(store.get(s.id).cwd).toBe('D:\\y')
+    await expect(ipc.invoke('session:update', s.id, { cwd: '   ' })).rejects.toThrow('需要一个目录')
+
+    await ipc.invoke('session:update', s.id, { cwd: process.cwd() })
+    await ipc.invoke('pty:open', s.id, { cols: 80, rows: 24 })
+    hasChildren = true
+    const renamed = (await ipc.invoke('session:update', s.id, { name: 'idle-rename' })) as Session
+    expect(renamed.name).toBe('idle-rename')
+    expect(childQueries).toBe(0)
+    expect(pty.has(s.id)).toBe(true)
+  })
+
+  it('session:update 改 cwd / shell 时：shell 里有程序在跑 → reject 且不动；空闲 → 先结束 pty（exit 先到）再改，之后 pty:open 按新目录起', async () => {
+    const s = (await ipc.invoke('session:create', { cwd: process.cwd() })) as Session
+    await ipc.invoke('pty:open', s.id, { cols: 80, rows: 24 })
+    await waitFor(() => />/.test(output[s.id] ?? ''))
+
+    hasChildren = true
+    await expect(
+      ipc.invoke('session:update', s.id, { cwd: join(process.cwd(), 'tests') }),
+    ).rejects.toThrow('终端里有程序正在运行，退出后再修改目录或 Shell')
+    expect(store.get(s.id).cwd).toBe(process.cwd())
+    expect(pty.has(s.id)).toBe(true)
+
+    hasChildren = false
+    const moved = (await ipc.invoke('session:update', s.id, {
+      cwd: join(process.cwd(), 'tests'),
+    })) as Session
+    expect(exits.some((e) => e.sessionId === s.id)).toBe(true)
+    expect(pty.has(s.id)).toBe(false)
+    expect(moved.cwd).toBe(join(process.cwd(), 'tests'))
+
+    output[s.id] = ''
+    const reopened = (await ipc.invoke('pty:open', s.id, { cols: 80, rows: 24 })) as PtyOpenResult
+    expect(reopened.created).toBe(true)
+    await waitFor(() => (output[s.id] ?? '').includes('tests>'))
+  })
+
+  it('app:get-auto-launch / app:set-auto-launch 转发装配层注入的登录项回调；非布尔参数被拒绝', async () => {
+    await expect(ipc.invoke('app:get-auto-launch')).resolves.toEqual({
+      enabled: false,
+      blockedBySystem: false,
+    })
+    await expect(ipc.invoke('app:set-auto-launch', true)).resolves.toEqual({
+      enabled: true,
+      blockedBySystem: false,
+    })
+    await expect(ipc.invoke('app:get-auto-launch')).resolves.toEqual({
+      enabled: true,
+      blockedBySystem: false,
+    })
+    await expect(ipc.invoke('app:set-auto-launch', 'yes')).rejects.toThrow('开机自启参数必须是布尔')
   })
 
   it('session:remove 同时结束其 pty', async () => {

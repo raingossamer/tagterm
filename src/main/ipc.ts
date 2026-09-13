@@ -3,6 +3,7 @@
  * ipcMain 以参数注入（IpcMainLike），测试时可传假对象脱离 Electron 运行。
  */
 import type {
+  AutoLaunchStatus,
   CreateSessionInput,
   InvokeArgs,
   InvokeChannel,
@@ -51,6 +52,11 @@ export interface IpcDeps {
   pickImage: () => Promise<string | null>
   /** 本机可用 shell（启动时探测） */
   listShells: () => ShellKind[]
+  /** shell 进程有没有子进程（processTree.hasChildProcesses；测试注入假实现） */
+  hasChildProcesses: (pid: number) => Promise<boolean>
+  /** 系统登录项读写（平台层注入，未打包时 get 恒 false、set 抛错） */
+  getAutoLaunch: () => AutoLaunchStatus
+  setAutoLaunch: (enabled: boolean) => AutoLaunchStatus
 }
 
 export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
@@ -69,6 +75,8 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   handle('app:list-shells', () => deps.listShells())
   handle('app:get-data-dir', () => deps.dataDir)
   handle('app:pick-image', () => deps.pickImage())
+  handle('app:get-auto-launch', () => deps.getAutoLaunch())
+  handle('app:set-auto-launch', (enabled) => deps.setAutoLaunch(assertAutoLaunch(enabled)))
 
   handle('session:list', () => deps.store.list())
   // 编排：建会话 → 逐个 attach 标签；attach 抛错原样 reject（会话已创建，不回滚）
@@ -78,7 +86,24 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
     for (const tagId of tagIds) await deps.tags.attach(session.id, tagId)
     return session
   })
-  handle('session:update', (id, patch) => deps.store.update(assertId(id), assertPatch(patch)))
+  // 编排：改目录 / Shell 只在 shell 空闲时允许 —— 有子进程（claude 等在跑）reject 不动；
+  // 空闲则先结束 pty 并等到 exit 广播出去，再改记录，渲染进程收到结果时运行态已是 exited（再选中即按新配置重启）
+  handle('session:update', async (id, patch) => {
+    const sessionId = assertId(id)
+    const p = assertPatch(patch)
+    const current = deps.store.get(sessionId)
+    const isConfigChanged =
+      (p.cwd !== undefined && p.cwd !== current.cwd) ||
+      (p.shell !== undefined && p.shell !== current.shell)
+    const pid = deps.pty.getPid(sessionId)
+    if (isConfigChanged && pid !== null) {
+      if (await deps.hasChildProcesses(pid)) {
+        throw new Error('终端里有程序正在运行，退出后再修改目录或 Shell')
+      }
+      await deps.pty.killAndWait(sessionId)
+    }
+    return deps.store.update(sessionId, p)
+  })
   // 跨 store 级联在编排层顺序执行：结束 pty → 删会话 → 删其标签关联（两次写、两次广播）
   handle('session:remove', async (id) => {
     const sessionId = assertId(id)
@@ -184,6 +209,10 @@ function assertPatch(patch: unknown): SessionPatch {
     if (typeof o.name !== 'string') throw new Error('名称必须是字符串')
     out.name = o.name
   }
+  if (o.cwd !== undefined) {
+    if (typeof o.cwd !== 'string' || !o.cwd.trim()) throw new Error('需要一个目录')
+    out.cwd = o.cwd.trim()
+  }
   if (o.shell !== undefined) {
     if (!isShellKind(o.shell)) throw new Error(`不支持的 shell：${String(o.shell)}`)
     out.shell = o.shell
@@ -230,6 +259,11 @@ function assertLaunchCommand(item: unknown): LaunchCommandInput {
     pinned: o.pinned,
     sortOrder: o.sortOrder as number,
   }
+}
+
+function assertAutoLaunch(enabled: unknown): boolean {
+  if (typeof enabled !== 'boolean') throw new Error('开机自启参数必须是布尔')
+  return enabled
 }
 
 function assertTagId(id: unknown): string {
