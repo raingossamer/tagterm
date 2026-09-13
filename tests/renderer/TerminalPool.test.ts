@@ -1,59 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PtyExitEvent } from '@shared/ipc'
 import { TerminalPool } from '../../src/renderer/src/terminal/TerminalPool'
-import type {
-  TerminalInstance,
-  TerminalSize,
-} from '../../src/renderer/src/terminal/TerminalInstance'
 import { createFakeApi, makeSession } from './fakeApi'
-
-/** 假终端：记录 open / write / focus / webgl / dispose，可手动触发 onData / onResize */
-class FakeTerminal implements TerminalInstance {
-  host: HTMLElement | null = null
-  written = ''
-  focusCount = 0
-  fitCount = 0
-  isWebgl = false
-  isDisposed = false
-  size: TerminalSize = { cols: 80, rows: 24 }
-  private dataHandlers: Array<(d: string) => void> = []
-  private resizeHandlers: Array<(s: TerminalSize) => void> = []
-
-  open(host: HTMLElement): void {
-    this.host = host
-  }
-  write(data: string): void {
-    this.written += data
-  }
-  focus(): void {
-    this.focusCount += 1
-  }
-  fit(): TerminalSize | null {
-    this.fitCount += 1
-    return this.size
-  }
-  onData(cb: (data: string) => void) {
-    this.dataHandlers.push(cb)
-    return { dispose: () => this.dataHandlers.splice(this.dataHandlers.indexOf(cb), 1) }
-  }
-  onResize(cb: (size: TerminalSize) => void) {
-    this.resizeHandlers.push(cb)
-    return { dispose: () => this.resizeHandlers.splice(this.resizeHandlers.indexOf(cb), 1) }
-  }
-  setWebgl(enabled: boolean): void {
-    this.isWebgl = enabled
-  }
-  dispose(): void {
-    this.isDisposed = true
-  }
-  // 测试辅助：模拟用户键入 / xterm 重排
-  typeInput(data: string): void {
-    this.dataHandlers.forEach((h) => h(data))
-  }
-  emitResize(size: TerminalSize): void {
-    this.resizeHandlers.forEach((h) => h(size))
-  }
-}
+import { FakeTerminal } from './fakeTerminal'
 
 describe('TerminalPool', () => {
   const a = makeSession({ name: 'a' })
