@@ -14,7 +14,8 @@ export class FakeTerminal implements TerminalInstance {
   fitCount = 0
   isWebgl = false
   isDisposed = false
-  size: TerminalSize = { cols: 80, rows: 24 }
+  /** fit() 的返回值；置 null 模拟宿主量不到尺寸 */
+  size: TerminalSize | null = { cols: 80, rows: 24 }
   private dataHandlers: Array<(d: string) => void> = []
   private resizeHandlers: Array<(s: TerminalSize) => void> = []
 
