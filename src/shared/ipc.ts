@@ -21,7 +21,16 @@ export interface CreateSessionInput {
   tagIds?: string[] // M2：建会话后逐个 attach；attach 失败不回滚、错误原样 reject
 }
 
-export type SessionPatch = Partial<Pick<Session, 'name' | 'shell' | 'startupCmd' | 'sortOrder'>>
+/** 改 cwd / shell 只在 shell 空闲（无子进程）时允许：接口层先结束空闲 pty 再改；有程序在跑则 reject */
+export type SessionPatch = Partial<
+  Pick<Session, 'name' | 'cwd' | 'shell' | 'startupCmd' | 'sortOrder'>
+>
+
+/** 开机自启状态：真相在系统登录项（注册表），不落盘 */
+export interface AutoLaunchStatus {
+  enabled: boolean // 登录项存在（openAtLogin）
+  blockedBySystem: boolean // 登录项存在但被用户在任务管理器「启动应用」里禁用
+}
 
 /** 新命令可不带 id，由主进程分配 */
 export type LaunchCommandInput = Omit<LaunchCommand, 'id'> & { id?: string }
@@ -63,9 +72,11 @@ export interface IpcInvokeMap {
   'app:list-shells': { args: []; result: ShellKind[] } // 本机可用 shell（PATH 探测）
   'app:get-data-dir': { args: []; result: string } // 数据目录（设置「关于」显示）
   'app:pick-image': { args: []; result: string | null } // 系统文件对话框选图片
+  'app:get-auto-launch': { args: []; result: AutoLaunchStatus } // 登录项当前状态（未打包恒 false）
+  'app:set-auto-launch': { args: [enabled: boolean]; result: AutoLaunchStatus } // 写登录项并返回实际状态；未打包 reject
   'session:list': { args: []; result: Session[] }
   'session:create': { args: [input: CreateSessionInput]; result: Session }
-  'session:update': { args: [id: string, patch: SessionPatch]; result: Session }
+  'session:update': { args: [id: string, patch: SessionPatch]; result: Session } // 含 cwd / shell 时：有程序在跑 reject，空闲先 kill 再改
   'session:remove': { args: [id: string]; result: void } // 同时 kill 其 pty
   'session:pick-directory': { args: []; result: string | null }
   'settings:get': { args: []; result: Settings }

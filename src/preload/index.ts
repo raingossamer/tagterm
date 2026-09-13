@@ -42,6 +42,8 @@ const api: TagTermApi = {
     listShells: () => invoke('app:list-shells'),
     getDataDir: () => invoke('app:get-data-dir'),
     pickImage: () => invoke('app:pick-image'),
+    getAutoLaunch: () => invoke('app:get-auto-launch'),
+    setAutoLaunch: (enabled) => invoke('app:set-auto-launch', enabled),
     onOpenSettings: (cb) => subscribe('app:open-settings', cb),
   },
   session: {

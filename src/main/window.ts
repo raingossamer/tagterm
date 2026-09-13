@@ -9,6 +9,8 @@ import iconPath from '../../resources/icon.ico?asset'
 export interface MainWindowDeps {
   /** 关闭请求时是否应隐藏而非销毁（应用正在退出时返回 false） */
   shouldHideOnClose: () => boolean
+  /** 首帧就绪后是否显示窗口；开机自启（--hidden）时为 false，静默留在托盘。缺省 true */
+  showOnReady?: boolean
 }
 
 export function createMainWindow(deps: MainWindowDeps): BrowserWindow {
@@ -29,7 +31,9 @@ export function createMainWindow(deps: MainWindowDeps): BrowserWindow {
     },
   })
 
-  win.on('ready-to-show', () => win.show())
+  win.on('ready-to-show', () => {
+    if (deps.showOnReady ?? true) win.show()
+  })
   win.on('close', (e) => {
     if (deps.shouldHideOnClose()) {
       e.preventDefault()

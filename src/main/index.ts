@@ -7,11 +7,12 @@ import { autoUpdater } from 'electron-updater'
 import { existsSync } from 'node:fs'
 import { release, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { EventArgs, EventChannel } from '@shared/ipc'
+import type { AutoLaunchStatus, EventArgs, EventChannel } from '@shared/ipc'
 import { DEFAULT_AGENTS } from '@shared/models'
 import { createMainWindow, showMainWindow } from './window'
 import { createTray } from './tray'
 import { registerIpc } from './ipc'
+import { hasChildProcesses } from './processTree'
 import { runSmokeCheck } from './smoke'
 import { SessionStore } from './store/SessionStore'
 import { SettingsStore } from './store/SettingsStore'
@@ -67,6 +68,31 @@ async function pickImage(): Promise<string | null> {
     ? await dialog.showOpenDialog(mainWindow, options)
     : await dialog.showOpenDialog(options)
   return result.canceled ? null : (result.filePaths[0] ?? null)
+}
+
+// 开机自启：登录项 = 当前可执行文件 + --hidden（静默进托盘）；读写都用同一组 path / args，否则 openAtLogin 对不上
+const AUTO_LAUNCH_ARGS = ['--hidden']
+const isHiddenStart = app.commandLine.hasSwitch('hidden')
+
+function loginItemOptions(): { path: string; args: string[] } {
+  return { path: process.execPath, args: AUTO_LAUNCH_ARGS }
+}
+
+/** 登录项当前状态；未打包（electron.exe）恒为关，避免把开发用的 Electron 登记进启动项 */
+function getAutoLaunch(): AutoLaunchStatus {
+  if (!app.isPackaged) return { enabled: false, blockedBySystem: false }
+  const s = app.getLoginItemSettings(loginItemOptions())
+  return {
+    enabled: s.openAtLogin,
+    blockedBySystem: s.openAtLogin && !s.executableWillLaunchAtLogin,
+  }
+}
+
+function setAutoLaunch(enabled: boolean): AutoLaunchStatus {
+  if (!app.isPackaged) throw new Error('开发模式下不能设置开机自启')
+  app.setLoginItemSettings({ openAtLogin: enabled, ...loginItemOptions() })
+  console.log(`[main] 开机自启 ${enabled ? '已开启' : '已关闭'}`)
+  return getAutoLaunch()
 }
 
 /** 托盘「设置」：显示窗口并让渲染进程打开设置弹窗 */
@@ -150,9 +176,16 @@ app.whenReady().then(async () => {
     pickDirectory,
     pickImage,
     listShells: () => availableShells,
+    hasChildProcesses,
+    getAutoLaunch,
+    setAutoLaunch,
   })
 
-  mainWindow = createMainWindow({ shouldHideOnClose: () => !isQuitting })
+  if (isHiddenStart) console.log('[main] 隐藏启动（开机自启），窗口留在托盘')
+  mainWindow = createMainWindow({
+    shouldHideOnClose: () => !isQuitting,
+    showOnReady: !isHiddenStart,
+  })
   tray = createTray({ onShow: showWindow, onOpenSettings: openSettings, onQuit: quitApp })
   if (isSmoke) runSmokeCheck(mainWindow, { store, tags, pty: ptyManager, quit: quitApp })
   // 未打包（开发）时 electron-updater 会直接报错，只在打包版自动检查
