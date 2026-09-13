@@ -92,7 +92,7 @@ export class TerminalPool {
     target.term.setWebgl(true)
     this.raf(() => {
       if (this.activeId !== sessionId) return
-      target.term.fit()
+      if (this.container) target.term.fit() // 未接管容器时 host 不在 DOM 里，量不到尺寸
       target.term.focus()
     })
   }
@@ -103,9 +103,9 @@ export class TerminalPool {
     this.activeId = null
   }
 
-  /** ResizeObserver 回调：只 fit 可见实例（display:none 下量不到尺寸） */
+  /** ResizeObserver 回调：只 fit 可见实例（display:none 下量不到尺寸）；未接管容器时不 fit */
   fitActive(): void {
-    if (this.activeId) this.entries.get(this.activeId)?.term.fit()
+    if (this.container && this.activeId) this.entries.get(this.activeId)?.term.fit()
   }
 
   focusActive(): void {
