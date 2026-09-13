@@ -1,9 +1,13 @@
 <script setup lang="ts">
 // 会话列表：按 buildSessionGroups（输入 = 会话 / 标签 / 关联 + filter store 的选中 / 模式 / 搜索词）渲染分组
 //（分组头 = 三角 + 色点 + 名称 + 数量，点击折叠 / 展开，折叠状态记在 filter store）；
-// 组内无会话显示「这个标签下还没有会话」，整体无匹配显示「没有匹配的会话…」
-import { computed } from 'vue'
+// 组内无会话显示「这个标签下还没有会话」，整体无匹配显示「没有匹配的会话…」。
+// 移除会话的两个入口都在这里（行上的垃圾桶、右键菜单「移除会话」）：confirm 后只调 sessions.remove，关标签页靠主进程广播；
+// 右键菜单唯一实例挂在这里（usePopover 管点外部关闭），「编辑会话」上抛 edit 由 App 开弹窗
+import { computed, ref } from 'vue'
+import SessionMenu from './SessionMenu.vue'
 import SessionRow from './SessionRow.vue'
+import { usePopover } from '../composables/usePopover'
 import { buildSessionGroups } from '../composables/useSessionGroups'
 import { useFilterStore } from '../stores/filter'
 import { useSessionsStore } from '../stores/sessions'
@@ -14,7 +18,49 @@ const sessions = useSessionsStore()
 const tags = useTagsStore()
 const filter = useFilterStore()
 const workspace = useWorkspaceStore()
-const emit = defineEmits<{ select: [id: string] }>()
+const emit = defineEmits<{ select: [id: string]; edit: [id: string] }>()
+
+const menuEl = ref<HTMLElement | null>(null)
+const { isOpen: isMenuOpen, open: openMenu, close: closeMenu } = usePopover(menuEl)
+const menuTarget = ref<{ id: string; x: number; y: number } | null>(null)
+
+/** 右键：记下目标与坐标，并把该行置为悬停对象（副本一起高亮）标明操作对象 */
+function onMenu(id: string, x: number, y: number): void {
+  menuTarget.value = { id, x, y }
+  workspace.setHovered(id)
+  openMenu()
+}
+
+/** 菜单打开期间鼠标移到菜单上会触发行的 leave：保持目标行高亮 */
+function onLeave(id: string): void {
+  if (isMenuOpen.value && menuTarget.value?.id === id) return
+  workspace.setHovered(null)
+}
+
+function dismissMenu(): void {
+  closeMenu()
+  workspace.setHovered(null)
+}
+
+function editFromMenu(): void {
+  const id = menuTarget.value?.id
+  dismissMenu()
+  if (id) emit('edit', id)
+}
+
+function removeFromMenu(): void {
+  const id = menuTarget.value?.id
+  dismissMenu()
+  if (id) void removeSession(id)
+}
+
+/** 移除只走主进程广播这一条路：session:changed 到达后由生命周期核心销毁实例并关标签页 */
+async function removeSession(id: string): Promise<void> {
+  const s = sessions.byId(id)
+  if (!s) return
+  if (!window.confirm(`移除会话 "${s.name}"？终端进程会被结束。`)) return
+  await sessions.remove(s.id)
+}
 
 const groups = computed(() =>
   buildSessionGroups({
@@ -57,7 +103,9 @@ const isEmpty = computed(() => groups.value.every((g) => g.sessions.length === 0
             :peer="s.id === workspace.hoveredId"
             @select="emit('select', $event)"
             @hover="workspace.setHovered($event)"
-            @leave="workspace.setHovered(null)"
+            @leave="onLeave"
+            @remove="removeSession"
+            @menu="onMenu"
           />
           <div v-if="g.sessions.length === 0" class="none" data-test="group-empty">
             这个标签下还没有会话
@@ -65,6 +113,15 @@ const isEmpty = computed(() => groups.value.every((g) => g.sessions.length === 0
         </div>
       </div>
     </template>
+    <div v-if="isMenuOpen && menuTarget" ref="menuEl">
+      <SessionMenu
+        :x="menuTarget.x"
+        :y="menuTarget.y"
+        @edit="editFromMenu"
+        @remove="removeFromMenu"
+        @close="dismissMenu"
+      />
+    </div>
   </div>
 </template>
 

@@ -1,18 +1,97 @@
-import { beforeEach, describe, expect, it } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import SessionGroups from '../../../src/renderer/src/components/SessionGroups.vue'
 import { useSessionsStore } from '../../../src/renderer/src/stores/sessions'
 import { useWorkspaceStore } from '../../../src/renderer/src/stores/workspace'
 import { useTagsStore } from '../../../src/renderer/src/stores/tags'
 import { useFilterStore } from '../../../src/renderer/src/stores/filter'
-import { makeSession, makeTag } from '../fakeApi'
+import { installFakeApi, makeSession, makeTag } from '../fakeApi'
 import { installFakeWorkspace } from '../fakeWorkspace'
+
+// happy-dom 没有 window.confirm，按需要的返回值打桩
+function stubConfirm(result: boolean) {
+  const fn = vi.fn(() => result)
+  Object.defineProperty(window, 'confirm', { value: fn, configurable: true, writable: true })
+  return fn
+}
 
 describe('SessionGroups', () => {
   beforeEach(() => {
     localStorage.clear()
     setActivePinia(createPinia())
+    document.body.innerHTML = ''
+  })
+
+  it('垃圾桶：按原型文案确认；确认后调 SDK 移除，取消则不调', async () => {
+    const s = makeSession({ name: 'simba-api' })
+    useSessionsStore().sessions = [s]
+    const api = installFakeApi()
+    const confirm = stubConfirm(true)
+    const wrapper = mount(SessionGroups)
+
+    await wrapper.find('[data-test=row-remove]').trigger('click')
+    await flushPromises()
+    expect(confirm).toHaveBeenCalledWith('移除会话 "simba-api"？终端进程会被结束。')
+    expect(api.session.remove).toHaveBeenCalledWith(s.id)
+    expect(wrapper.emitted('select')).toBeUndefined()
+
+    stubConfirm(false)
+    vi.mocked(api.session.remove).mockClear()
+    await wrapper.find('[data-test=row-remove]').trigger('click')
+    await flushPromises()
+    expect(api.session.remove).not.toHaveBeenCalled()
+  })
+
+  it('右键行：菜单出现在鼠标位置且该行成为悬停对象；「编辑会话」发出 edit 并关菜单；「移除会话」走同一确认；Esc / 点外部关闭', async () => {
+    const s = makeSession({ name: 'simba-api' })
+    useSessionsStore().sessions = [s]
+    const api = installFakeApi()
+    const wrapper = mount(SessionGroups, { attachTo: document.body })
+    const rightClick = async () => {
+      wrapper.find('[data-test=session-row]').element.dispatchEvent(
+        new MouseEvent('contextmenu', {
+          bubbles: true,
+          cancelable: true,
+          clientX: 30,
+          clientY: 40,
+        }),
+      )
+      await nextTick()
+    }
+    const menu = () => wrapper.find('[data-test=session-menu]')
+    expect(menu().exists()).toBe(false)
+
+    await rightClick()
+    expect(menu().exists()).toBe(true)
+    expect(menu().attributes('style')).toContain('left: 30px')
+    expect(menu().attributes('style')).toContain('top: 40px')
+    expect(useWorkspaceStore().hoveredId).toBe(s.id)
+    expect(menu().find('[data-test=menu-edit]').text()).toBe('编辑会话')
+    expect(menu().find('[data-test=menu-remove]').text()).toBe('移除会话')
+
+    await menu().find('[data-test=menu-edit]').trigger('click')
+    expect(wrapper.emitted('edit')).toEqual([[s.id]])
+    expect(menu().exists()).toBe(false)
+
+    await rightClick()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await nextTick()
+    expect(menu().exists()).toBe(false)
+
+    await rightClick()
+    document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    await nextTick()
+    expect(menu().exists()).toBe(false)
+
+    await rightClick()
+    stubConfirm(true)
+    await menu().find('[data-test=menu-remove]').trigger('click')
+    await flushPromises()
+    expect(api.session.remove).toHaveBeenCalledWith(s.id)
+    expect(menu().exists()).toBe(false)
+    wrapper.unmount()
   })
 
   it('按 sortOrder 平铺每个会话：名称 + 路径末两段；active 行高亮；点击行发出 select', async () => {
