@@ -29,10 +29,17 @@ export class FakePty implements FakePtyPort {
   private readonly exitHandlers: Array<(e: PtyExitEvent) => void> = []
   private readonly pendingOpens: Array<() => void> = []
   private nextPid = 1000
+  private nextOpenFailure: unknown = undefined
 
   constructor(private readonly opts: FakePtyOptions = {}) {}
 
   open(sessionId: string, size: PtySize): Promise<PtyOpenResult> {
+    if (this.nextOpenFailure !== undefined) {
+      const err = this.nextOpenFailure
+      this.nextOpenFailure = undefined
+      this.opens.push({ sessionId, size, created: false })
+      return Promise.reject(err)
+    }
     let pid = this.running.get(sessionId)
     const created = pid === undefined
     if (pid === undefined) {
@@ -81,6 +88,11 @@ export class FakePty implements FakePtyPort {
   emitExit(sessionId: string, exitCode: number): void {
     this.running.delete(sessionId)
     for (const h of [...this.exitHandlers]) h({ sessionId, exitCode })
+  }
+
+  /** 下一次 open 以 err 拒绝（不登记条目，记入 opens 但 created 为 false），模拟主进程 spawn 失败 */
+  failNextOpen(err: unknown): void {
+    this.nextOpenFailure = err
   }
 
   /** manualOpen 模式：让所有挂起的 open resolve */
