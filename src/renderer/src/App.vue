@@ -39,13 +39,17 @@ let unsubscribeOpenSettings: Unsubscribe | null = null
 const loadError = ref('')
 
 let osBuild = 0
+// S4 删除：临时承接 pty 接线（键入门控 / 重排），生命周期核心落地后由 TerminalWorkspace 拥有
 const pool = new TerminalPool({
-  pty: window.tagterm.pty,
   createTerminal: createXtermFactory(() => buildTerminalOptions(osBuild)),
-  onExit: (e) => workspace.setExited(e.sessionId, e.exitCode),
-  onRestartRequested: (id) => void restartSession(id),
+  onInput: (id, data) => {
+    if (workspace.isAlive(id)) window.tagterm.pty.write(id, data)
+    else if (data.includes('\r')) void restartSession(id)
+  },
+  onResize: (id, size) => void window.tagterm.pty.resize(id, size),
 })
 provide(TERMINAL_POOL_KEY, pool)
+let unsubscribePty: Unsubscribe[] = []
 
 /** 打开（或复用）会话的终端并显示；pty 已退出的会话再次选中即重启 */
 async function selectSession(id: string): Promise<void> {
@@ -69,7 +73,8 @@ async function restartSession(id: string): Promise<void> {
 
 async function openAndShow(session: Session): Promise<void> {
   try {
-    await pool.open(session)
+    const size = pool.open(session.id)
+    await window.tagterm.pty.open(session.id, size)
   } catch (err) {
     console.error('[terminal] 打开终端失败', err)
   }
@@ -110,6 +115,14 @@ function onKeydown(e: KeyboardEvent): void {
 
 onMounted(async () => {
   document.addEventListener('keydown', onKeydown)
+  // S4 删除：临时承接 pty 输出与退出（退出提示写入实例、运行态记为已退出）
+  unsubscribePty = [
+    window.tagterm.pty.onData((id, data) => pool.write(id, data)),
+    window.tagterm.pty.onExit((e) => {
+      pool.write(e.sessionId, `\r\n[进程已退出，代码 ${e.exitCode}]\r\n`)
+      workspace.setExited(e.sessionId, e.exitCode)
+    }),
+  ]
   // 托盘「设置」→ 主进程广播 → 打开设置弹窗
   unsubscribeOpenSettings = window.tagterm.app.onOpenSettings(() => {
     isSettingsOpen.value = true
@@ -127,6 +140,7 @@ onMounted(async () => {
 onUnmounted(() => {
   document.removeEventListener('keydown', onKeydown)
   unsubscribeOpenSettings?.()
+  for (const unsubscribe of unsubscribePty) unsubscribe()
 })
 </script>
 
