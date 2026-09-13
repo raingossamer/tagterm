@@ -47,7 +47,7 @@ Electron 44 · Vue 3.5 + Pinia · TypeScript 5.9 · electron-vite 5 · node-pty 
 src/shared/     两进程共用：数据模型、IPC 契约（通道名 + 参数 / 返回类型）、window.tagterm 的类型
 src/main/       主进程：装配（index）/ 接口层（ipc）/ 服务层（pty、store、updater）/ 平台层（window、tray）
 src/preload/    contextBridge 暴露 SDK 风格的 window.tagterm
-src/renderer/   Vue 渲染进程：stores（镜像主进程数据 + 筛选 UI 状态）、composables（分组算法等纯计算）、terminal（xterm 实例池）、components
+src/renderer/   Vue 渲染进程：stores（镜像主进程数据 + 筛选 UI 状态）、composables（分组算法等纯计算）、terminal（会话生命周期核心 + xterm 实例池）、components
 tests/          与 src 对应的单元 / 集成测试
 ```
 
