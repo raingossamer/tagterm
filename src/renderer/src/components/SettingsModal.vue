@@ -1,6 +1,8 @@
 <script setup lang="ts">
-// 「设置」弹窗（主窗口内 modal）：终端背景（选图 / 清除 / 遮罩滑块即时预览）、更新（检查 / 下载 / 安装）、关于
+// 「设置」弹窗（主窗口内 modal）：终端背景（选图 / 清除 / 遮罩滑块即时预览）、启动（开机自启开关，真相在系统登录项）、
+// 更新（检查 / 下载 / 安装）、关于
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import type { AutoLaunchStatus } from '@shared/ipc'
 import { useSettingsStore } from '../stores/settings'
 import { useUpdateStore } from '../stores/update'
 import { describeUpdateStatus } from '../composables/updateStatus'
@@ -12,6 +14,8 @@ const update = useUpdateStore()
 const version = ref('')
 const dataDir = ref('')
 const error = ref('')
+/** 开机自启：打开弹窗时向主进程取一次，改动后以返回的实际状态回填（不进 store、不落盘） */
+const autoLaunch = ref<AutoLaunchStatus>({ enabled: false, blockedBySystem: false })
 
 const imagePath = computed(() => settings.settings.terminalBackground.imagePath)
 const dimPercent = computed(() => Math.round(settings.terminalBackground.dimOpacity * 100))
@@ -33,15 +37,28 @@ async function runUpdateAction(action: () => Promise<void>): Promise<void> {
 onMounted(async () => {
   document.addEventListener('keydown', onKeydown)
   try {
-    ;[version.value, dataDir.value] = await Promise.all([
+    ;[version.value, dataDir.value, autoLaunch.value] = await Promise.all([
       window.tagterm.app.getVersion(),
       window.tagterm.app.getDataDir(),
+      window.tagterm.app.getAutoLaunch(),
     ])
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   }
 })
 onUnmounted(() => document.removeEventListener('keydown', onKeydown))
+
+/** 勾选即写登录项；失败（如开发模式）红字提示并把复选框还原为实际状态 */
+async function onAutoLaunchChange(e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement
+  error.value = ''
+  try {
+    autoLaunch.value = await window.tagterm.app.setAutoLaunch(input.checked)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+    input.checked = autoLaunch.value.enabled
+  }
+}
 
 async function save(path: string | null, dimOpacity: number): Promise<void> {
   error.value = ''
@@ -118,6 +135,24 @@ function onKeydown(e: KeyboardEvent): void {
           <span class="val" data-test="bg-dim-value">{{ dimPercent }}%</span>
         </div>
         <p class="hint">图片上方的黑色遮罩，越高文字越清晰。</p>
+      </section>
+
+      <section data-test="auto-launch-section">
+        <h4>启动</h4>
+        <div class="row">
+          <label class="check" data-test="auto-launch-label">
+            <input
+              type="checkbox"
+              :checked="autoLaunch.enabled"
+              data-test="auto-launch"
+              @change="onAutoLaunchChange"
+            />
+            开机时自动启动 TagTerm
+          </label>
+          <span v-if="autoLaunch.blockedBySystem" class="hint" data-test="auto-launch-blocked">
+            已在系统「启动应用」中被禁用
+          </span>
+        </div>
       </section>
 
       <section>
@@ -219,6 +254,13 @@ section h4 {
 }
 .row input[type='range'] {
   flex: 1;
+}
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
 }
 .val {
   font-size: 12.5px;

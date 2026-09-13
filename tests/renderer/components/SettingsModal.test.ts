@@ -12,6 +12,37 @@ describe('SettingsModal', () => {
     document.body.innerHTML = ''
   })
 
+  it('「启动」段：打开时复选框反映登录项状态并提示被系统禁用；改动即 setAutoLaunch 并按返回回填；失败红字并还原', async () => {
+    const api = installFakeApi({
+      app: {
+        getAutoLaunch: vi.fn(async () => ({ enabled: true, blockedBySystem: true })),
+        setAutoLaunch: vi.fn(async (enabled: boolean) => ({ enabled, blockedBySystem: false })),
+      },
+    })
+    const wrapper = mount(SettingsModal)
+    await flushPromises()
+    const box = () => wrapper.find('[data-test=auto-launch]').element as HTMLInputElement
+
+    expect(wrapper.find('[data-test=auto-launch-section] h4').text()).toBe('启动')
+    expect(wrapper.find('[data-test=auto-launch-label]').text()).toBe('开机时自动启动 TagTerm')
+    expect(box().checked).toBe(true)
+    expect(wrapper.find('[data-test=auto-launch-blocked]').text()).toBe(
+      '已在系统「启动应用」中被禁用',
+    )
+
+    await wrapper.find('[data-test=auto-launch]').setValue(false)
+    await flushPromises()
+    expect(api.app.setAutoLaunch).toHaveBeenCalledWith(false)
+    expect(box().checked).toBe(false)
+    expect(wrapper.find('[data-test=auto-launch-blocked]').exists()).toBe(false)
+
+    vi.mocked(api.app.setAutoLaunch).mockRejectedValueOnce(new Error('开发模式下不能设置开机自启'))
+    await wrapper.find('[data-test=auto-launch]').setValue(true)
+    await flushPromises()
+    expect(box().checked).toBe(false)
+    expect(wrapper.find('[data-test=settings-error]').text()).toBe('开发模式下不能设置开机自启')
+  })
+
   it('「关于」显示版本与数据目录；「终端背景」未设置时提示纯色；「选择图片…」后以当前遮罩保存', async () => {
     const api = installFakeApi({
       app: { getVersion: async () => '0.1.0', pickImage: vi.fn(async () => 'D:/wall.png') },
