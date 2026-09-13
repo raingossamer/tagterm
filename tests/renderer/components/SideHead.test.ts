@@ -3,17 +3,20 @@ import { mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import SideHead from '../../../src/renderer/src/components/SideHead.vue'
 import { useFilterStore } from '../../../src/renderer/src/stores/filter'
-import { TERMINAL_POOL_KEY } from '../../../src/renderer/src/terminal/poolKey'
+import { TERMINAL_WORKSPACE_KEY } from '../../../src/renderer/src/terminal/workspaceKey'
+import { makeSession } from '../fakeApi'
+import { installFakeWorkspace, type FakeWorkspace } from '../fakeWorkspace'
 
 describe('SideHead（搜索框）', () => {
-  const pool = { focusActive: vi.fn() }
+  const a = makeSession({ name: 'a' })
+  let fake: FakeWorkspace
   let wrapper: VueWrapper
   beforeEach(() => {
     setActivePinia(createPinia())
-    pool.focusActive.mockClear()
+    fake = installFakeWorkspace([a])
     wrapper = mount(SideHead, {
       attachTo: document.body,
-      global: { provide: { [TERMINAL_POOL_KEY as symbol]: pool } },
+      global: { provide: { [TERMINAL_WORKSPACE_KEY as symbol]: fake.core } },
     })
   })
   afterEach(() => {
@@ -29,12 +32,14 @@ describe('SideHead（搜索框）', () => {
 
   it('搜索框内 Esc 清空搜索词并把焦点交还当前终端', async () => {
     const filter = useFilterStore()
+    await fake.workspace.select(a.id)
+    const focusBefore = fake.terminals[0]!.focusCount
     const input = wrapper.find<HTMLInputElement>('[data-test=search-input]')
     await input.setValue('api')
     await input.trigger('keydown', { key: 'Escape' })
     expect(filter.search).toBe('')
     expect(input.element.value).toBe('')
-    expect(pool.focusActive).toHaveBeenCalledTimes(1)
+    expect(fake.terminals[0]!.focusCount).toBe(focusBefore + 1)
   })
 
   it('document 上的 Ctrl+K（焦点在别处，如终端）聚焦并全选搜索框，且 preventDefault', async () => {

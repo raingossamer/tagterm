@@ -2,25 +2,25 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import TabBar from '../../../src/renderer/src/components/TabBar.vue'
-import { useSessionsStore } from '../../../src/renderer/src/stores/sessions'
 import { useWorkspaceStore } from '../../../src/renderer/src/stores/workspace'
 import { installFakeApi, makeSession } from '../fakeApi'
+import { installFakeWorkspace, type FakeWorkspace } from '../fakeWorkspace'
 
 describe('TabBar', () => {
   const a = makeSession({ name: 'simba-api' })
   const b = makeSession({ name: 'iot' })
+  let fake: FakeWorkspace
 
-  beforeEach(() => {
+  beforeEach(async () => {
     setActivePinia(createPinia())
-    useSessionsStore().sessions = [a, b]
-    const ws = useWorkspaceStore()
-    ws.select(a.id)
-    ws.select(b.id)
-    ws.select(a.id)
+    installFakeApi()
+    fake = installFakeWorkspace([a, b])
+    await fake.workspace.select(a.id)
+    await fake.workspace.select(b.id)
+    await fake.workspace.select(a.id)
   })
 
-  it('为每个打开的标签页渲染名称与状态点，当前页高亮；点击 / Enter 选中标签页', async () => {
-    installFakeApi()
+  it('为每个打开的标签页渲染名称与状态点，当前页高亮；点击 / Enter 发出 select', async () => {
     const wrapper = mount(TabBar)
     const tabs = wrapper.findAll('[data-test=tab]')
 
@@ -34,8 +34,7 @@ describe('TabBar', () => {
     expect(wrapper.emitted('select')).toEqual([[b.id], [a.id]])
   })
 
-  it('× 只关闭标签页（会话继续在后台保持）：不调 pty.kill，active 切到邻居', async () => {
-    const api = installFakeApi()
+  it('× 只关闭标签页（会话继续在后台保持）：pty 仍在、实例未销毁，active 切到邻居', async () => {
     const wrapper = mount(TabBar)
 
     await wrapper.findAll('[data-test=tab-close]')[0]!.trigger('click')
@@ -43,12 +42,12 @@ describe('TabBar', () => {
     const ws = useWorkspaceStore()
     expect(ws.openTabs).toEqual([b.id])
     expect(ws.activeId).toBe(b.id)
-    expect(api.pty.kill).not.toHaveBeenCalled()
+    expect(fake.pty.isRunning(a.id)).toBe(true)
+    expect(fake.terminals.every((t) => !t.isDisposed)).toBe(true)
     expect(wrapper.emitted('select')).toBeUndefined()
   })
 
   it('☰ 切换侧栏收起；＋ 发出 newSession', async () => {
-    installFakeApi()
     const wrapper = mount(TabBar)
 
     await wrapper.find('[data-test=tab-side]').trigger('click')

@@ -1,58 +1,60 @@
 /**
- * 工作区 UI 状态（只在渲染进程）：打开的标签页、当前会话、侧栏收起、每会话运行态、悬停会话（副本一起高亮）。
- * 标签页语义照原型：选中即加标签页；关闭当前页激活 openTabs[min(i, len-1)]；全关回到空状态。
+ * 工作区 UI 状态 + TerminalWorkspace 的薄适配器（只在渲染进程）：
+ * 标签页 / 当前页 / 每会话运行态来自核心的不可变快照（shallowRef 整体替换），写操作一律委托核心，
+ * 组件不能直接改 activeId / openTabs；sideHidden / hoveredId 是纯 UI 状态，不进核心。
+ * 会话镜像（sessions store）每次变化都喂给核心 syncSessions —— 移除会话只走主进程广播这一条路。
  */
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
+import type { Unsubscribe } from '@shared/api'
+import type { PtyPhase, TerminalWorkspace, WorkspaceSnapshot } from '../terminal/TerminalWorkspace'
+import { useSessionsStore } from './sessions'
 
-export interface SessionRuntimeState {
-  alive: boolean
-  exitCode?: number
-}
+const EMPTY_SNAPSHOT: WorkspaceSnapshot = { openTabs: [], activeId: null, runtime: {} }
 
 export const useWorkspaceStore = defineStore('workspace', () => {
-  const openTabs = ref<string[]>([])
-  const activeId = ref<string | null>(null)
+  const sessions = useSessionsStore()
+  const snap = shallowRef<WorkspaceSnapshot>(EMPTY_SNAPSHOT)
+  let core: TerminalWorkspace | null = null
   const sideHidden = ref(false)
-  const runtime = ref<Record<string, SessionRuntimeState>>({})
   /** 鼠标悬停的会话：同一会话在各分组的副本一起高亮 */
   const hoveredId = ref<string | null>(null)
 
-  const isOpen = (id: string): boolean => openTabs.value.includes(id)
-  const hasActive = computed(() => activeId.value !== null)
-  /** 没有记录视为存活（pty 打开后才会有退出记录） */
-  const isAlive = (id: string): boolean => runtime.value[id]?.alive ?? true
+  const openTabs = computed(() => snap.value.openTabs)
+  const activeId = computed(() => snap.value.activeId)
+  const hasActive = computed(() => snap.value.activeId !== null)
+  const runtime = computed(() => snap.value.runtime)
+  const isOpen = (id: string): boolean => snap.value.openTabs.includes(id)
+  /** 没有实例（从未打开或已移除）视为 closed */
+  const phaseOf = (id: string): PtyPhase | 'closed' => snap.value.runtime[id]?.phase ?? 'closed'
 
-  function select(id: string): void {
-    if (!openTabs.value.includes(id)) openTabs.value.push(id)
-    activeId.value = id
-  }
-
-  /** 从标签页移除；若是当前会话，激活原位置的邻居（靠后优先，越界取最后一个）。不结束 pty */
-  function closeTab(id: string): void {
-    const i = openTabs.value.indexOf(id)
-    if (i < 0) return
-    openTabs.value.splice(i, 1)
-    if (activeId.value === id) {
-      activeId.value = openTabs.value[Math.min(i, openTabs.value.length - 1)] ?? null
+  /** 装配根调用一次：喂入当前会话列表、镜像快照、订阅变化、watch 会话镜像；返回拆除函数 */
+  function attachCore(next: TerminalWorkspace): Unsubscribe {
+    core = next
+    next.syncSessions(sessions.sessions)
+    snap.value = next.snapshot()
+    const unsubscribe = next.subscribe((s) => {
+      snap.value = s
+    })
+    const stop = watch(
+      () => sessions.sessions,
+      (list) => next.syncSessions(list),
+    )
+    return () => {
+      unsubscribe()
+      stop()
+      if (core === next) core = null
     }
   }
 
-  function onSessionRemoved(id: string): void {
-    closeTab(id)
-    delete runtime.value[id]
+  const select = (id: string): Promise<void> => core?.select(id) ?? Promise.resolve()
+
+  function closeTab(id: string): void {
+    core?.closeTab(id)
   }
 
   function toggleSide(): void {
     sideHidden.value = !sideHidden.value
-  }
-
-  function setExited(id: string, exitCode: number): void {
-    runtime.value[id] = { alive: false, exitCode }
-  }
-
-  function markAlive(id: string): void {
-    runtime.value[id] = { alive: true }
   }
 
   function setHovered(id: string | null): void {
@@ -62,18 +64,16 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   return {
     openTabs,
     activeId,
-    sideHidden,
+    hasActive,
     runtime,
+    sideHidden,
     hoveredId,
     isOpen,
-    hasActive,
-    isAlive,
+    phaseOf,
+    attachCore,
     select,
     closeTab,
-    onSessionRemoved,
     toggleSide,
-    setExited,
-    markAlive,
     setHovered,
   }
 })

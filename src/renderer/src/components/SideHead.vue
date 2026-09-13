@@ -4,10 +4,10 @@
 // 聚焦并全选搜索框；搜索框内 Esc 清空搜索词并把焦点交还当前终端
 import { inject, onMounted, onUnmounted, ref } from 'vue'
 import { useFilterStore } from '../stores/filter'
-import { TERMINAL_POOL_KEY } from '../terminal/poolKey'
+import { TERMINAL_WORKSPACE_KEY } from '../terminal/workspaceKey'
 
 const filter = useFilterStore()
-const pool = inject(TERMINAL_POOL_KEY, null)
+const workspace = inject(TERMINAL_WORKSPACE_KEY, null)
 const input = ref<HTMLInputElement | null>(null)
 
 function onInput(e: Event): void {
@@ -16,7 +16,7 @@ function onInput(e: Event): void {
 
 function onEscape(): void {
   filter.setSearch('')
-  pool?.focusActive()
+  workspace?.focusActive()
 }
 
 function onDocumentKeydown(e: KeyboardEvent): void {

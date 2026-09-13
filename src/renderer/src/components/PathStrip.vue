@@ -42,12 +42,12 @@ function clearScreen(): void {
   runCommand(session.value.shell === 'cmd.exe' ? 'cls' : 'clear')
 }
 
+/** 移除只走主进程广播这一条路：session:changed 到达后由生命周期核心销毁实例并关标签页 */
 async function removeSession(): Promise<void> {
   const s = session.value
   if (!s) return
   if (!window.confirm(`移除会话 "${s.name}"？终端进程会被结束。`)) return
   await sessions.remove(s.id)
-  workspace.onSessionRemoved(s.id)
 }
 </script>
 

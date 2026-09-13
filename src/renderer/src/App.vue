@@ -1,8 +1,9 @@
 <script setup lang="ts">
 // 应用骨架：左栏（会话列表）+ 右栏（标签页 / 工作区 / 空状态 + 状态栏），布局照原型 .app 双栏 grid；
 // 启动依次加载 settings / update / sessions / tags（tags 的派生以会话列表为主表，放最后）；
-// 提供 TerminalPool 单例，并把「选中会话 → 打开终端」「pty 退出 → 重启」「会话被移除 → 销毁实例」编排在这里
-import { onMounted, onUnmounted, provide, ref, watch } from 'vue'
+// 装配会话生命周期核心 TerminalWorkspace：provide 给 TerminalPane / SideHead（宿主操作），attachCore 给 workspace store（快照镜像）。
+// 选中 / 关页 / 重启 / 移除的编排全在核心里，这里只做接线
+import { onMounted, onUnmounted, provide, ref } from 'vue'
 import type { Session } from '@shared/models'
 import type { Unsubscribe } from '@shared/api'
 import SideHead from './components/SideHead.vue'
@@ -22,8 +23,8 @@ import { useSettingsStore } from './stores/settings'
 import { useTagsStore } from './stores/tags'
 import { useUpdateStore } from './stores/update'
 import { useWorkspaceStore } from './stores/workspace'
-import { TerminalPool } from './terminal/TerminalPool'
-import { TERMINAL_POOL_KEY } from './terminal/poolKey'
+import { TerminalWorkspace } from './terminal/TerminalWorkspace'
+import { TERMINAL_WORKSPACE_KEY } from './terminal/workspaceKey'
 import { createXtermFactory } from './terminal/xtermFactory'
 import { buildTerminalOptions } from './terminal/theme'
 
@@ -38,76 +39,19 @@ const isManageTagsOpen = ref(false)
 let unsubscribeOpenSettings: Unsubscribe | null = null
 const loadError = ref('')
 
+// 工厂惰性读取：终端只会在会话列表加载之后创建，而列表加载在 getOsBuild 之后
 let osBuild = 0
-// S4 删除：临时承接 pty 接线（键入门控 / 重排），生命周期核心落地后由 TerminalWorkspace 拥有
-const pool = new TerminalPool({
+const core = new TerminalWorkspace({
+  pty: window.tagterm.pty,
   createTerminal: createXtermFactory(() => buildTerminalOptions(osBuild)),
-  onInput: (id, data) => {
-    if (workspace.isAlive(id)) window.tagterm.pty.write(id, data)
-    else if (data.includes('\r')) void restartSession(id)
-  },
-  onResize: (id, size) => void window.tagterm.pty.resize(id, size),
 })
-provide(TERMINAL_POOL_KEY, pool)
-let unsubscribePty: Unsubscribe[] = []
-
-/** 打开（或复用）会话的终端并显示；pty 已退出的会话再次选中即重启 */
-async function selectSession(id: string): Promise<void> {
-  const session = sessions.byId(id)
-  if (!session) return
-  workspace.select(id)
-  if (!workspace.isAlive(id)) {
-    await restartSession(id)
-    return
-  }
-  await openAndShow(session)
-}
-
-async function restartSession(id: string): Promise<void> {
-  const session = sessions.byId(id)
-  if (!session) return
-  pool.dispose(id)
-  workspace.markAlive(id)
-  await openAndShow(session)
-}
-
-async function openAndShow(session: Session): Promise<void> {
-  try {
-    const size = pool.open(session.id)
-    await window.tagterm.pty.open(session.id, size)
-  } catch (err) {
-    console.error('[terminal] 打开终端失败', err)
-  }
-  if (workspace.activeId === session.id) pool.show(session.id)
-}
+provide(TERMINAL_WORKSPACE_KEY, core)
+const detachCore = workspace.attachCore(core)
 
 function onCreated(session: Session): void {
   isNewModalOpen.value = false
-  void selectSession(session.id)
+  void workspace.select(session.id)
 }
-
-// 切换活动会话：只切 display；没有活动会话时隐藏全部实例（空状态）
-watch(
-  () => workspace.activeId,
-  (id) => {
-    if (id === null) pool.hide()
-    else if (pool.has(id)) pool.show(id)
-  },
-)
-
-// 会话被移除（本窗口或主进程广播）→ 销毁其实例并关其标签页
-watch(
-  () => sessions.sessions,
-  (list) => {
-    const alive = new Set(list.map((s) => s.id))
-    for (const id of pool.sessionIds()) {
-      if (!alive.has(id)) {
-        pool.dispose(id)
-        workspace.onSessionRemoved(id)
-      }
-    }
-  },
-)
 
 function onKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape') isNewModalOpen.value = false
@@ -115,14 +59,6 @@ function onKeydown(e: KeyboardEvent): void {
 
 onMounted(async () => {
   document.addEventListener('keydown', onKeydown)
-  // S4 删除：临时承接 pty 输出与退出（退出提示写入实例、运行态记为已退出）
-  unsubscribePty = [
-    window.tagterm.pty.onData((id, data) => pool.write(id, data)),
-    window.tagterm.pty.onExit((e) => {
-      pool.write(e.sessionId, `\r\n[进程已退出，代码 ${e.exitCode}]\r\n`)
-      workspace.setExited(e.sessionId, e.exitCode)
-    }),
-  ]
   // 托盘「设置」→ 主进程广播 → 打开设置弹窗
   unsubscribeOpenSettings = window.tagterm.app.onOpenSettings(() => {
     isSettingsOpen.value = true
@@ -140,7 +76,8 @@ onMounted(async () => {
 onUnmounted(() => {
   document.removeEventListener('keydown', onKeydown)
   unsubscribeOpenSettings?.()
-  for (const unsubscribe of unsubscribePty) unsubscribe()
+  detachCore()
+  core.dispose()
 })
 </script>
 
@@ -150,11 +87,11 @@ onUnmounted(() => {
       <SideHead />
       <TagFilter />
       <div v-if="loadError" class="empty-side" data-test="load-error">{{ loadError }}</div>
-      <SessionGroups v-else @select="selectSession" />
+      <SessionGroups v-else @select="workspace.select" />
       <SideFoot @new-session="isNewModalOpen = true" @manage-tags="isManageTagsOpen = true" />
     </aside>
     <main class="main">
-      <TabBar @select="selectSession" @new-session="isNewModalOpen = true" />
+      <TabBar @select="workspace.select" @new-session="isNewModalOpen = true" />
       <div v-show="workspace.hasActive" class="work">
         <PathStrip />
         <TerminalPane />

@@ -7,6 +7,7 @@ import { useWorkspaceStore } from '../../../src/renderer/src/stores/workspace'
 import { useSettingsStore } from '../../../src/renderer/src/stores/settings'
 import { useTagsStore } from '../../../src/renderer/src/stores/tags'
 import { installFakeApi, makeCommand, makeSession, makeSettings, makeTag } from '../fakeApi'
+import { installFakeWorkspace } from '../fakeWorkspace'
 
 // happy-dom 没有 window.confirm，按需要的返回值打桩
 function stubConfirm(result: boolean) {
@@ -19,10 +20,9 @@ describe('PathStrip', () => {
   const session = makeSession({ name: 'simba-api', cwd: 'D:\\Projects\\simba\\api' })
   let writeText: ReturnType<typeof vi.fn>
 
-  beforeEach(() => {
+  beforeEach(async () => {
     setActivePinia(createPinia())
-    useSessionsStore().sessions = [session]
-    useWorkspaceStore().select(session.id)
+    await installFakeWorkspace([session]).workspace.select(session.id)
     writeText = vi.fn(async () => {})
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
   })
@@ -48,7 +48,7 @@ describe('PathStrip', () => {
     expect(copy.text()).toBe('复制')
   })
 
-  it('「移除会话」按原型文案确认；确认后调 SDK 移除并关闭其标签页', async () => {
+  it('「移除会话」按原型文案确认；确认后调 SDK 移除；主进程广播移除后的列表到达时标签页关闭', async () => {
     const api = installFakeApi()
     const confirm = stubConfirm(true)
     const wrapper = mount(PathStrip)
@@ -58,7 +58,12 @@ describe('PathStrip', () => {
 
     expect(confirm).toHaveBeenCalledWith('移除会话 "simba-api"？终端进程会被结束。')
     expect(api.session.remove).toHaveBeenCalledWith(session.id)
+    expect(useWorkspaceStore().activeId).toBe(session.id)
+
+    useSessionsStore().sessions = []
+    await flushPromises()
     expect(useWorkspaceStore().activeId).toBeNull()
+    expect(wrapper.find('[data-test=strip-path]').exists()).toBe(false)
   })
 
   it('唤起区平铺 pinned 命令（显示名），点击即向终端写入 `<command>\r`；清屏按 shell 写 cls / clear', async () => {

@@ -1,23 +1,23 @@
 <script setup lang="ts">
-// 终端区：提供容器给实例池并挂 ResizeObserver；点击空白处聚焦当前终端。
-// 背景图（data: URL）与黑色遮罩铺在实例池容器下方，xterm 本身背景透明（theme.ts）
+// 终端区：把容器交给会话生命周期核心（内部实例池）并挂 ResizeObserver；点击空白处聚焦当前终端。
+// 背景图（data: URL）与黑色遮罩铺在终端容器下方，xterm 本身背景透明（theme.ts）
 import { inject, onMounted, onUnmounted, ref } from 'vue'
-import { TERMINAL_POOL_KEY } from '../terminal/poolKey'
+import { TERMINAL_WORKSPACE_KEY } from '../terminal/workspaceKey'
 import { useSettingsStore } from '../stores/settings'
 
-const pool = inject(TERMINAL_POOL_KEY)!
+const workspace = inject(TERMINAL_WORKSPACE_KEY)!
 const settings = useSettingsStore()
 const root = ref<HTMLDivElement | null>(null)
 let observer: ResizeObserver | null = null
 
 onMounted(() => {
-  pool.attach(root.value!)
-  observer = new ResizeObserver(() => pool.fitActive())
+  workspace.attach(root.value!)
+  observer = new ResizeObserver(() => workspace.fitActive())
   observer.observe(root.value!)
 })
 onUnmounted(() => {
   observer?.disconnect()
-  pool.detach()
+  workspace.detach()
 })
 </script>
 
@@ -35,7 +35,7 @@ onUnmounted(() => {
         data-test="terminal-dim"
       ></div>
     </div>
-    <div ref="root" class="term" data-test="terminal-pane" @click="pool.focusActive()"></div>
+    <div ref="root" class="term" data-test="terminal-pane" @click="workspace.focusActive()"></div>
   </div>
 </template>
 
