@@ -3,8 +3,9 @@
 // 「新标签名，回车添加」（立即创建标签并选中，取消新建会话该标签也保留）；目录必填，名称缺省由主进程取目录末段；
 // 提交时把选中标签作为 tagIds 发送，attach 失败错误内联显示、弹窗保持打开（会话已创建）
 import { onMounted, ref } from 'vue'
-import type { Session, ShellKind } from '@shared/models'
+import type { Session } from '@shared/models'
 import { DEFAULT_SHELL } from '@shared/models'
+import { useShells } from '../composables/useShells'
 import { useFilterStore } from '../stores/filter'
 import { useSessionsStore } from '../stores/sessions'
 import { useTagsStore } from '../stores/tags'
@@ -16,27 +17,15 @@ const filter = useFilterStore()
 
 const name = ref('')
 const cwd = ref('')
-const shell = ref<ShellKind>(DEFAULT_SHELL)
-const shells = ref<ShellKind[]>([DEFAULT_SHELL])
-const pathPlaceholder = ref('D:\\Projects\\...')
 const error = ref('')
+const { shell, shells } = useShells(DEFAULT_SHELL, (message) => (error.value = message))
+const pathPlaceholder = ref('D:\\Projects\\...')
 const nameInput = ref<HTMLInputElement | null>(null)
 const pathInput = ref<HTMLInputElement | null>(null)
 const selectedTags = ref<Set<string>>(new Set(filter.selected))
 const newTag = ref('')
 
-onMounted(async () => {
-  nameInput.value?.focus()
-  try {
-    const available = await window.tagterm.app.listShells()
-    if (available.length) {
-      shells.value = available
-      if (!available.includes(shell.value)) shell.value = available[0]!
-    }
-  } catch (err) {
-    error.value = String(err)
-  }
-})
+onMounted(() => nameInput.value?.focus())
 
 function toggleTag(id: string): void {
   const next = new Set(selectedTags.value)
