@@ -3,7 +3,8 @@
  * - 粘贴：Ctrl+V / Ctrl+Shift+V / Shift+Insert
  * - 复制：Ctrl+Shift+C；Ctrl+C 仅在有选区时复制，无选区时交给终端（发送中断）
  * - 搜索：Ctrl+K 在终端里也抢下（不写 pty），交给全局监听聚焦搜索框
- * - 右键：有选区复制，无选区粘贴
+ * - 右键：有选区复制，无选区粘贴；但程序开了鼠标追踪（claude / codex 等 TUI）时把右键让给程序，
+ *   否则程序自己按鼠标事件粘一次、我们又粘一次 → 粘两遍（Shift+右键强制走终端，与 Windows Terminal 一致）
  */
 export type TerminalKeyAction = 'copy' | 'paste' | 'search' | null
 export type ClipboardAction = 'copy' | 'paste' | null
@@ -30,6 +31,16 @@ export function terminalKeyAction(ev: KeyLike, hasSelection: boolean): TerminalK
   return null
 }
 
-export function clipboardActionForRightClick(hasSelection: boolean): ClipboardAction {
+/**
+ * 右键动作：有选区复制、无选区粘贴。
+ * `mouseTrackingActive` 为真（程序开了鼠标追踪）且未按 Shift 时返回 null：右键交给程序，
+ * 我们既不复制也不粘贴（避免与程序自身的右键粘贴叠成两遍）。Shift 强制走终端。
+ */
+export function clipboardActionForRightClick(
+  hasSelection: boolean,
+  mouseTrackingActive = false,
+  shiftKey = false,
+): ClipboardAction {
+  if (mouseTrackingActive && !shiftKey) return null
   return hasSelection ? 'copy' : 'paste'
 }

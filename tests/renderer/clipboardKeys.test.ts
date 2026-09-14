@@ -40,8 +40,18 @@ describe('terminalKeyAction（Windows 终端习惯 + 全局搜索键）', () => 
 })
 
 describe('clipboardActionForRightClick', () => {
-  it('有选区复制，无选区粘贴', () => {
+  it('无鼠标追踪时：有选区复制，无选区粘贴', () => {
     expect(clipboardActionForRightClick(true)).toBe('copy')
     expect(clipboardActionForRightClick(false)).toBe('paste')
+  })
+
+  it('程序开了鼠标追踪：右键让给程序（返回 null，不复制不粘贴），避免与程序自身右键粘贴叠成两遍', () => {
+    expect(clipboardActionForRightClick(false, true)).toBeNull()
+    expect(clipboardActionForRightClick(true, true)).toBeNull()
+  })
+
+  it('鼠标追踪下按 Shift 强制走终端：仍按有无选区决定复制 / 粘贴', () => {
+    expect(clipboardActionForRightClick(false, true, true)).toBe('paste')
+    expect(clipboardActionForRightClick(true, true, true)).toBe('copy')
   })
 })
