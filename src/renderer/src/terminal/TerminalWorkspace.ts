@@ -42,6 +42,11 @@ export class TerminalWorkspace {
   private openTabs: string[] = []
   private activeId: string | null = null
   private readonly runtime = new Map<string, SessionRuntime>()
+  /** 每会话当前 pty 的 pid：退出事件靠它认领，避免上一条 pty 的退出误伤刚开好的终端 */
+  private readonly pids = new Map<string, number>()
+  /** 正在等 pty.open 返回的会话：此时还不知道新 pid，期间到达的退出事件先扣下 */
+  private readonly opening = new Set<string>()
+  private readonly deferredExits = new Map<string, PtyExitEvent>()
   private readonly listeners = new Set<(s: WorkspaceSnapshot) => void>()
   private readonly unsubscribes: Unsubscribe[]
 
@@ -90,13 +95,23 @@ export class TerminalWorkspace {
     this.runtime.set(id, { phase: 'opening' })
     this.pool.show(id)
     this.emit()
+    this.pids.delete(id)
+    this.opening.add(id)
     try {
-      await this.deps.pty.open(id, size)
+      const { pid } = await this.deps.pty.open(id, size)
+      this.opening.delete(id)
+      this.pids.set(id, pid)
       // 期间被移除（runtime 已删）则不再登记
       if (this.runtime.get(id)?.phase === 'opening') this.runtime.set(id, { phase: 'running' })
+      // 等待期间到达的退出事件：是这条新 pty 自己退了才认，否则是上一条的迟到事件，丢弃
+      const deferred = this.deferredExits.get(id)
+      this.deferredExits.delete(id)
+      if (deferred && deferred.pid === pid) this.handleExit(deferred)
     } catch (err) {
       // 实例保留并标记已退出：原因必须写进终端，否则界面上只剩一片空白（无提示符、无报错）；按回车或再次选中即重试
       const message = err instanceof Error ? err.message : String(err)
+      this.opening.delete(id)
+      this.deferredExits.delete(id)
       console.error('[terminal] 打开终端失败', err)
       if (this.pool.has(id)) {
         this.pool.write(id, `\r\n[打开终端失败：${message}]\r\n[按回车重试]\r\n`)
@@ -150,6 +165,9 @@ export class TerminalWorkspace {
     for (const unsubscribe of this.unsubscribes) unsubscribe()
     for (const id of this.pool.sessionIds()) this.pool.dispose(id)
     this.runtime.clear()
+    this.pids.clear()
+    this.opening.clear()
+    this.deferredExits.clear()
     this.openTabs = []
     this.activeId = null
   }
@@ -167,6 +185,9 @@ export class TerminalWorkspace {
   private evict(id: string): void {
     this.pool.dispose(id)
     this.runtime.delete(id)
+    this.pids.delete(id)
+    this.opening.delete(id)
+    this.deferredExits.delete(id)
     this.removeTab(id)
   }
 
@@ -181,8 +202,19 @@ export class TerminalWorkspace {
     }
   }
 
-  /** pty 退出：实例末尾写提示，运行态记为已退出（按键从此不再转发） */
+  /**
+   * pty 退出：实例末尾写提示，运行态记为已退出（按键从此不再转发）。
+   * 只认当前那条 pty 的退出：重开会话时上一条 pty 的退出事件可能迟到，若照单全收会把刚开好的
+   * 终端标成 exited —— 界面上就是「打字没反应」的假死（只有回车能救）。
+   */
   private handleExit(e: PtyExitEvent): void {
+    // 正在等 pty.open 返回：还不知道新 pid，先扣下，等 open 拿到 pid 再判定归属
+    if (this.opening.has(e.sessionId)) {
+      this.deferredExits.set(e.sessionId, e)
+      return
+    }
+    const current = this.pids.get(e.sessionId)
+    if (current !== undefined && current !== e.pid) return // 上一条 pty 的迟到退出
     if (!this.pool.has(e.sessionId)) return
     this.pool.write(e.sessionId, `\r\n[进程已退出，代码 ${e.exitCode}]\r\n`)
     this.runtime.set(e.sessionId, { phase: 'exited', exitCode: e.exitCode })
