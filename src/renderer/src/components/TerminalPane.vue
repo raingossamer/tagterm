@@ -4,19 +4,25 @@
 import { inject, onMounted, onUnmounted, ref } from 'vue'
 import { TERMINAL_WORKSPACE_KEY } from '../terminal/workspaceKey'
 import { useSettingsStore } from '../stores/settings'
+import { createDebounced } from '../composables/debounce'
+
+/** 尺寸变化后多久才真正 fit：拖动窗口时 ResizeObserver 逐帧回调，逐帧 fit 会卡顿并闪烁 */
+const FIT_DEBOUNCE_MS = 80
 
 const workspace = inject(TERMINAL_WORKSPACE_KEY)!
 const settings = useSettingsStore()
 const root = ref<HTMLDivElement | null>(null)
 let observer: ResizeObserver | null = null
+const scheduleFit = createDebounced(() => workspace.fitActive(), FIT_DEBOUNCE_MS)
 
 onMounted(() => {
   workspace.attach(root.value!)
-  observer = new ResizeObserver(() => workspace.fitActive())
+  observer = new ResizeObserver(() => scheduleFit.call())
   observer.observe(root.value!)
 })
 onUnmounted(() => {
   observer?.disconnect()
+  scheduleFit.cancel()
   workspace.detach()
 })
 </script>
