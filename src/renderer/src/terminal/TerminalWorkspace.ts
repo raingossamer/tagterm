@@ -95,9 +95,13 @@ export class TerminalWorkspace {
       // 期间被移除（runtime 已删）则不再登记
       if (this.runtime.get(id)?.phase === 'opening') this.runtime.set(id, { phase: 'running' })
     } catch (err) {
-      // 实例保留并标记已退出：按回车或再次选中即可重试
+      // 实例保留并标记已退出：原因必须写进终端，否则界面上只剩一片空白（无提示符、无报错）；按回车或再次选中即重试
+      const message = err instanceof Error ? err.message : String(err)
       console.error('[terminal] 打开终端失败', err)
-      if (this.pool.has(id)) this.runtime.set(id, { phase: 'exited' })
+      if (this.pool.has(id)) {
+        this.pool.write(id, `\r\n[打开终端失败：${message}]\r\n[按回车重试]\r\n`)
+        this.runtime.set(id, { phase: 'exited' })
+      }
     }
     this.emit()
   }
