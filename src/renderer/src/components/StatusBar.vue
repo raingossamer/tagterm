@@ -28,7 +28,7 @@ onMounted(async () => {
   padding: 4px 14px;
   font-size: 12px;
   color: var(--muted);
-  background: var(--panel);
+  background: var(--panel-bg);
   border-top: 1px solid var(--line);
   flex-wrap: wrap;
 }

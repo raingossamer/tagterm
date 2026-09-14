@@ -6,6 +6,7 @@
 import { onMounted, onUnmounted, provide, ref } from 'vue'
 import type { Session } from '@shared/models'
 import type { Unsubscribe } from '@shared/api'
+import AppBackground from './components/AppBackground.vue'
 import SideHead from './components/SideHead.vue'
 import TagFilter from './components/TagFilter.vue'
 import SessionGroups from './components/SessionGroups.vue'
@@ -89,13 +90,22 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="app" :class="{ 'side-hidden': workspace.sideHidden }">
+  <AppBackground />
+  <div
+    class="app"
+    :class="{ 'side-hidden': workspace.sideHidden }"
+    :style="{ '--panel-opacity': settings.panelOpacity }"
+  >
     <aside class="side">
       <SideHead />
       <TagFilter />
       <div v-if="loadError" class="empty-side" data-test="load-error">{{ loadError }}</div>
       <SessionGroups v-else @select="workspace.select" @edit="onEdit" />
-      <SideFoot @new-session="isNewModalOpen = true" @manage-tags="isManageTagsOpen = true" />
+      <SideFoot
+        @new-session="isNewModalOpen = true"
+        @manage-tags="isManageTagsOpen = true"
+        @settings="isSettingsOpen = true"
+      />
     </aside>
     <main class="main">
       <TabBar @select="workspace.select" @new-session="isNewModalOpen = true" />
@@ -120,6 +130,8 @@ onUnmounted(() => {
 
 <style scoped>
 .app {
+  position: relative; /* 盖在 fixed 的全局背景层之上 */
+  z-index: 1;
   display: grid;
   grid-template-columns: 296px 1fr;
   height: 100vh;
@@ -135,7 +147,7 @@ onUnmounted(() => {
 .side {
   display: flex;
   flex-direction: column;
-  background: var(--panel);
+  background: var(--panel-bg);
   border-right: 1px solid var(--line);
   min-width: 0;
 }
@@ -150,7 +162,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  background: var(--bg);
+  background: var(--bg-soft);
 }
 .work {
   flex: 1;

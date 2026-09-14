@@ -2,6 +2,7 @@ import { vi } from 'vitest'
 import type { TagTermApi } from '@shared/api'
 import type { TagListResult } from '@shared/ipc'
 import {
+  DEFAULT_BACKGROUND,
   TAG_COLORS,
   type LaunchCommand,
   type Session,
@@ -41,7 +42,7 @@ export function createFakeApi(overrides: Overrides = {}): TagTermApi {
     settings: {
       get: vi.fn(async () => makeSettings()),
       update: vi.fn(async (patch) => ({ ...makeSettings(), ...patch }) as Settings),
-      readBackgroundImage: vi.fn(async () => null),
+      readBackgroundImage: vi.fn(async (_path?: string) => null),
       onChanged: vi.fn(() => () => {}),
       ...overrides.settings,
     },
@@ -124,7 +125,7 @@ export function makeCommand(partial: Partial<LaunchCommand> & { command: string 
   }
 }
 
-/** 缺省设置：claude / gemini / pi 平铺，背景纯色 */
+/** 缺省设置：claude / gemini / pi 平铺，无背景图 */
 export function makeSettings(partial: Partial<Settings> = {}): Settings {
   return {
     launchCommands: [
@@ -132,7 +133,7 @@ export function makeSettings(partial: Partial<Settings> = {}): Settings {
       makeCommand({ command: 'gemini', sortOrder: 2 }),
       makeCommand({ command: 'pi', sortOrder: 3 }),
     ],
-    terminalBackground: { imagePath: null, dimOpacity: 0.6 },
+    background: { ...DEFAULT_BACKGROUND },
     ...partial,
   }
 }

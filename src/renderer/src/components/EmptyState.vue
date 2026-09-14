@@ -22,7 +22,7 @@
   place-items: center;
   text-align: center;
   padding: 40px;
-  background: var(--t-bg);
+  background: var(--t-bg-soft);
   color: #9aa3ae;
 }
 .empty h2 {

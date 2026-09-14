@@ -23,5 +23,11 @@
   --font:
     'Segoe UI Variable Text', 'Segoe UI', 'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans SC',
     system-ui, sans-serif;
+  /* 全局背景：面板不透明度（无背景图时 App 置 1），各面板底色由它派生，背景层在最底下透出来 */
+  --panel-opacity: 1;
+  --panel-bg: color-mix(in srgb, var(--panel) calc(var(--panel-opacity) * 100%), transparent);
+  --panel2-bg: color-mix(in srgb, var(--panel2) calc(var(--panel-opacity) * 100%), transparent);
+  --bg-soft: color-mix(in srgb, var(--bg) calc(var(--panel-opacity) * 100%), transparent);
+  --t-bg-soft: color-mix(in srgb, var(--t-bg) calc(var(--panel-opacity) * 100%), transparent);
   --mono: 'Cascadia Mono', 'Cascadia Code', Consolas, 'Microsoft YaHei', 'PingFang SC', monospace;
 }

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import type { Settings } from '@shared/models'
+import { DEFAULT_BACKGROUND, type Settings } from '@shared/models'
 import { useSettingsStore } from '../../src/renderer/src/stores/settings'
 import { installFakeApi, makeCommand, makeSettings } from './fakeApi'
 
@@ -53,16 +53,16 @@ describe('settings store', () => {
     expect(store.pinnedCommands.map((c) => c.command)).toEqual(['claude', 'gemini', 'pi'])
   })
 
-  it('背景图：load 后按 imagePath 读取 data: URL；广播换图后重新读取；清除后为 null', async () => {
+  it('背景：load 后按 imagePath 读取 data: URL；广播换图后重新读取；清除后为 null', async () => {
     const withImage = makeSettings({
-      terminalBackground: { imagePath: 'D:/a.png', dimOpacity: 0.4 },
+      background: { ...DEFAULT_BACKGROUND, imagePath: 'D:/a.png' },
     })
     let broadcast: ((s: Settings) => void) | undefined
     let dataUrl: string | null = 'data:image/png;base64,AAA'
     const api = installFakeApi({
       settings: {
         get: async () => withImage,
-        readBackgroundImage: vi.fn(async () => dataUrl),
+        readBackgroundImage: vi.fn(async (_path?: string) => dataUrl),
         onChanged: (cb) => {
           broadcast = cb
           return () => {}
@@ -73,31 +73,59 @@ describe('settings store', () => {
     const store = useSettingsStore()
     await store.load()
     expect(store.backgroundImage).toBe('data:image/png;base64,AAA')
-    expect(store.terminalBackground).toEqual({ imagePath: 'D:/a.png', dimOpacity: 0.4 })
+    expect(store.background).toEqual({ ...DEFAULT_BACKGROUND, imagePath: 'D:/a.png' })
+    expect(store.panelOpacity).toBe(DEFAULT_BACKGROUND.panelOpacity)
 
     dataUrl = 'data:image/png;base64,BBB'
-    broadcast!(makeSettings({ terminalBackground: { imagePath: 'D:/b.png', dimOpacity: 0.4 } }))
+    broadcast!(makeSettings({ background: { ...DEFAULT_BACKGROUND, imagePath: 'D:/b.png' } }))
     await new Promise((r) => setTimeout(r, 0))
     expect(store.backgroundImage).toBe('data:image/png;base64,BBB')
     expect(api.settings.readBackgroundImage).toHaveBeenCalledTimes(2)
 
-    broadcast!(makeSettings({ terminalBackground: { imagePath: null, dimOpacity: 0.4 } }))
+    broadcast!(makeSettings({ background: { ...DEFAULT_BACKGROUND, imagePath: null } }))
     await new Promise((r) => setTimeout(r, 0))
     expect(store.backgroundImage).toBeNull()
+    expect(store.panelOpacity).toBe(1) // 没有背景图时面板恢复完全不透明
     expect(api.settings.readBackgroundImage).toHaveBeenCalledTimes(2) // 未设置时不读文件
   })
 
-  it('saveTerminalBackground 只调 SDK；previewDim 即时覆盖遮罩不透明度，保存 / 广播后清除', async () => {
-    const api = installFakeApi()
+  it('previewBackground 即时覆盖生效背景（换图时读新图的 data: URL）；saveBackground 只调 SDK，广播后清预览', async () => {
+    let broadcast: ((s: Settings) => void) | undefined
+    const api = installFakeApi({
+      settings: {
+        readBackgroundImage: vi.fn(async (path?: string) => `data:image/png;base64,${path}`),
+        onChanged: (cb) => {
+          broadcast = cb
+          return () => {}
+        },
+      },
+    })
     const store = useSettingsStore()
     await store.load()
+    expect(store.background).toEqual(DEFAULT_BACKGROUND)
 
-    store.previewDim(0.2)
-    expect(store.terminalBackground.dimOpacity).toBe(0.2)
-    await store.saveTerminalBackground({ imagePath: 'D:/a.png', dimOpacity: 0.2 })
-    expect(api.settings.update).toHaveBeenCalledWith({
-      terminalBackground: { imagePath: 'D:/a.png', dimOpacity: 0.2 },
-    })
-    expect(store.terminalBackground.dimOpacity).toBe(0.6) // 未收到广播前以主进程数据为准
+    // 只调参数：不重复读图
+    await store.previewBackground({ ...DEFAULT_BACKGROUND, panelOpacity: 0.5, blurPx: 10 })
+    expect(store.background).toMatchObject({ panelOpacity: 0.5, blurPx: 10 })
+    expect(api.settings.readBackgroundImage).not.toHaveBeenCalled()
+
+    // 换图：预览就要看到新图
+    const picked = { ...DEFAULT_BACKGROUND, imagePath: 'D:/new.png' }
+    await store.previewBackground(picked)
+    expect(store.backgroundImage).toBe('data:image/png;base64,D:/new.png')
+
+    // 保存：只调 SDK，落盘与广播由主进程负责
+    await store.saveBackground(picked)
+    expect(api.settings.update).toHaveBeenCalledWith({ background: picked })
+
+    broadcast!(makeSettings({ background: picked }))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(store.background).toEqual(picked)
+
+    // 取消预览：回到已保存值
+    await store.previewBackground({ ...picked, blurPx: 20 })
+    expect(store.background.blurPx).toBe(20)
+    await store.previewBackground(null)
+    expect(store.background).toEqual(picked)
   })
 })

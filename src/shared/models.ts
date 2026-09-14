@@ -40,19 +40,38 @@ export interface LaunchCommand {
   sortOrder: number // 越小越靠前（平铺区与「更多」各自按此排序）
 }
 
-export interface TerminalBackground {
+/** 全局背景的显示方式：完整显示 / 填充窗口 / 平铺 */
+export type BackgroundFit = 'contain' | 'cover' | 'tile'
+export const BACKGROUND_FITS: readonly BackgroundFit[] = ['contain', 'cover', 'tile']
+
+/** 面板不透明度下限：再低文字压在背景图上就没法读了 */
+export const MIN_PANEL_OPACITY = 0.4
+export const MAX_BLUR_PX = 20
+
+/** 全局背景（v2）：图片铺满整个窗口，半透明面板压在它上面 */
+export interface AppBackground {
   imagePath: string | null // 用户选择的图片绝对路径；null = 纯色
-  dimOpacity: number // 0–1，图片上方黑色遮罩的不透明度，保证文字可读
+  fit: BackgroundFit
+  imageOpacity: number // 0–1，背景图自身的不透明度
+  panelOpacity: number // MIN_PANEL_OPACITY–1，侧栏 / 标签栏 / 路径条 / 状态栏 / 终端区底色的不透明度
+  blurPx: number // 0–MAX_BLUR_PX 整数，背景模糊
 }
 
-export const DEFAULT_TERMINAL_BACKGROUND: TerminalBackground = { imagePath: null, dimOpacity: 0.6 }
+export const DEFAULT_BACKGROUND: AppBackground = {
+  imagePath: null,
+  fit: 'contain',
+  imageOpacity: 0.35,
+  panelOpacity: 0.75,
+  blurPx: 4,
+}
 
 export interface Settings {
   launchCommands: LaunchCommand[]
-  terminalBackground: TerminalBackground
+  background: AppBackground
 }
 
-export const SETTINGS_FILE_VERSION = 1
+/** v2：terminalBackground（终端局部背景 + 黑色遮罩）整体换成全局 background */
+export const SETTINGS_FILE_VERSION = 2
 
 export interface SettingsFile extends Settings {
   version: typeof SETTINGS_FILE_VERSION

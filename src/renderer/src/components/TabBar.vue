@@ -95,7 +95,7 @@ function onTabKeydown(e: KeyboardEvent, id: string): void {
 }
 .tab.active,
 .tab.active:hover {
-  background: var(--t-bg);
+  background: var(--t-bg-soft);
   color: #fff;
 }
 .tab .x {

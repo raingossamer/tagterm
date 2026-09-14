@@ -118,7 +118,7 @@ function clearScreen(): void {
   align-items: center;
   gap: 8px;
   padding: 8px 14px;
-  background: var(--panel2);
+  background: var(--panel2-bg);
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   flex-wrap: wrap;

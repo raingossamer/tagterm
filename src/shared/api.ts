@@ -39,7 +39,8 @@ export interface TagTermApi {
   settings: {
     get(): Promise<Settings>
     update(patch: SettingsPatch): Promise<Settings>
-    readBackgroundImage(): Promise<string | null>
+    /** 省略 path 读已保存的背景图；传 path 读指定文件（设置弹窗预览未保存的图） */
+    readBackgroundImage(path?: string): Promise<string | null>
     onChanged(cb: (settings: Settings) => void): Unsubscribe
   }
   update: {
