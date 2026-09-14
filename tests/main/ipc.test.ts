@@ -331,9 +331,19 @@ describe('IPC 接口层', () => {
       sessionTags: [{ sessionId: s.id, tagId: a.id }],
     })
 
+    // reorder：把 b 排到 a 前面，sortOrder 重写为 1..n
+    await ipc.invoke('tag:reorder', [b.id, a.id])
+    const reordered = (await ipc.invoke('tag:list')) as { tags: Tag[] }
+    expect(reordered.tags.map((t) => [t.name, t.sortOrder])).toEqual([
+      ['java', 1],
+      ['simba-2', 2],
+    ])
+
     await ipc.invoke('session-tag:detach', s.id, a.id)
     await ipc.invoke('tag:remove', b.id)
-    await expect(ipc.invoke('tag:list')).resolves.toEqual({ tags: [updated], sessionTags: [] })
+    const finalList = (await ipc.invoke('tag:list')) as TagListResult
+    expect(finalList.sessionTags).toEqual([])
+    expect(finalList.tags.map((t) => t.name)).toEqual(['simba-2'])
   })
 
   it('tag 相关非法参数在接口层被拒绝', async () => {
@@ -348,6 +358,11 @@ describe('IPC 接口层', () => {
     await expect(ipc.invoke('tag:update', 'id', { sortOrder: 1.5 })).rejects.toThrow(
       '排序值必须是整数',
     )
+    await expect(ipc.invoke('tag:update', 'id', { hidden: 'yes' })).rejects.toThrow(
+      'hidden 必须是布尔值',
+    )
+    await expect(ipc.invoke('tag:reorder', 'nope')).rejects.toThrow('标签 id 列表格式不正确')
+    await expect(ipc.invoke('tag:reorder', ['a', ''])).rejects.toThrow('标签 id 列表格式不正确')
     await expect(ipc.invoke('tag:remove', 3)).rejects.toThrow('标签 id 不能为空')
     await expect(ipc.invoke('session-tag:attach', 'x', '')).rejects.toThrow('标签 id 不能为空')
     await expect(ipc.invoke('session-tag:detach', '', 'y')).rejects.toThrow('会话 id 不能为空')

@@ -40,9 +40,9 @@ const tags = useTagsStore()
       </button>
     </div>
     <div class="chips">
-      <template v-if="tags.sortedTags.length">
+      <template v-if="tags.visibleTags.length">
         <button
-          v-for="t in tags.sortedTags"
+          v-for="t in tags.visibleTags"
           :key="t.id"
           class="chip"
           :class="{ on: filter.selected.has(t.id) }"

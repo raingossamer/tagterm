@@ -83,7 +83,36 @@ describe('tags store', () => {
     expect(api.tag.attach).toHaveBeenCalledWith('s1', 't9')
     await store.detach('s1', 't9')
     expect(api.tag.detach).toHaveBeenCalledWith('s1', 't9')
+    await store.reorder(['t2', 't1'])
+    expect(api.tag.reorder).toHaveBeenCalledWith(['t2', 't1'])
     expect(store.tags).toEqual([])
     expect(store.sessionTags).toEqual([])
+  })
+
+  it('visibleTags / visibleTagsOf 排除 hidden 标签；sortedTags 仍含全部（按 sortOrder）', async () => {
+    const s1 = makeSession()
+    useSessionsStore().sessions = [s1]
+    const a = makeTag({ name: 'a', sortOrder: 1 })
+    const b = makeTag({ name: 'b', sortOrder: 2, hidden: true })
+    const c = makeTag({ name: 'c', sortOrder: 3 })
+    installFakeApi({
+      tag: {
+        list: async () => ({
+          tags: [a, b, c],
+          sessionTags: [
+            { sessionId: s1.id, tagId: a.id },
+            { sessionId: s1.id, tagId: b.id },
+          ],
+        }),
+      },
+    })
+    const store = useTagsStore()
+    await store.load()
+
+    expect(store.sortedTags.map((t) => t.name)).toEqual(['a', 'b', 'c'])
+    expect(store.visibleTags.map((t) => t.name)).toEqual(['a', 'c'])
+    // s1 挂了 a（显示）与 b（隐藏）：左栏只算可见标签
+    expect(store.tagsOf(s1.id).map((t) => t.name)).toEqual(['a', 'b'])
+    expect(store.visibleTagsOf(s1.id).map((t) => t.name)).toEqual(['a'])
   })
 })

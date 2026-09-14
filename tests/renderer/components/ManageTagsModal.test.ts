@@ -132,6 +132,49 @@ describe('ManageTagsModal', () => {
     expect(wrapper.findAll('[data-test=mt-row]')).toHaveLength(0)
   })
 
+  it('「左栏显示」复选框：缺省勾选；取消 → tag.update({ hidden: true }) 并从筛选移除；勾回 → hidden:false', async () => {
+    const api = installFakeApi()
+    const filter = useFilterStore()
+    filter.toggle(simba.id)
+    const wrapper = mount(ManageTagsModal)
+    const box = () =>
+      wrapper.findAll('[data-test=mt-row]')[0]!.find<HTMLInputElement>('[data-test=mt-visible]')
+    expect(box().element.checked).toBe(true)
+
+    box().element.checked = false
+    await box().trigger('change')
+    await flushPromises()
+    expect(api.tag.update).toHaveBeenCalledWith(simba.id, { hidden: true })
+    expect(filter.selected.has(simba.id)).toBe(false)
+
+    box().element.checked = true
+    await box().trigger('change')
+    await flushPromises()
+    expect(api.tag.update).toHaveBeenCalledWith(simba.id, { hidden: false })
+  })
+
+  it('隐藏的标签整行加 is-hidden 类（仍渲染、仍可操作）', async () => {
+    installFakeApi()
+    const store = useTagsStore()
+    store.tags = [{ ...simba, hidden: true }, java]
+    const wrapper = mount(ManageTagsModal)
+    const rows = wrapper.findAll('[data-test=mt-row]')
+    expect(rows[0]!.classes()).toContain('is-hidden') // simba（sortOrder 1）
+    expect(rows[1]!.classes()).not.toContain('is-hidden')
+    expect(rows[0]!.find('[data-test=mt-name]').exists()).toBe(true)
+  })
+
+  it('拖拽手柄：把第二行拖到第一行 → tags.reorder 收到新顺序（整体 id 排列）', async () => {
+    const api = installFakeApi()
+    const wrapper = mount(ManageTagsModal)
+    const rows = wrapper.findAll('[data-test=mt-row]')
+    // 顺序 [simba, java]；把 java（index 1）拖到 index 0
+    await rows[1]!.find('[data-test=mt-handle]').trigger('dragstart')
+    await rows[0]!.trigger('drop')
+    await flushPromises()
+    expect(api.tag.reorder).toHaveBeenCalledWith([java.id, simba.id])
+  })
+
   it('「完成」/ Esc / 点遮罩关闭', async () => {
     installFakeApi()
     const wrapper = mount(ManageTagsModal, { attachTo: document.body })
