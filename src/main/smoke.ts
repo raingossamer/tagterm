@@ -2,7 +2,7 @@
  * 无人值守烟测：设置 TAGTERM_SMOKE=1 启动时，页面加载后核查安全基线与三层贯通
  * （真实会话新建 → 打开两个终端 → 切换 / 关闭标签页 → 中文 echo 往返 → 右键 / Ctrl+V 粘贴 →
  * 标签链路：建标签 / 挂标签 / 分组与副本 / 任一 / 全部 / 搜索 / 路径条胶囊与弹出层 / 删标签 →
- * 右键菜单编辑会话改名 / 垃圾桶移除 → 真实 Ctrl+K 聚焦搜索 → 设置弹窗含「启动」段），
+ * 右键菜单编辑会话改名 / 移除会话 → 真实 Ctrl+K 聚焦搜索 → 设置弹窗含「启动」段），
  * 再在主进程侧核查「关窗只隐藏、pty 存活、托盘恢复」与 tags.json 落盘，最后清理会话并走正常退出路径（before-quit killAll）。
  * 以 JSON 打印到 stdout。生产运行不触发。
  */
@@ -162,17 +162,21 @@ const SMOKE_SCRIPT = `(async () => {
   $('[data-test=es-save]')?.click()
   const renamed = await waitFor(() => !!rowOf('smoke-已改名') && !$('[data-test=edit-session-modal]'))
   const s1AliveAfterRename = await api.pty.isAlive(s1.id)
-  // 垃圾桶（confirm 打桩为同意）→ 移除 s2：行消失、pty 结束
+  // 右键 smoke-2 → 菜单「移除会话」（confirm 打桩为同意）：行消失、pty 结束
   window.confirm = () => true
-  rowOf('smoke-2')?.querySelector('[data-test=row-remove]')?.click()
-  const removedByTrash = await waitFor(() => !rowOf('smoke-2'))
+  rowOf('smoke-2')?.dispatchEvent(
+    new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 60, clientY: 160 }),
+  )
+  await sleep(50)
+  $('[data-test=menu-remove]')?.click()
+  const removedByMenu = await waitFor(() => !rowOf('smoke-2'))
   // kill 是同步发出的，但 PtyManager 要等到进程 exit 事件才删条目：轮询到 pty 不再存活
   let s2AliveAfterRemove = true
   for (let i = 0; i < 60 && s2AliveAfterRemove; i++) {
     await sleep(50)
     s2AliveAfterRemove = await api.pty.isAlive(s2.id)
   }
-  const rowsAfterTrash = $$('[data-test=session-row]').length
+  const rowsAfterRemove = $$('[data-test=session-row]').length
 
   return {
     hasProcess: typeof window.process !== 'undefined',
@@ -184,7 +188,7 @@ const SMOKE_SCRIPT = `(async () => {
     statusVersion: $('[data-test=status-version]')?.textContent ?? null,
     sessionIds: [s1.id],
     sessionRoundTrip: { before: before.length, rowCountAfterCreate: rowCount, statusAfterCreate: statusSessions },
-    edit: { menuShown, editOpened, editPrefilled, renamed, s1AliveAfterRename, removedByTrash, s2AliveAfterRemove, rowsAfterTrash },
+    edit: { menuShown, editOpened, editPrefilled, renamed, s1AliveAfterRename, removedByMenu, s2AliveAfterRemove, rowsAfterRemove },
     terminal: { gotPrompt1, gotEcho, gotRightClickPaste, gotPrompt2, hosts: hosts.length, visibleHosts, hasXterm: !!$('[data-test=terminal-pane] .xterm'), hasCanvas: !!$('[data-test=terminal-pane] canvas'), dataEvents },
     tabs: { tabNames, activeTab, activeAfterSwitch, tabsAfterClose, s2AliveAfterClose, hostsAfterClose },
     strip: { launchers, sideHidden },

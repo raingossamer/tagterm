@@ -24,14 +24,11 @@ describe('SessionRow', () => {
     expect(wrapper.emitted('select')).toEqual([[session.id], [session.id], [session.id]])
   })
 
-  it('垃圾桶：tooltip「移除会话」，点击只发出 remove 不发出 select，行文本不受影响', async () => {
+  it('行内没有垃圾桶等按钮（移除会话只在右键菜单里），行文本只有名称与路径末两段', () => {
     const wrapper = mountRow()
-    const del = wrapper.find('[data-test=row-remove]')
 
-    expect(del.attributes('title')).toBe('移除会话')
-    await del.trigger('click')
-    expect(wrapper.emitted('remove')).toEqual([[session.id]])
-    expect(wrapper.emitted('select')).toBeUndefined()
+    expect(wrapper.find('[data-test=row-remove]').exists()).toBe(false)
+    expect(wrapper.findAll('button')).toHaveLength(0)
     expect(wrapper.find('[data-test=session-row]').text().replace(/\s+/g, '')).toBe(
       'simba-apisimba\\api',
     )
