@@ -6,6 +6,7 @@ import { useSessionsStore } from '../stores/sessions'
 import { useSettingsStore } from '../stores/settings'
 import { useTagsStore } from '../stores/tags'
 import { useWorkspaceStore } from '../stores/workspace'
+import { pathHead } from '../composables/path'
 import { useCopy } from '../composables/useCopy'
 import { usePopover } from '../composables/usePopover'
 import LaunchCommandsModal from './LaunchCommandsModal.vue'
@@ -25,6 +26,9 @@ const { isOpen: isTagPopOpen, toggle: toggleTagPop, close: closeTagPop } = usePo
 
 const session = computed(() => (workspace.activeId ? sessions.byId(workspace.activeId) : undefined))
 const sessionTags = computed(() => (session.value ? tags.tagsOf(session.value.id) : []))
+// 路径条只显示到第三级，完整路径放 tooltip 与「复制」
+const pathDisplay = computed(() => (session.value ? pathHead(session.value.cwd) : ''))
+const pathTitle = computed(() => (session.value ? `${session.value.cwd}\n会话固定在这个目录` : ''))
 
 /** 唤起按钮本质是向终端写入 `<cmd>\r` */
 function runCommand(cmd: string): void {
@@ -45,7 +49,7 @@ function clearScreen(): void {
 
 <template>
   <div v-if="session" class="strip">
-    <span class="path" title="会话固定在这个目录" data-test="strip-path">{{ session.cwd }}</span>
+    <span class="path" :title="pathTitle" data-test="strip-path">{{ pathDisplay }}</span>
     <button class="btn sm" title="复制路径" data-test="strip-copy" @click="copy(session.cwd)">
       {{ isCopied ? '已复制' : '复制' }}
     </button>
