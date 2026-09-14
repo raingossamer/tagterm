@@ -2,7 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { readImageAsDataUrl } from '../../src/main/store/backgroundImage'
+import {
+  MAX_IMAGE_BYTES,
+  MAX_IMAGE_EDGE,
+  readImageAsDataUrl,
+} from '../../src/main/store/backgroundImage'
 
 // 1×1 PNG 的字节（测试不依赖真实图片资源）
 const PNG_BYTES = Buffer.from(
@@ -45,5 +49,31 @@ describe('readImageAsDataUrl', () => {
 
   it('文件不存在时返回 null（背景回退纯色，不报错）', async () => {
     await expect(readImageAsDataUrl(join(dir, 'missing.png'))).resolves.toBeNull()
+  })
+
+  it('注入的缩图回调返回结果时用它的字节与 MIME；返回 null 表示无需缩放，原样输出', async () => {
+    const file = join(dir, 'huge.jpg')
+    writeFileSync(file, PNG_BYTES)
+    const calls: Array<{ bytes: number; maxEdge: number }> = []
+    const shrunk = Buffer.from('shrunk')
+
+    const url = await readImageAsDataUrl(file, (bytes, maxEdge) => {
+      calls.push({ bytes: bytes.length, maxEdge })
+      return { bytes: shrunk, mime: 'image/png' }
+    })
+    expect(calls).toEqual([{ bytes: PNG_BYTES.length, maxEdge: MAX_IMAGE_EDGE }])
+    expect(url).toBe(`data:image/png;base64,${shrunk.toString('base64')}`)
+
+    // 回调说「不用缩」→ 原文件字节与扩展名对应的 MIME
+    expect(await readImageAsDataUrl(file, () => null)).toBe(
+      `data:image/jpeg;base64,${PNG_BYTES.toString('base64')}`,
+    )
+  })
+
+  it('文件超过体积上限时抛错，提示换一张（避免超大图把 IPC 与内存撑爆）', async () => {
+    const file = join(dir, 'toobig.png')
+    writeFileSync(file, Buffer.alloc(MAX_IMAGE_BYTES + 1))
+
+    await expect(readImageAsDataUrl(file)).rejects.toThrow(/背景图片太大/)
   })
 })

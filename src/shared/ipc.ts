@@ -3,6 +3,7 @@
  * preload 与主进程都按这里的类型实现，避免通道名与参数漂移。
  */
 import type {
+  AppBackground,
   LaunchCommand,
   Session,
   SessionTag,
@@ -10,7 +11,6 @@ import type {
   ShellKind,
   Tag,
   TagColor,
-  TerminalBackground,
   UpdateStatus,
 } from './models'
 
@@ -37,7 +37,7 @@ export type LaunchCommandInput = Omit<LaunchCommand, 'id'> & { id?: string }
 
 export interface SettingsPatch {
   launchCommands?: LaunchCommandInput[]
-  terminalBackground?: TerminalBackground
+  background?: AppBackground
 }
 
 // ---- 标签（M2）----
@@ -81,7 +81,7 @@ export interface IpcInvokeMap {
   'session:pick-directory': { args: []; result: string | null }
   'settings:get': { args: []; result: Settings }
   'settings:update': { args: [patch: SettingsPatch]; result: Settings } // 补丁合并，返回全量
-  'settings:read-background-image': { args: []; result: string | null } // data: URL；未设置或文件不存在为 null
+  'settings:read-background-image': { args: [path?: string]; result: string | null } // data: URL；未设置 / 文件不存在为 null
   'update:get-status': { args: []; result: UpdateStatus }
   'update:check': { args: []; result: void } // 结果经 update:status 事件回报
   'update:download': { args: []; result: void }

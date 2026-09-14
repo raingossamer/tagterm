@@ -2,7 +2,7 @@
  * 装配层：创建各服务、注入依赖、绑定 app 生命周期；不含业务逻辑。
  * 会话生命周期 = 应用生命周期：关窗只隐藏到托盘；托盘「退出」与 before-quit 都 killAll。
  */
-import { app, BrowserWindow, dialog, ipcMain, type Tray } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, type Tray } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { existsSync } from 'node:fs'
 import { release, tmpdir } from 'node:os'
@@ -95,6 +95,28 @@ function setAutoLaunch(enabled: boolean): AutoLaunchStatus {
   return getAutoLaunch()
 }
 
+/**
+ * 背景图缩放（服务层不 import electron，故在这里包成回调注入）：
+ * 最长边超过 maxEdge 才缩；照片类按 JPEG 重编码（PNG 无损会把体积放大），其余保持 PNG 以留住透明通道。
+ */
+function shrinkImage(
+  bytes: Buffer,
+  maxEdge: number,
+  mime: string,
+): { bytes: Buffer; mime: string } | null {
+  const image = nativeImage.createFromBuffer(bytes)
+  const { width, height } = image.getSize()
+  const longest = Math.max(width, height)
+  if (longest === 0 || longest <= maxEdge) return null
+  const resized =
+    width >= height
+      ? image.resize({ width: maxEdge, quality: 'good' })
+      : image.resize({ height: maxEdge, quality: 'good' })
+  return mime === 'image/jpeg' || mime === 'image/bmp'
+    ? { bytes: resized.toJPEG(90), mime: 'image/jpeg' }
+    : { bytes: resized.toPNG(), mime: 'image/png' }
+}
+
 /** 托盘「设置」：显示窗口并让渲染进程打开设置弹窗 */
 function openSettings(): void {
   showWindow()
@@ -147,6 +169,7 @@ app.whenReady().then(async () => {
   const settings = new SettingsStore(dataDir, {
     seedCommands: availableAgents,
     onChanged: (next) => broadcast('settings:changed', next),
+    shrinkImage,
   })
   const tags = new TagStore(dataDir, {
     onChanged: (result) => broadcast('tag:changed', result),

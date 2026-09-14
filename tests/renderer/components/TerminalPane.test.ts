@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import TerminalPane from '../../../src/renderer/src/components/TerminalPane.vue'
 import { TERMINAL_WORKSPACE_KEY } from '../../../src/renderer/src/terminal/workspaceKey'
 import { useSettingsStore } from '../../../src/renderer/src/stores/settings'
+import { DEFAULT_BACKGROUND } from '@shared/models'
 import { installFakeApi, makeSession, makeSettings } from '../fakeApi'
 import { installFakeWorkspace, type FakeWorkspace } from '../fakeWorkspace'
 
@@ -33,10 +34,8 @@ describe('TerminalPane', () => {
     })
   })
 
-  it('无背景图时只有纯色容器；[data-test=terminal-pane] 是终端宿主：选中会话后实例 host 挂在其内，点击空白处聚焦当前终端', async () => {
+  it('[data-test=terminal-pane] 是终端宿主：选中会话后实例 host 挂在其内，点击空白处聚焦当前终端', async () => {
     const wrapper = mountPane()
-    expect(wrapper.find('[data-test=terminal-bg]').exists()).toBe(false)
-
     await fake.workspace.select(a.id)
     const pane = wrapper.find('[data-test=terminal-pane]')
     expect(fake.terminals[0]!.host?.parentElement).toBe(pane.element)
@@ -48,20 +47,17 @@ describe('TerminalPane', () => {
     wrapper.unmount()
   })
 
-  it('有背景图时铺满 data: URL 图片并盖上按 dimOpacity 的黑色遮罩', async () => {
+  it('终端区不再自己铺背景图（全局背景层负责），底色用面板不透明度派生的变量', async () => {
     const settings = useSettingsStore()
     settings.settings = makeSettings({
-      terminalBackground: { imagePath: 'D:/a.png', dimOpacity: 0.35 },
+      background: { ...DEFAULT_BACKGROUND, imagePath: 'D:/a.png' },
     })
     settings.backgroundImage = 'data:image/png;base64,AAA'
     const wrapper = mountPane()
-
-    const bg = wrapper.find('[data-test=terminal-bg]')
-    expect(bg.attributes('style')).toContain('data:image/png;base64,AAA')
-    expect(wrapper.find('[data-test=terminal-dim]').attributes('style')).toContain('0.35')
-
-    settings.backgroundImage = null
     await wrapper.vm.$nextTick()
+
     expect(wrapper.find('[data-test=terminal-bg]').exists()).toBe(false)
+    expect(wrapper.find('[data-test=terminal-dim]').exists()).toBe(false)
+    expect(wrapper.find('[data-test=terminal-pane]').exists()).toBe(true)
   })
 })

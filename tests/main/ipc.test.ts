@@ -228,7 +228,7 @@ describe('IPC 接口层', () => {
     })) as Settings
     expect(after.launchCommands).toHaveLength(1)
     expect(after.launchCommands[0]).toMatchObject({ command: 'gemini', pinned: false })
-    expect(after.terminalBackground).toEqual(before.terminalBackground)
+    expect(after.background).toEqual(before.background)
     await expect(ipc.invoke('settings:get')).resolves.toEqual(after)
   })
 
@@ -242,7 +242,13 @@ describe('IPC 接口层', () => {
 
     const file = join(dir, 'bg.png')
     await ipc.invoke('settings:update', {
-      terminalBackground: { imagePath: file, dimOpacity: 0.5 },
+      background: {
+        imagePath: file,
+        fit: 'cover',
+        imageOpacity: 0.3,
+        panelOpacity: 0.8,
+        blurPx: 6,
+      },
     })
     await expect(ipc.invoke('settings:read-background-image')).resolves.toBeNull()
 
@@ -283,12 +289,25 @@ describe('IPC 接口层', () => {
         launchCommands: [{ label: 'a', command: 'a', pinned: 'yes', sortOrder: 1 }],
       }),
     ).rejects.toThrow(/唤起命令/)
+    const bg = { imagePath: null, fit: 'contain', imageOpacity: 0.3, panelOpacity: 0.8, blurPx: 4 }
     await expect(
-      ipc.invoke('settings:update', { terminalBackground: { imagePath: null, dimOpacity: 2 } }),
+      ipc.invoke('settings:update', { background: { ...bg, imageOpacity: 2 } }),
     ).rejects.toThrow(/不透明度/)
     await expect(
-      ipc.invoke('settings:update', { terminalBackground: { imagePath: 5, dimOpacity: 0.5 } }),
-    ).rejects.toThrow(/背景/)
+      ipc.invoke('settings:update', { background: { ...bg, panelOpacity: 0.2 } }),
+    ).rejects.toThrow(/面板不透明度/)
+    await expect(
+      ipc.invoke('settings:update', { background: { ...bg, fit: 'stretch' } }),
+    ).rejects.toThrow(/显示方式/)
+    await expect(
+      ipc.invoke('settings:update', { background: { ...bg, blurPx: 2.5 } }),
+    ).rejects.toThrow(/模糊/)
+    await expect(
+      ipc.invoke('settings:update', { background: { ...bg, blurPx: 50 } }),
+    ).rejects.toThrow(/模糊/)
+    await expect(
+      ipc.invoke('settings:update', { background: { ...bg, imagePath: 5 } }),
+    ).rejects.toThrow(/背景图片路径/)
   })
 
   it('tag:create / list / update / remove 与 session-tag:attach / detach 经接口层落到 TagStore；attach 要求会话存在', async () => {

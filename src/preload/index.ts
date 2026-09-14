@@ -57,7 +57,7 @@ const api: TagTermApi = {
   settings: {
     get: () => invoke('settings:get'),
     update: (patch) => invoke('settings:update', patch),
-    readBackgroundImage: () => invoke('settings:read-background-image'),
+    readBackgroundImage: (path) => invoke('settings:read-background-image', path),
     onChanged: (cb) => subscribe('settings:changed', cb),
   },
   update: {

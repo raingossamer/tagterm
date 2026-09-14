@@ -17,11 +17,15 @@ import type {
   TagPatch,
 } from '@shared/ipc'
 import {
+  BACKGROUND_FITS,
+  MAX_BLUR_PX,
+  MIN_PANEL_OPACITY,
   SHELL_KINDS,
   TAG_COLORS,
+  type AppBackground,
+  type BackgroundFit,
   type ShellKind,
   type TagColor,
-  type TerminalBackground,
 } from '@shared/models'
 import type { PtyManager } from './pty/PtyManager'
 import type { SessionStore } from './store/SessionStore'
@@ -115,7 +119,9 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
 
   handle('settings:get', () => deps.settings.get())
   handle('settings:update', (patch) => deps.settings.update(assertSettingsPatch(patch)))
-  handle('settings:read-background-image', () => deps.settings.readBackgroundImage())
+  handle('settings:read-background-image', (path) =>
+    deps.settings.readBackgroundImage(assertImagePathOpt(path)),
+  )
 
   handle('tag:list', () => deps.tags.list())
   handle('tag:create', (name, color) =>
@@ -235,8 +241,8 @@ function assertSettingsPatch(patch: unknown): SettingsPatch {
     if (!Array.isArray(o.launchCommands)) throw new Error('唤起命令列表格式不正确')
     out.launchCommands = o.launchCommands.map(assertLaunchCommand)
   }
-  if (o.terminalBackground !== undefined) {
-    out.terminalBackground = assertTerminalBackground(o.terminalBackground)
+  if (o.background !== undefined) {
+    out.background = assertBackground(o.background)
   }
   return out
 }
@@ -299,13 +305,41 @@ function assertTagPatch(patch: unknown): TagPatch {
   return out
 }
 
-function assertTerminalBackground(bg: unknown): TerminalBackground {
+function assertImagePathOpt(path: unknown): string | undefined {
+  if (path === undefined) return undefined
+  if (typeof path !== 'string' || !path.trim()) throw new Error('背景图片路径格式不正确')
+  return path
+}
+
+function assertBackground(bg: unknown): AppBackground {
   const o = (bg ?? {}) as Record<string, unknown>
   if (o.imagePath !== null && typeof o.imagePath !== 'string') {
-    throw new Error('终端背景图片路径格式不正确')
+    throw new Error('背景图片路径格式不正确')
   }
-  if (typeof o.dimOpacity !== 'number' || !(o.dimOpacity >= 0 && o.dimOpacity <= 1)) {
-    throw new Error('遮罩不透明度必须在 0 到 1 之间')
+  if (!BACKGROUND_FITS.includes(o.fit as BackgroundFit)) {
+    throw new Error(`不支持的显示方式：${String(o.fit)}`)
   }
-  return { imagePath: o.imagePath, dimOpacity: o.dimOpacity }
+  if (typeof o.imageOpacity !== 'number' || !(o.imageOpacity >= 0 && o.imageOpacity <= 1)) {
+    throw new Error('背景不透明度必须在 0 到 1 之间')
+  }
+  if (
+    typeof o.panelOpacity !== 'number' ||
+    !(o.panelOpacity >= MIN_PANEL_OPACITY && o.panelOpacity <= 1)
+  ) {
+    throw new Error(`面板不透明度必须在 ${MIN_PANEL_OPACITY} 到 1 之间`)
+  }
+  if (
+    !Number.isInteger(o.blurPx) ||
+    (o.blurPx as number) < 0 ||
+    (o.blurPx as number) > MAX_BLUR_PX
+  ) {
+    throw new Error(`背景模糊必须是 0 到 ${MAX_BLUR_PX} 之间的整数`)
+  }
+  return {
+    imagePath: o.imagePath,
+    fit: o.fit as BackgroundFit,
+    imageOpacity: o.imageOpacity,
+    panelOpacity: o.panelOpacity,
+    blurPx: o.blurPx as number,
+  }
 }

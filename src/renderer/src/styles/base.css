@@ -11,6 +11,7 @@ body {
   font: 14px/1.45 var(--font);
   color: var(--text);
   background: var(--bg);
+  /* 背景层是 fixed 的，正文底色交给 .app 与各面板（见 tokens.css 的 --panel-opacity） */
   overflow: hidden;
 }
 button,
