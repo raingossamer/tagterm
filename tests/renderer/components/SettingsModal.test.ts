@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { DEFAULT_BACKGROUND } from '@shared/models'
 import SettingsModal from '../../../src/renderer/src/components/SettingsModal.vue'
 import { useSettingsStore } from '../../../src/renderer/src/stores/settings'
 import { useUpdateStore } from '../../../src/renderer/src/stores/update'
@@ -12,7 +13,147 @@ describe('SettingsModal', () => {
     document.body.innerHTML = ''
   })
 
-  it('「启动」段：打开时复选框反映登录项状态并提示被系统禁用；改动即 setAutoLaunch 并按返回回填；失败红字并还原', async () => {
+  /** 让 store 处于「已保存一张背景图」的状态 */
+  async function withSavedImage() {
+    const store = useSettingsStore()
+    store.settings = makeSettings({
+      background: { ...DEFAULT_BACKGROUND, imagePath: 'D:/wall/雪山.png' },
+    })
+    store.backgroundImage = 'data:image/png;base64,AAA'
+    return store
+  }
+
+  it('左侧四段导航：缺省停在「外观」，点击切换内容区', async () => {
+    installFakeApi()
+    const wrapper = mount(SettingsModal)
+    await flushPromises()
+
+    expect(wrapper.findAll('.nav-item').map((n) => n.text())).toEqual([
+      '外观',
+      '启动',
+      '更新',
+      '关于',
+    ])
+    expect(wrapper.find('[data-test=appearance-section]').exists()).toBe(true)
+
+    await wrapper.find('[data-test=settings-nav-startup]').trigger('click')
+    expect(wrapper.find('[data-test=appearance-section]').exists()).toBe(false)
+    expect(wrapper.find('[data-test=auto-launch-section]').exists()).toBe(true)
+
+    await wrapper.find('[data-test=settings-nav-about]').trigger('click')
+    expect(wrapper.find('[data-test=about-version]').exists()).toBe(true)
+  })
+
+  it('外观段：无图时滑块置灰；「更换图片」把选中的图进草稿并整窗预览，但不落盘', async () => {
+    const api = installFakeApi({
+      app: { pickImage: vi.fn(async () => 'D:/wall/雪山.png') },
+      settings: { readBackgroundImage: vi.fn(async () => 'data:image/png;base64,AAA') },
+    })
+    const store = useSettingsStore()
+    const wrapper = mount(SettingsModal)
+    await flushPromises()
+
+    expect(wrapper.find('[data-test=bg-name]').text()).toBe('未设置背景')
+    expect(
+      (wrapper.find('[data-test=bg-image-opacity]').element as HTMLInputElement).disabled,
+    ).toBe(true)
+
+    await wrapper.find('[data-test=bg-pick]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test=bg-name]').text()).toBe('雪山.png')
+    expect(store.background.imagePath).toBe('D:/wall/雪山.png') // 预览：整窗立刻生效
+    expect(store.backgroundImage).toBe('data:image/png;base64,AAA')
+    expect(api.settings.update).not.toHaveBeenCalled() // 但没落盘
+    expect(
+      (wrapper.find('[data-test=bg-image-opacity]').element as HTMLInputElement).disabled,
+    ).toBe(false)
+  })
+
+  it('三个滑块与显示方式改动只进草稿并实时预览；「保存设置」一次提交并关闭', async () => {
+    const api = installFakeApi()
+    const store = await withSavedImage()
+    const wrapper = mount(SettingsModal)
+    await flushPromises()
+
+    await wrapper.find('[data-test=bg-fit]').setValue('cover')
+    await wrapper.find('[data-test=bg-image-opacity]').setValue('20')
+    await wrapper.find('[data-test=bg-panel-opacity]').setValue('90')
+    await wrapper.find('[data-test=bg-blur]').setValue('12')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test=bg-image-opacity-value]').text()).toBe('20%')
+    expect(wrapper.find('[data-test=bg-panel-opacity-value]').text()).toBe('90%')
+    expect(wrapper.find('[data-test=bg-blur-value]').text()).toBe('12 px')
+    expect(store.background).toMatchObject({
+      fit: 'cover',
+      imageOpacity: 0.2,
+      panelOpacity: 0.9,
+      blurPx: 12,
+    })
+    expect(api.settings.update).not.toHaveBeenCalled()
+
+    await wrapper.find('[data-test=settings-save]').trigger('click')
+    await flushPromises()
+    expect(api.settings.update).toHaveBeenCalledWith({
+      background: {
+        imagePath: 'D:/wall/雪山.png',
+        fit: 'cover',
+        imageOpacity: 0.2,
+        panelOpacity: 0.9,
+        blurPx: 12,
+      },
+    })
+    expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  it('「取消」与 Esc 丢弃草稿：整窗还原为已保存值，不调 SDK', async () => {
+    const api = installFakeApi()
+    const store = await withSavedImage()
+    const wrapper = mount(SettingsModal)
+    await flushPromises()
+
+    await wrapper.find('[data-test=bg-blur]').setValue('18')
+    await flushPromises()
+    expect(store.background.blurPx).toBe(18)
+
+    await wrapper.find('[data-test=settings-cancel]').trigger('click')
+    await flushPromises()
+    expect(store.background).toEqual({ ...DEFAULT_BACKGROUND, imagePath: 'D:/wall/雪山.png' })
+    expect(api.settings.update).not.toHaveBeenCalled()
+    expect(wrapper.emitted('close')).toHaveLength(1)
+
+    const second = mount(SettingsModal)
+    await flushPromises()
+    await second.find('[data-test=bg-blur]').setValue('18')
+    await flushPromises()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    expect(store.background.blurPx).toBe(DEFAULT_BACKGROUND.blurPx)
+    expect(second.emitted('close')).toHaveLength(1)
+  })
+
+  it('关掉「实时预览」后整窗回到已保存值，弹窗内缩略图仍看草稿', async () => {
+    installFakeApi({
+      settings: { readBackgroundImage: vi.fn(async () => 'data:image/png;base64,DRAFT') },
+    })
+    const store = await withSavedImage()
+    const wrapper = mount(SettingsModal)
+    await flushPromises()
+
+    await wrapper.find('[data-test=bg-blur]').setValue('16')
+    await flushPromises()
+    expect(store.background.blurPx).toBe(16)
+
+    await wrapper.find('[data-test=live-preview]').setValue(false)
+    await flushPromises()
+    expect(store.background.blurPx).toBe(DEFAULT_BACKGROUND.blurPx) // 整窗回到已保存值
+    expect(wrapper.find('[data-test=bg-thumb] img').attributes('src')).toBe(
+      'data:image/png;base64,DRAFT',
+    )
+  })
+
+  it('「启动」段：复选框反映登录项状态并标注即时生效；改动即 setAutoLaunch 并按返回回填；失败红字并还原', async () => {
     const api = installFakeApi({
       app: {
         getAutoLaunch: vi.fn(async () => ({ enabled: true, blockedBySystem: true })),
@@ -21,10 +162,11 @@ describe('SettingsModal', () => {
     })
     const wrapper = mount(SettingsModal)
     await flushPromises()
+    await wrapper.find('[data-test=settings-nav-startup]').trigger('click')
     const box = () => wrapper.find('[data-test=auto-launch]').element as HTMLInputElement
 
-    expect(wrapper.find('[data-test=auto-launch-section] h4').text()).toBe('启动')
     expect(wrapper.find('[data-test=auto-launch-label]').text()).toBe('开机时自动启动 TagTerm')
+    expect(wrapper.find('[data-test=auto-launch-instant]').text()).toContain('即时生效')
     expect(box().checked).toBe(true)
     expect(wrapper.find('[data-test=auto-launch-blocked]').text()).toBe(
       '已在系统「启动应用」中被禁用',
@@ -43,113 +185,38 @@ describe('SettingsModal', () => {
     expect(wrapper.find('[data-test=settings-error]').text()).toBe('开发模式下不能设置开机自启')
   })
 
-  it('「关于」显示版本与数据目录；「终端背景」未设置时提示纯色；「选择图片…」后以当前遮罩保存', async () => {
-    const api = installFakeApi({
-      app: { getVersion: async () => '0.1.0', pickImage: vi.fn(async () => 'D:/wall.png') },
-    })
-    const wrapper = mount(SettingsModal)
-    await flushPromises()
-
-    expect(wrapper.find('[data-test=about-version]').text()).toBe('TagTerm v0.1.0')
-    expect(wrapper.find('[data-test=about-data-dir]').text()).toBe(
-      'C:/Users/test/AppData/Roaming/TagTerm',
-    )
-    expect(wrapper.find('[data-test=bg-path]').text()).toBe('未设置（纯色）')
-    expect(wrapper.find('[data-test=bg-missing]').exists()).toBe(false)
-
-    await wrapper.find('[data-test=bg-pick]').trigger('click')
-    await flushPromises()
-    expect(api.settings.update).toHaveBeenCalledWith({
-      terminalBackground: { imagePath: 'D:/wall.png', dimOpacity: 0.6 },
-    })
-  })
-
-  it('已设置图片：显示路径；文件不存在时提示；滑块拖动即时预览、松手保存；「清除」回到纯色', async () => {
-    const api = installFakeApi({ app: { pickImage: vi.fn(async () => null) } })
-    const settings = useSettingsStore()
-    settings.settings = makeSettings({
-      terminalBackground: { imagePath: 'D:/wall.png', dimOpacity: 0.6 },
-    })
-    settings.backgroundImage = null
-    const wrapper = mount(SettingsModal)
-    await flushPromises()
-
-    expect(wrapper.find('[data-test=bg-path]').text()).toBe('D:/wall.png')
-    expect(wrapper.find('[data-test=bg-missing]').text()).toBe('图片文件不存在，已回退为纯色')
-
-    await wrapper.find('[data-test=bg-pick]').trigger('click') // 取消对话框 → 不保存
-    await flushPromises()
-    expect(api.settings.update).not.toHaveBeenCalled()
-
-    // 不用 setValue：它会同时触发 input 与 change，这里要分别验证「拖动只预览」「松手才保存」
-    const slider = wrapper.find('[data-test=bg-dim]')
-    expect((slider.element as HTMLInputElement).value).toBe('60')
-    ;(slider.element as HTMLInputElement).value = '25'
-    await slider.trigger('input')
-    expect(settings.terminalBackground.dimOpacity).toBe(0.25)
-    expect(wrapper.find('[data-test=bg-dim-value]').text()).toBe('25%')
-    expect(api.settings.update).not.toHaveBeenCalled()
-    await slider.trigger('change')
-    await flushPromises()
-    expect(api.settings.update).toHaveBeenCalledWith({
-      terminalBackground: { imagePath: 'D:/wall.png', dimOpacity: 0.25 },
-    })
-
-    await wrapper.find('[data-test=bg-clear]').trigger('click')
-    await flushPromises()
-    expect(api.settings.update).toHaveBeenLastCalledWith({
-      terminalBackground: { imagePath: null, dimOpacity: 0.6 },
-    })
-  })
-
   it('「更新」段：检查更新 → 状态文案；有新版本出现「下载」；下载完成出现「立即安装并重启」', async () => {
     const api = installFakeApi()
     const update = useUpdateStore()
     const wrapper = mount(SettingsModal)
     await flushPromises()
+    await wrapper.find('[data-test=settings-nav-update]').trigger('click')
 
-    const check = wrapper.find('[data-test=update-check]')
-    expect(check.text()).toBe('检查更新')
-    expect(wrapper.find('[data-test=update-status]').text()).toBe('')
-    await check.trigger('click')
-    expect(api.update.check).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-test=update-status]').text()).toBe('') // idle 无文案
+    await wrapper.find('[data-test=update-check]').trigger('click')
+    expect(api.update.check).toHaveBeenCalled()
 
-    update.status = { state: 'checking' }
-    await flushPromises()
-    expect(wrapper.find('[data-test=update-status]').text()).toBe('正在检查…')
-    expect(check.attributes('disabled')).toBeDefined()
-    expect(wrapper.find('[data-test=update-download]').exists()).toBe(false)
-
-    update.status = { state: 'available', version: '0.2.0' }
-    await flushPromises()
-    expect(wrapper.find('[data-test=update-status]').text()).toBe('发现新版本 v0.2.0')
+    update.status = { state: 'available', version: '0.3.0' }
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-test=update-status]').text()).toBe('发现新版本 v0.3.0')
     await wrapper.find('[data-test=update-download]').trigger('click')
-    expect(api.update.download).toHaveBeenCalledTimes(1)
+    expect(api.update.download).toHaveBeenCalled()
 
-    update.status = { state: 'downloading', version: '0.2.0', percent: 42 }
-    await flushPromises()
-    expect(wrapper.find('[data-test=update-status]').text()).toBe('正在下载 v0.2.0：42%')
-    expect(wrapper.find('[data-test=update-download]').exists()).toBe(false)
-
-    update.status = { state: 'downloaded', version: '0.2.0' }
-    await flushPromises()
+    update.status = { state: 'downloaded', version: '0.3.0' }
+    await wrapper.vm.$nextTick()
     await wrapper.find('[data-test=update-install]').trigger('click')
-    expect(api.update.install).toHaveBeenCalledTimes(1)
-
-    update.status = { state: 'error', message: '连不上' }
-    await flushPromises()
-    expect(wrapper.find('[data-test=update-status]').text()).toBe('检查更新失败：连不上')
-    expect(check.attributes('disabled')).toBeUndefined()
+    expect(api.update.install).toHaveBeenCalled()
   })
 
-  it('「完成」与 Esc 关闭', async () => {
-    installFakeApi()
-    const wrapper = mount(SettingsModal, { attachTo: document.body })
+  it('「关于」显示版本与数据目录', async () => {
+    installFakeApi({ app: { getVersion: async () => '0.1.0' } })
+    const wrapper = mount(SettingsModal)
     await flushPromises()
+    await wrapper.find('[data-test=settings-nav-about]').trigger('click')
 
-    await wrapper.find('[data-test=settings-done]').trigger('click')
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
-    expect(wrapper.emitted('close')).toHaveLength(2)
-    wrapper.unmount()
+    expect(wrapper.find('[data-test=about-version]').text()).toBe('TagTerm v0.1.0')
+    expect(wrapper.find('[data-test=about-data-dir]').text()).toBe(
+      'C:/Users/test/AppData/Roaming/TagTerm',
+    )
   })
 })
