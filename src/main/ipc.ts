@@ -158,7 +158,13 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
       pid = deps.pty.spawn(sessionId, { cwd: session.cwd, shell: session.shell, cols, rows }).pid
       created = true
     }
-    await deps.store.touchOpened(sessionId)
+    // pty 已经起来了，这一步再失败也不能让 pty:open 失败：渲染进程会把「打开失败」记成已退出，
+    // 于是按键被吞、界面成了假死，而那条 pty 其实活得好好的。lastOpenedAt 只是展示用字段，丢一次无妨
+    try {
+      await deps.store.touchOpened(sessionId)
+    } catch (err) {
+      console.warn(`[store] 更新 lastOpenedAt 失败 session=${sessionId}`, err)
+    }
     return { created, pid }
   })
   handle('pty:resize', (id, size) => {

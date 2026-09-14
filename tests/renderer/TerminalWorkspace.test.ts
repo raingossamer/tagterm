@@ -267,6 +267,32 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
     expect(terminals[1]!.written).toContain('[进程已退出，代码 9]')
   })
 
+  it('14 重新选中时核对存活：pty 已经没了但退出事件没来 → 写进终端并标为已退出，回车能重启（否则就是打字没反应的静默假死）', async () => {
+    await core.select(a.id)
+    await core.select(b.id)
+    pty.killSilently(a.id) // 退出事件没发出来，runtime 仍是 running
+
+    await core.select(a.id)
+    expect(terminals[0]!.written).toContain('[终端已不在运行]')
+    expect(terminals[0]!.written).toContain('[按回车重启]')
+    expect(core.snapshot().runtime[a.id]).toEqual({ phase: 'exited' })
+
+    terminals[0]!.typeInput('\r')
+    await flush()
+    expect(core.snapshot().runtime[a.id]).toEqual({ phase: 'running' })
+    expect(pty.spawnCount(a.id)).toBe(2)
+  })
+
+  it('15 重新选中时 pty 还活着：不写任何提示、状态不变', async () => {
+    await core.select(a.id)
+    await core.select(b.id)
+    const before = terminals[0]!.written
+
+    await core.select(a.id)
+    expect(terminals[0]!.written).toBe(before)
+    expect(core.snapshot().runtime[a.id]).toEqual({ phase: 'running' })
+  })
+
   it('11 pty.open 失败：原因写进终端、phase exited（无 exitCode）、console.error 一次、实例仍显示；回车即重试', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
     pty.failNextOpen(new Error('spawn 失败'))

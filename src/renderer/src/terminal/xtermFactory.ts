@@ -28,6 +28,19 @@ export function createXtermFactory(getOptions: () => ITerminalOptions): Terminal
       webgl = null
     }
 
+    /**
+     * 退回 DOM 渲染器后强制整屏重绘：xterm 换渲染器不会自动重画已有内容，
+     * 上下文丢失（GPU 驱动重置、睡眠唤醒、上下文过多）时画面会停在丢失那一刻不动 ——
+     * 键入其实照样送到 pty，但屏幕不更新，看起来就是终端卡死
+     */
+    const repaint = (): void => {
+      try {
+        term.refresh(0, term.rows - 1)
+      } catch (err) {
+        console.warn('[terminal] 重绘失败', err)
+      }
+    }
+
     const copySelection = (): void => {
       const text = term.getSelection()
       if (text) void navigator.clipboard.writeText(text)
@@ -84,6 +97,7 @@ export function createXtermFactory(getOptions: () => ITerminalOptions): Terminal
             addon.onContextLoss(() => {
               console.warn('[terminal] WebGL 上下文丢失，退回 DOM 渲染器')
               disposeWebgl()
+              repaint()
             })
             term.loadAddon(addon)
             webgl = addon
@@ -93,6 +107,7 @@ export function createXtermFactory(getOptions: () => ITerminalOptions): Terminal
           }
         } else if (!enabled && webgl) {
           disposeWebgl()
+          repaint()
         }
       },
       dispose: () => {
