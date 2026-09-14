@@ -34,7 +34,12 @@ export function terminalKeyAction(ev: KeyLike, hasSelection: boolean): TerminalK
 /**
  * 右键动作：有选区复制、无选区粘贴。
  * `mouseTrackingActive` 为真（程序开了鼠标追踪）且未按 Shift 时返回 null：右键交给程序，
- * 我们既不复制也不粘贴（避免与程序自身的右键粘贴叠成两遍）。Shift 强制走终端。
+ * 我们既不复制也不粘贴。Shift 强制走终端。这是与 Windows Terminal 一致的正确行为。
+ *
+ * 注意（2026-09-14 实测）：本项目走 ConPTY，ConPTY **不会**把程序的 `\e[?1000h` / `?1002h`
+ * 透传给上层终端（同一次写入里的 `?2004h` 括号粘贴倒是透传了），所以 xterm 的
+ * `mouseTrackingMode` 始终是 `'none'`，这条分支在当前环境下**不会触发**。
+ * 它不是 claude / codex 里「右键粘贴两遍」的解药：实测我们只发出一次粘贴，重复发生在程序一侧。
  */
 export function clipboardActionForRightClick(
   hasSelection: boolean,

@@ -88,6 +88,70 @@ describe('buildSessionGroups（无筛选、无搜索）', () => {
   })
 })
 
+describe('buildSessionGroups（隐藏标签 = 把这一组会话整体从左栏收起来）', () => {
+  const hiddenSimba: Tag = { ...simba, hidden: true }
+
+  it('隐藏标签不成组，它名下的会话也不出现在左栏；不落到「未打标签」', () => {
+    const groups = buildSessionGroups(
+      input({
+        sessions: [s1, s2, s4],
+        tags: [hiddenSimba, java],
+        sessionTags: [
+          { sessionId: 's1', tagId: 't1' },
+          { sessionId: 's2', tagId: 't1' },
+        ],
+      }),
+    )
+    // s1 / s2 只挂了被隐藏的 simba → 整体收起；s4 没打标签 → 照常显示
+    expect(summarize(groups)).toEqual([
+      ['t2', 'java', java.color, []],
+      ['untagged', '未打标签', null, ['s4']],
+    ])
+  })
+
+  it('会话只要还挂着一个未隐藏的标签，就仍在那个组里显示', () => {
+    const groups = buildSessionGroups(
+      input({
+        sessions: [s1, s2],
+        tags: [hiddenSimba, java],
+        sessionTags: [
+          { sessionId: 's1', tagId: 't1' },
+          { sessionId: 's1', tagId: 't2' }, // s1 同时挂着可见的 java
+          { sessionId: 's2', tagId: 't1' },
+        ],
+      }),
+    )
+    expect(summarize(groups)).toEqual([['t2', 'java', java.color, ['s1']]])
+  })
+
+  it('被隐藏的会话搜索也搜不到（隐藏先于搜索）；取消隐藏后同一搜索能找到', () => {
+    const searching = (tag: Tag) =>
+      summarize(
+        buildSessionGroups(
+          input({
+            sessions: [s1, s4],
+            tags: [tag],
+            sessionTags: [{ sessionId: 's1', tagId: 't1' }],
+            search: 'simba-api', // 精确命中 s1 的名字
+          }),
+        ),
+      )
+    expect(searching(hiddenSimba)).toEqual([]) // 搜不到，连空的未打标签组都不渲染
+    expect(searching(simba)).toEqual([['t1', 'simba', simba.color, ['s1']]])
+  })
+
+  it('全部标签都隐藏时左栏只剩未打标签的会话', () => {
+    const groups = buildSessionGroups(
+      input({
+        sessions: [s1, s4],
+        tags: [hiddenSimba, { ...java, hidden: true }],
+        sessionTags: [{ sessionId: 's1', tagId: 't1' }],
+      }),
+    )
+    expect(summarize(groups)).toEqual([['untagged', '未打标签', null, ['s4']]])
+  })
+})
+
 describe('buildSessionGroups（筛选与搜索，对照原型 visible / buildGroups）', () => {
   const data = {
     sessions: [s1, s2, s3, s4],

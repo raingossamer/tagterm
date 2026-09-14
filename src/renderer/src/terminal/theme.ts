@@ -37,6 +37,9 @@ export function buildTerminalOptions(osBuild: number): ITerminalOptions {
     scrollback: 5000,
     cursorBlink: true,
     cursorStyle: 'bar', // 与原生命令提示符一致的竖线光标（xterm 默认是实心方块）
+    // 失焦时也保持竖线：xterm 的 cursorInactiveStyle 缺省是 'outline'（空心方块），
+    // 一点侧栏 / 切到别的窗口，光标就从竖线变成方块（用户 2026-09-14 反馈「光标不是竖线」）
+    cursorInactiveStyle: 'bar',
     allowProposedApi: true, // Unicode11 addon 需要
     allowTransparency: true,
     theme: CAMPBELL_THEME,

@@ -65,7 +65,7 @@ async function removeSession(id: string): Promise<void> {
 const groups = computed(() =>
   buildSessionGroups({
     sessions: sessions.sessions,
-    tags: tags.visibleTags, // 左栏只按可见标签分组：隐藏标签不成组，只有隐藏标签的会话落到「未打标签」
+    tags: tags.tags, // 传全部标签（含隐藏）：隐藏标签既不成组，也要把它名下的会话整体从左栏收起来
     sessionTags: tags.sessionTags,
     selected: filter.selected,
     mode: filter.mode,
