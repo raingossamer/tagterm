@@ -138,6 +138,29 @@ const SMOKE_SCRIPT = `(async () => {
   const popClosed = !$('[data-test=tag-pop]')
   rowOf('smoke-临时')?.click()
   await sleep(100)
+
+  // 标签管理：拖拽排序 → 左栏分组与筛选胶囊顺序跟着变
+  const chipTitles = () => $$('[data-test=tag-chip]').map((c) => c.textContent.replace(/[0-9]+$/, '').trim())
+  const groupsBeforeReorder = groupTitles()
+  await api.tag.reorder([tagB.id, tagA.id])
+  const reorderApplied = await waitFor(() => groupTitles()[0] === 'smoke-标签B')
+  const groupsAfterReorder = groupTitles()
+  const chipsAfterReorder = chipTitles()
+  // 还原顺序，避免影响后续断言
+  await api.tag.reorder([tagA.id, tagB.id])
+  await waitFor(() => groupTitles()[0] === 'smoke-标签A')
+
+  // 启用 / 禁用左栏展示：隐藏 A → A 组与胶囊消失、只挂 A 的 smoke-临时 落到「未打标签」、会话仍在；取消隐藏 → 恢复
+  await api.tag.update(tagA.id, { hidden: true })
+  const hiddenApplied = await waitFor(
+    () => !groupTitles().includes('smoke-标签A') && !chipTitles().includes('smoke-标签A'),
+  )
+  const groupsWhenAHidden = groupTitles()
+  const tempStillListed = !!rowOf('smoke-临时') // 会话不因标签隐藏而消失
+  const tempDotsWhenAHidden = dotsOf('smoke-临时') // 只挂 A，隐藏后左栏无色点
+  await api.tag.update(tagA.id, { hidden: false })
+  const shownAgain = await waitFor(() => groupTitles().includes('smoke-标签A') && chipTitles().includes('smoke-标签A'))
+
   // 删标签 → 分组与色点消失
   await api.tag.remove(tagA.id)
   await api.tag.remove(tagB.id)
@@ -195,6 +218,8 @@ const SMOKE_SCRIPT = `(async () => {
     tags: {
       gotTagDot, tagDotColor, groupsTagged, s2Tooltip, chipCounts, groupsAny, groupsAll, rowsAll, groupsCleared,
       rowsWhenSearching, emptyText, pillsBefore, pillRemoved, popOptions, popClosed, tagDotCleared, groupsAfterRemove,
+      groupsBeforeReorder, reorderApplied, groupsAfterReorder, chipsAfterReorder,
+      hiddenApplied, groupsWhenAHidden, tempStillListed, tempDotsWhenAHidden, shownAgain,
     },
   }
 })()`

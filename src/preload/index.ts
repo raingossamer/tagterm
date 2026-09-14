@@ -71,6 +71,7 @@ const api: TagTermApi = {
     list: () => invoke('tag:list'),
     create: (name, color) => invoke('tag:create', name, color),
     update: (id, patch) => invoke('tag:update', id, patch),
+    reorder: (ids) => invoke('tag:reorder', ids),
     remove: (id) => invoke('tag:remove', id),
     attach: (sessionId, tagId) => invoke('session-tag:attach', sessionId, tagId),
     detach: (sessionId, tagId) => invoke('session-tag:detach', sessionId, tagId),

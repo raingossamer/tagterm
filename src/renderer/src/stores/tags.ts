@@ -18,6 +18,8 @@ export const useTagsStore = defineStore('tags', () => {
   let unsubscribe: Unsubscribe | null = null
 
   const sortedTags = computed(() => [...tags.value].sort((a, b) => a.sortOrder - b.sortOrder))
+  /** 左栏只用可见标签（未隐藏）：分组、筛选胶囊、行色点都按它派生 */
+  const visibleTags = computed(() => sortedTags.value.filter((t) => !t.hidden))
   const byId = (id: string): Tag | undefined => tags.value.find((t) => t.id === id)
 
   /** 某会话的标签，按标签 sortOrder；会话不存在或关联指向不存在的标签 → 忽略 */
@@ -27,6 +29,11 @@ export const useTagsStore = defineStore('tags', () => {
       sessionTags.value.filter((st) => st.sessionId === sessionId).map((st) => st.tagId),
     )
     return sortedTags.value.filter((t) => ids.has(t.id))
+  }
+
+  /** 同 tagsOf，但排除隐藏标签：左栏行色点、「同时在」用它 */
+  function visibleTagsOf(sessionId: string): Tag[] {
+    return tagsOf(sessionId).filter((t) => !t.hidden)
   }
 
   /** 某标签下的会话数：只数会话列表里存在的会话 */
@@ -56,6 +63,10 @@ export const useTagsStore = defineStore('tags', () => {
     return window.tagterm.tag.update(id, patch)
   }
 
+  function reorder(ids: string[]): Promise<void> {
+    return window.tagterm.tag.reorder(ids)
+  }
+
   function remove(id: string): Promise<void> {
     return window.tagterm.tag.remove(id)
   }
@@ -72,12 +83,15 @@ export const useTagsStore = defineStore('tags', () => {
     tags,
     sessionTags,
     sortedTags,
+    visibleTags,
     byId,
     tagsOf,
+    visibleTagsOf,
     countOf,
     load,
     create,
     update,
+    reorder,
     remove,
     attach,
     detach,

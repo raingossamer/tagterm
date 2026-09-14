@@ -65,7 +65,7 @@ async function removeSession(id: string): Promise<void> {
 const groups = computed(() =>
   buildSessionGroups({
     sessions: sessions.sessions,
-    tags: tags.tags,
+    tags: tags.visibleTags, // 左栏只按可见标签分组：隐藏标签不成组，只有隐藏标签的会话落到「未打标签」
     sessionTags: tags.sessionTags,
     selected: filter.selected,
     mode: filter.mode,
@@ -99,7 +99,7 @@ const isEmpty = computed(() => groups.value.every((g) => g.sessions.length === 0
             :key="s.id"
             :session="s"
             :active="s.id === workspace.activeId"
-            :tags="tags.tagsOf(s.id)"
+            :tags="tags.visibleTagsOf(s.id)"
             :peer="s.id === workspace.hoveredId"
             @select="emit('select', $event)"
             @hover="workspace.setHovered($event)"

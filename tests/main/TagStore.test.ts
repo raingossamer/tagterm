@@ -111,6 +111,58 @@ describe('TagStore', () => {
     expect(reloaded.list()).toEqual({ tags: [b], sessionTags: [] })
   })
 
+  it('update({ hidden }) 落盘规则：true 写 "hidden": true，false 删键（可选字段缺省不写）', async () => {
+    const store = new TagStore(dir)
+    await store.load()
+    const a = await store.create('simba')
+    expect(a.hidden).toBeUndefined()
+
+    const hidden = await store.update(a.id, { hidden: true })
+    expect(hidden).toEqual({ ...a, hidden: true })
+    let file = JSON.parse(readFileSync(join(dir, 'tags.json'), 'utf8'))
+    expect(file.tags[0]).toHaveProperty('hidden', true)
+
+    const shown = await store.update(a.id, { hidden: false })
+    expect(shown).toEqual(a) // 无 hidden 键
+    expect(shown).not.toHaveProperty('hidden')
+    file = JSON.parse(readFileSync(join(dir, 'tags.json'), 'utf8'))
+    expect(file.tags[0]).not.toHaveProperty('hidden')
+
+    const reloaded = new TagStore(dir)
+    await reloaded.load()
+    expect(reloaded.list().tags[0]).not.toHaveProperty('hidden')
+  })
+
+  it('reorder(ids) 按位置写 sortOrder 1..n，一次落盘一次回调；ids 不是全部标签的排列则拒绝、不落盘', async () => {
+    const received: TagListResult[] = []
+    const store = new TagStore(dir, { onChanged: (r) => received.push(r) })
+    await store.load()
+    const a = await store.create('a') // sortOrder 1
+    const b = await store.create('b') // 2
+    const c = await store.create('c') // 3
+    received.length = 0
+
+    await store.reorder([c.id, a.id, b.id])
+    expect(store.list().tags).toEqual([
+      { ...c, sortOrder: 1 },
+      { ...a, sortOrder: 2 },
+      { ...b, sortOrder: 3 },
+    ])
+    expect(received).toHaveLength(1) // 一次原子写一次广播
+
+    // 缺、多、重复、含不存在的 id 都拒绝，且不改动
+    const snapshot = store.list().tags
+    await expect(store.reorder([a.id, b.id])).rejects.toThrow(/排列/)
+    await expect(store.reorder([a.id, b.id, c.id, 'ghost'])).rejects.toThrow(/排列/)
+    await expect(store.reorder([a.id, a.id, b.id])).rejects.toThrow(/排列/)
+    expect(store.list().tags).toEqual(snapshot)
+    expect(received).toHaveLength(1) // 拒绝的调用不落盘不广播
+
+    const reloaded = new TagStore(dir)
+    await reloaded.load()
+    expect(reloaded.list().tags.map((t) => t.name)).toEqual(['c', 'a', 'b'])
+  })
+
   it('pruneDangling 清掉指向不存在会话或标签的关联并落盘，返回条数，不回调 onChanged', async () => {
     const received: unknown[] = []
     const store = new TagStore(dir, { onChanged: (r) => received.push(r) })

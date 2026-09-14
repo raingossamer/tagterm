@@ -67,6 +67,7 @@ export function createFakeApi(overrides: Overrides = {}): TagTermApi {
       list: vi.fn(async (): Promise<TagListResult> => ({ tags: [], sessionTags: [] })),
       create: vi.fn(async (name, color) => makeTag(color ? { name, color } : { name })),
       update: vi.fn(async (id, patch) => makeTag({ id, ...patch })),
+      reorder: vi.fn(async () => {}),
       remove: vi.fn(async () => {}),
       attach: vi.fn(async () => {}),
       detach: vi.fn(async () => {}),

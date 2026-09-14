@@ -128,6 +128,8 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
     deps.tags.create(assertTagName(name), assertTagColorOpt(color)),
   )
   handle('tag:update', (id, patch) => deps.tags.update(assertTagId(id), assertTagPatch(patch)))
+  // 排列是否合法（缺 / 多 / 重复 / 不存在）由 TagStore 判定，它才认识全部标签；接口层只守卫类型
+  handle('tag:reorder', (ids) => deps.tags.reorder(assertTagIds(ids)))
   handle('tag:remove', (id) => deps.tags.remove(assertTagId(id)))
   // 会话是否存在由编排层核对（TagStore 不认识会话）
   handle('session-tag:attach', (sessionId, tagId) => {
@@ -302,7 +304,18 @@ function assertTagPatch(patch: unknown): TagPatch {
     if (!Number.isInteger(o.sortOrder)) throw new Error('排序值必须是整数')
     out.sortOrder = o.sortOrder as number
   }
+  if (o.hidden !== undefined) {
+    if (typeof o.hidden !== 'boolean') throw new Error('hidden 必须是布尔值')
+    out.hidden = o.hidden
+  }
   return out
+}
+
+function assertTagIds(ids: unknown): string[] {
+  if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string' || !id)) {
+    throw new Error('标签 id 列表格式不正确')
+  }
+  return ids as string[]
 }
 
 function assertImagePathOpt(path: unknown): string | undefined {

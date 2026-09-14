@@ -94,9 +94,30 @@ export class TagStore {
     }
     if (patch.color !== undefined) next.color = assertColor(patch.color)
     if (patch.sortOrder !== undefined) next.sortOrder = patch.sortOrder
+    // hidden 是可选字段：true 落盘写键，false 删键（缺省 = 显示，见 sql.md「约定」可选字段缺省不写）
+    if (patch.hidden !== undefined) {
+      if (patch.hidden) next.hidden = true
+      else delete next.hidden
+    }
     this.tags[this.tags.indexOf(tag)] = next
     await this.save()
     return next
+  }
+
+  /** 按 ids 顺序整体重排 sortOrder 为 1..n；ids 必须是当前全部标签 id 的一个排列，否则拒绝且不改动 */
+  async reorder(ids: readonly string[]): Promise<void> {
+    const current = new Set(this.tags.map((t) => t.id))
+    const given = new Set(ids)
+    if (
+      ids.length !== this.tags.length ||
+      given.size !== ids.length ||
+      ![...given].every((id) => current.has(id))
+    ) {
+      throw new Error('排序参数必须是全部标签 id 的一个排列')
+    }
+    const byId = new Map(this.tags.map((t) => [t.id, t]))
+    this.tags = ids.map((id, i) => ({ ...byId.get(id)!, sortOrder: i + 1 }))
+    await this.save()
   }
 
   /** 删标签并解除其全部关联（一次原子写），会话本身保留 */

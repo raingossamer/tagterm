@@ -54,6 +54,7 @@ export interface TagTermApi {
     list(): Promise<TagListResult>
     create(name: string, color?: TagColor): Promise<Tag>
     update(id: string, patch: TagPatch): Promise<Tag>
+    reorder(ids: string[]): Promise<void>
     remove(id: string): Promise<void>
     attach(sessionId: string, tagId: string): Promise<void>
     detach(sessionId: string, tagId: string): Promise<void>

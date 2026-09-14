@@ -42,7 +42,8 @@ export interface SettingsPatch {
 
 // ---- 标签（M2）----
 
-export type TagPatch = Partial<Pick<Tag, 'name' | 'color' | 'sortOrder'>>
+// hidden 走布尔入参：false 表示「取消隐藏」，主进程落盘时删键（可选字段缺省不写）
+export type TagPatch = Partial<Pick<Tag, 'name' | 'color' | 'sortOrder'>> & { hidden?: boolean }
 
 export interface TagListResult {
   tags: Tag[]
@@ -89,6 +90,7 @@ export interface IpcInvokeMap {
   'tag:list': { args: []; result: TagListResult }
   'tag:create': { args: [name: string, color?: TagColor]; result: Tag } // 同名返回已有；颜色缺省轮转
   'tag:update': { args: [id: string, patch: TagPatch]; result: Tag } // 改名撞名 reject
+  'tag:reorder': { args: [ids: string[]]; result: void } // ids 必须是全部标签 id 的一个排列；按位置写 sortOrder 1..n
   'tag:remove': { args: [id: string]; result: void } // 连带其全部关联，会话保留
   'session-tag:attach': { args: [sessionId: string, tagId: string]; result: void } // 幂等
   'session-tag:detach': { args: [sessionId: string, tagId: string]; result: void }

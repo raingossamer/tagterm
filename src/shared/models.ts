@@ -106,7 +106,8 @@ export interface Tag {
   id: string // uuid v4
   name: string // trim 后非空，精确匹配唯一（区分大小写）
   color: TagColor
-  sortOrder: number // 创建顺序：现有最大值 + 1；无排序 UI
+  sortOrder: number // 越小越靠前；创建取现有最大值 + 1，可经 tag:reorder 拖拽整体重排
+  hidden?: true // 缺省（不写键）= 在左栏显示；true = 左栏不显示（分组 / 筛选胶囊 / 行色点都不出现，会话保留）
 }
 
 /** 会话与标签的多对多关联；(sessionId, tagId) 联合唯一 */
