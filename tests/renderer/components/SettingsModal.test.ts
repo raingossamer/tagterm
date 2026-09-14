@@ -107,6 +107,20 @@ describe('SettingsModal', () => {
     expect(wrapper.emitted('close')).toHaveLength(1)
   })
 
+  it('显示方式的说明随选项变化', async () => {
+    installFakeApi()
+    await withSavedImage()
+    const wrapper = mount(SettingsModal)
+    await flushPromises()
+    const hint = () => wrapper.find('[data-test=bg-fit-hint]').text()
+
+    expect(hint()).toBe('保留整张图片，空白区域使用主题底色')
+    await wrapper.find('[data-test=bg-fit]').setValue('cover')
+    expect(hint()).toBe('等比放大铺满窗口，超出的部分裁掉')
+    await wrapper.find('[data-test=bg-fit]').setValue('tile')
+    expect(hint()).toBe('按原始尺寸重复铺满窗口')
+  })
+
   it('「取消」与 Esc 丢弃草稿：整窗还原为已保存值，不调 SDK', async () => {
     const api = installFakeApi()
     const store = await withSavedImage()

@@ -91,11 +91,7 @@ onUnmounted(() => {
 
 <template>
   <AppBackground />
-  <div
-    class="app"
-    :class="{ 'side-hidden': workspace.sideHidden }"
-    :style="{ '--panel-opacity': settings.panelOpacity }"
-  >
+  <div class="app" :class="{ 'side-hidden': workspace.sideHidden }">
     <aside class="side">
       <SideHead />
       <TagFilter />
@@ -130,7 +126,7 @@ onUnmounted(() => {
 
 <style scoped>
 .app {
-  position: relative; /* 盖在 fixed 的全局背景层之上 */
+  position: relative; /* 盖在 fixed 的全局背景层之上；面板不透明度由 AppBackground 写在 <html> 上，这里不设 */
   z-index: 1;
   display: grid;
   grid-template-columns: 296px 1fr;
