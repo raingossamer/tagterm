@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import { existsSync } from 'node:fs'
 import { hasChildProcesses } from '../../src/main/processTree'
 import { PtyManager } from '../../src/main/pty/PtyManager'
 import { waitFor } from './helpers'
@@ -44,6 +45,7 @@ describe('processTree.hasChildProcesses', () => {
           output[id] = (output[id] ?? '') + data
         },
         onExit: () => {},
+        isFile: existsSync,
       })
       const { pid } = manager.spawn('s1', {
         cwd: process.cwd(),
