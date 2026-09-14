@@ -24,14 +24,28 @@ describe('SessionGroups', () => {
     document.body.innerHTML = ''
   })
 
-  it('垃圾桶：按原型文案确认；确认后调 SDK 移除，取消则不调', async () => {
+  it('右键菜单「移除会话」：按原型文案确认；确认后调 SDK 移除，取消则不调', async () => {
     const s = makeSession({ name: 'simba-api' })
     useSessionsStore().sessions = [s]
     const api = installFakeApi()
     const confirm = stubConfirm(true)
-    const wrapper = mount(SessionGroups)
+    const wrapper = mount(SessionGroups, { attachTo: document.body })
+    const openMenu = async () => {
+      wrapper
+        .find('[data-test=session-row]')
+        .element.dispatchEvent(
+          new MouseEvent('contextmenu', {
+            bubbles: true,
+            cancelable: true,
+            clientX: 10,
+            clientY: 10,
+          }),
+        )
+      await nextTick()
+    }
 
-    await wrapper.find('[data-test=row-remove]').trigger('click')
+    await openMenu()
+    await wrapper.find('[data-test=menu-remove]').trigger('click')
     await flushPromises()
     expect(confirm).toHaveBeenCalledWith('移除会话 "simba-api"？终端进程会被结束。')
     expect(api.session.remove).toHaveBeenCalledWith(s.id)
@@ -39,9 +53,11 @@ describe('SessionGroups', () => {
 
     stubConfirm(false)
     vi.mocked(api.session.remove).mockClear()
-    await wrapper.find('[data-test=row-remove]').trigger('click')
+    await openMenu()
+    await wrapper.find('[data-test=menu-remove]').trigger('click')
     await flushPromises()
     expect(api.session.remove).not.toHaveBeenCalled()
+    wrapper.unmount()
   })
 
   it('右键行：菜单出现在鼠标位置且该行成为悬停对象；「编辑会话」发出 edit 并关菜单；「移除会话」走同一确认；Esc / 点外部关闭', async () => {

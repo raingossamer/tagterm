@@ -2,7 +2,7 @@
 // 会话列表：按 buildSessionGroups（输入 = 会话 / 标签 / 关联 + filter store 的选中 / 模式 / 搜索词）渲染分组
 //（分组头 = 三角 + 色点 + 名称 + 数量，点击折叠 / 展开，折叠状态记在 filter store）；
 // 组内无会话显示「这个标签下还没有会话」，整体无匹配显示「没有匹配的会话…」。
-// 移除会话的两个入口都在这里（行上的垃圾桶、右键菜单「移除会话」）：confirm 后只调 sessions.remove，关标签页靠主进程广播；
+// 移除会话的唯一入口在这里（右键菜单「移除会话」）：confirm 后只调 sessions.remove，关标签页靠主进程广播；
 // 右键菜单唯一实例挂在这里（usePopover 管点外部关闭），「编辑会话」上抛 edit 由 App 开弹窗
 import { computed, ref } from 'vue'
 import SessionMenu from './SessionMenu.vue'
@@ -104,7 +104,6 @@ const isEmpty = computed(() => groups.value.every((g) => g.sessions.length === 0
             @select="emit('select', $event)"
             @hover="workspace.setHovered($event)"
             @leave="onLeave"
-            @remove="removeSession"
             @menu="onMenu"
           />
           <div v-if="g.sessions.length === 0" class="none" data-test="group-empty">
