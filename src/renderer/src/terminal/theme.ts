@@ -36,6 +36,7 @@ export function buildTerminalOptions(osBuild: number): ITerminalOptions {
     fontSize: 14,
     scrollback: 5000,
     cursorBlink: true,
+    cursorStyle: 'bar', // 与原生命令提示符一致的竖线光标（xterm 默认是实心方块）
     allowProposedApi: true, // Unicode11 addon 需要
     allowTransparency: true,
     theme: CAMPBELL_THEME,
