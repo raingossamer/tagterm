@@ -24,12 +24,15 @@ describe('PathStrip', () => {
     vi.restoreAllMocks()
   })
 
-  it('显示当前会话的完整路径；「复制」写入剪贴板并短暂显示「已复制」', async () => {
+  it('路径只显示到第三级、tooltip 给完整路径；「复制」写入完整路径并短暂显示「已复制」', async () => {
     vi.useFakeTimers()
     installFakeApi()
     const wrapper = mount(PathStrip)
 
-    expect(wrapper.find('[data-test=strip-path]').text()).toBe('D:\\Projects\\simba\\api')
+    // 假会话的 cwd 只有三级，原样显示；tooltip 始终是完整路径
+    const path = wrapper.find('[data-test=strip-path]')
+    expect(path.text()).toBe('D:\\Projects\\simba\\api')
+    expect(path.attributes('title')).toBe('D:\\Projects\\simba\\api\n会话固定在这个目录')
 
     const copy = wrapper.find('[data-test=strip-copy]')
     await copy.trigger('click')
@@ -39,6 +42,27 @@ describe('PathStrip', () => {
 
     await vi.advanceTimersByTimeAsync(1200)
     expect(copy.text()).toBe('复制')
+  })
+
+  it('更深的路径折成省略号，但复制的仍是完整路径', async () => {
+    const deep = makeSession({
+      name: '服务器提醒',
+      cwd: 'C:\\Users\\21477\\Desktop\\Self-Project\\aly-Inform',
+    })
+    setActivePinia(createPinia())
+    await installFakeWorkspace([deep]).workspace.select(deep.id)
+    installFakeApi()
+    const wrapper = mount(PathStrip)
+
+    const path = wrapper.find('[data-test=strip-path]')
+    expect(path.text()).toBe('C:\\Users\\21477\\Desktop\\…')
+    expect(path.attributes('title')).toBe(
+      'C:\\Users\\21477\\Desktop\\Self-Project\\aly-Inform\n会话固定在这个目录',
+    )
+
+    await wrapper.find('[data-test=strip-copy]').trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenCalledWith('C:\\Users\\21477\\Desktop\\Self-Project\\aly-Inform')
   })
 
   it('路径条不再有「移除会话」按钮（入口在左栏）；主进程广播移除后的列表到达时标签页关闭', async () => {
