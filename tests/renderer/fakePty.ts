@@ -6,7 +6,10 @@
 import type { PtyExitEvent, PtyOpenResult, PtySize } from '@shared/ipc'
 import type { TagTermApi, Unsubscribe } from '@shared/api'
 
-export type FakePtyPort = Pick<TagTermApi['pty'], 'open' | 'write' | 'resize' | 'onData' | 'onExit'>
+export type FakePtyPort = Pick<
+  TagTermApi['pty'],
+  'open' | 'write' | 'resize' | 'onData' | 'onExit' | 'isAlive'
+>
 
 export interface FakePtyOptions {
   /** open 不立即 resolve，等 resolveOpens() */
@@ -56,6 +59,11 @@ export class FakePty implements FakePtyPort {
     this.written.push([sessionId, data])
   }
 
+  /** 与主进程 pty:is-alive 一致：条目还在即存活 */
+  isAlive(sessionId: string): Promise<boolean> {
+    return Promise.resolve(this.running.has(sessionId))
+  }
+
   resize(sessionId: string, size: PtySize): Promise<void> {
     this.resizes.push([sessionId, size])
     return Promise.resolve()
@@ -97,6 +105,11 @@ export class FakePty implements FakePtyPort {
   /** 该会话当前运行中的 pid（测试用来构造迟到的退出事件） */
   pidOf(sessionId: string): number | undefined {
     return this.running.get(sessionId)
+  }
+
+  /** pty 没了但退出事件没发出来（node-pty 漏发 / 主进程等待超时放行），模拟只能靠 is-alive 才发现的假死 */
+  killSilently(sessionId: string): void {
+    this.running.delete(sessionId)
   }
 
   /** 下一次 open 以 err 拒绝（不登记条目，记入 opens 但 created 为 false），模拟主进程 spawn 失败 */

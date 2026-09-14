@@ -26,7 +26,10 @@ export interface WorkspaceSnapshot {
 }
 
 /** pty 端口 = window.tagterm.pty 的结构子集；生产直接传 window.tagterm.pty，测试传剧本式 FakePty */
-export type PtyPort = Pick<TagTermApi['pty'], 'open' | 'write' | 'resize' | 'onData' | 'onExit'>
+export type PtyPort = Pick<
+  TagTermApi['pty'],
+  'open' | 'write' | 'resize' | 'onData' | 'onExit' | 'isAlive'
+>
 
 export interface TerminalWorkspaceDeps {
   pty: PtyPort
@@ -42,11 +45,10 @@ export class TerminalWorkspace {
   private openTabs: string[] = []
   private activeId: string | null = null
   private readonly runtime = new Map<string, SessionRuntime>()
-  /** 每会话当前 pty 的 pid：退出事件靠它认领，避免上一条 pty 的退出误伤刚开好的终端 */
+  /** 每会话当前 pty 的 pid：退出事件靠它认领 */
   private readonly pids = new Map<string, number>()
-  /** 正在等 pty.open 返回的会话：此时还不知道新 pid，期间到达的退出事件先扣下 */
-  private readonly opening = new Set<string>()
-  private readonly deferredExits = new Map<string, PtyExitEvent>()
+  /** 重开期间被替换掉的那条 pty 的 pid：它的退出事件迟到了也只认成「上一条」，直接丢弃 */
+  private readonly stalePids = new Map<string, number>()
   private readonly listeners = new Set<(s: WorkspaceSnapshot) => void>()
   private readonly unsubscribes: Unsubscribe[]
 
@@ -88,6 +90,7 @@ export class TerminalWorkspace {
     if (this.pool.has(id)) {
       this.pool.show(id)
       this.emit()
+      await this.reconcileAlive(id)
       return
     }
     // 先建实例并显示（空白终端立刻可见），再等主进程 spawn
@@ -95,29 +98,47 @@ export class TerminalWorkspace {
     this.runtime.set(id, { phase: 'opening' })
     this.pool.show(id)
     this.emit()
+    // 记下被替换掉的那条 pty：它的退出事件可能在下面 await 期间才到，届时按 pid 认出来丢弃
+    const replaced = this.pids.get(id)
+    if (replaced !== undefined) this.stalePids.set(id, replaced)
     this.pids.delete(id)
-    this.opening.add(id)
     try {
       const { pid } = await this.deps.pty.open(id, size)
-      this.opening.delete(id)
       this.pids.set(id, pid)
-      // 期间被移除（runtime 已删）则不再登记
+      this.stalePids.delete(id)
+      // 期间被移除（runtime 已删）或新 pty 已自己退出（phase 已是 exited）则不再登记
       if (this.runtime.get(id)?.phase === 'opening') this.runtime.set(id, { phase: 'running' })
-      // 等待期间到达的退出事件：是这条新 pty 自己退了才认，否则是上一条的迟到事件，丢弃
-      const deferred = this.deferredExits.get(id)
-      this.deferredExits.delete(id)
-      if (deferred && deferred.pid === pid) this.handleExit(deferred)
     } catch (err) {
       // 实例保留并标记已退出：原因必须写进终端，否则界面上只剩一片空白（无提示符、无报错）；按回车或再次选中即重试
       const message = err instanceof Error ? err.message : String(err)
-      this.opening.delete(id)
-      this.deferredExits.delete(id)
+      this.stalePids.delete(id)
       console.error('[terminal] 打开终端失败', err)
       if (this.pool.has(id)) {
         this.pool.write(id, `\r\n[打开终端失败：${message}]\r\n[按回车重试]\r\n`)
         this.runtime.set(id, { phase: 'exited' })
       }
     }
+    this.emit()
+  }
+
+  /**
+   * 选中一个「以为还活着」的会话时向主进程核对一次。
+   * runtime 是只进不退的镜像，只靠 pty:exit 纠正；一旦那条事件没来（node-pty 没发、主进程超时放行等），
+   * 界面会一直显示 running，而按键被主进程静默丢弃 —— 表现就是打字没反应的假死。
+   * 核对不上就标成已退出并写进终端：把静默假死变成看得见、按回车能救的状态。
+   */
+  private async reconcileAlive(id: string): Promise<void> {
+    if (this.runtime.get(id)?.phase !== 'running') return
+    let alive: boolean
+    try {
+      alive = await this.deps.pty.isAlive(id)
+    } catch {
+      return // 核对本身失败就别改状态
+    }
+    if (alive) return
+    if (this.runtime.get(id)?.phase !== 'running' || !this.pool.has(id)) return // 期间已变
+    this.pool.write(id, `\r\n[终端已不在运行]\r\n[按回车重启]\r\n`)
+    this.runtime.set(id, { phase: 'exited' })
     this.emit()
   }
 
@@ -166,8 +187,7 @@ export class TerminalWorkspace {
     for (const id of this.pool.sessionIds()) this.pool.dispose(id)
     this.runtime.clear()
     this.pids.clear()
-    this.opening.clear()
-    this.deferredExits.clear()
+    this.stalePids.clear()
     this.openTabs = []
     this.activeId = null
   }
@@ -186,8 +206,7 @@ export class TerminalWorkspace {
     this.pool.dispose(id)
     this.runtime.delete(id)
     this.pids.delete(id)
-    this.opening.delete(id)
-    this.deferredExits.delete(id)
+    this.stalePids.delete(id)
     this.removeTab(id)
   }
 
@@ -208,13 +227,9 @@ export class TerminalWorkspace {
    * 终端标成 exited —— 界面上就是「打字没反应」的假死（只有回车能救）。
    */
   private handleExit(e: PtyExitEvent): void {
-    // 正在等 pty.open 返回：还不知道新 pid，先扣下，等 open 拿到 pid 再判定归属
-    if (this.opening.has(e.sessionId)) {
-      this.deferredExits.set(e.sessionId, e)
-      return
-    }
+    if (this.stalePids.get(e.sessionId) === e.pid) return // 重开期间迟到的上一条 pty 的退出
     const current = this.pids.get(e.sessionId)
-    if (current !== undefined && current !== e.pid) return // 上一条 pty 的迟到退出
+    if (current !== undefined && current !== e.pid) return // 已经换了新 pty
     if (!this.pool.has(e.sessionId)) return
     this.pool.write(e.sessionId, `\r\n[进程已退出，代码 ${e.exitCode}]\r\n`)
     this.runtime.set(e.sessionId, { phase: 'exited', exitCode: e.exitCode })
