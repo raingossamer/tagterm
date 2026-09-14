@@ -2,7 +2,7 @@
  * 无人值守烟测：设置 TAGTERM_SMOKE=1 启动时，页面加载后核查安全基线与三层贯通
  * （真实会话新建 → 打开两个终端 → 切换 / 关闭标签页 → 中文 echo 往返 → 右键 / Ctrl+V 粘贴 →
  * 标签链路：建标签 / 挂标签 / 分组与副本 / 任一 / 全部 / 搜索 / 路径条胶囊与弹出层 / 删标签 →
- * 右键菜单编辑会话改名 / 移除会话 → 真实 Ctrl+K 聚焦搜索 → 设置弹窗含「启动」段），
+ * 右键菜单编辑会话改名 / 移除会话 → 真实 Ctrl+K 聚焦搜索 → 设置弹窗四段导航与全局背景往返），
  * 再在主进程侧核查「关窗只隐藏、pty 存活、托盘恢复」与 tags.json 落盘，最后清理会话并走正常退出路径（before-quit killAll）。
  * 以 JSON 打印到 stdout。生产运行不触发。
  */
@@ -214,7 +214,7 @@ const FOCUS_TERMINAL = `(() => {
   return document.activeElement?.tagName ?? null
 })()`
 
-/** 设置弹窗（由主进程广播 app:open-settings 打开）与背景图往返：设图 → 面板出现 data: URL → 清除 */
+/** 设置弹窗（由左栏齿轮打开）：四段导航 + 全局背景往返（设图 → 背景层出现 → 移除）+ 检查更新 */
 const SETTINGS_SCRIPT = (pngPath: string): string => `(async () => {
   const api = window.tagterm
   const $ = (sel) => document.querySelector(sel)
@@ -228,19 +228,32 @@ const SETTINGS_SCRIPT = (pngPath: string): string => `(async () => {
     return true
   }
   const modalOpened = await waitFor(() => !!$('[data-test=settings-modal]'))
-  await waitFor(() => /v[0-9]/.test($('[data-test=about-version]')?.textContent ?? ''))
-  const aboutVersion = $('[data-test=about-version]')?.textContent ?? null
-  // 「启动」段：只读状态不改写登录项（开发版恒未勾选；打包版按注册表）
+  // 四段导航：缺省停在外观；切到启动段只读核查登录项状态（不改写注册表）
+  const navLabels = [...document.querySelectorAll('[data-test^=settings-nav-]')].map((b) => b.textContent.trim())
+  const appearanceShown = !!$('[data-test=appearance-section]')
+  $('[data-test=settings-nav-startup]')?.click()
+  await sleep(50)
   const autoLaunch = {
     shown: !!$('[data-test=auto-launch]'),
     checked: $('[data-test=auto-launch]')?.checked ?? null,
     blocked: !!$('[data-test=auto-launch-blocked]'),
+    instant: !!$('[data-test=auto-launch-instant]'),
   }
-  await api.settings.update({ terminalBackground: { imagePath: ${JSON.stringify(pngPath)}, dimOpacity: 0.5 } })
-  const bgShown = await waitFor(() => ($('[data-test=terminal-bg]')?.getAttribute('style') ?? '').includes('data:image/png'))
-  const dimStyle = $('[data-test=terminal-dim]')?.getAttribute('style') ?? null
+  $('[data-test=settings-nav-about]')?.click()
+  await waitFor(() => /v[0-9]/.test($('[data-test=about-version]')?.textContent ?? ''))
+  const aboutVersion = $('[data-test=about-version]')?.textContent ?? null
+  // 全局背景往返：主进程写入一张图 → 背景层出现并带模糊 → 面板不透明度写到根上 → 移除后整层消失
+  $('[data-test=settings-nav-appearance]')?.click()
+  await sleep(50)
+  await api.settings.update({ background: { imagePath: ${JSON.stringify(pngPath)}, fit: 'cover', imageOpacity: 0.3, panelOpacity: 0.8, blurPx: 6 } })
+  const bgShown = await waitFor(() => ($('[data-test=app-background]')?.getAttribute('style') ?? '').includes('data:image/png'))
+  const bgStyle = $('[data-test=app-background]')?.getAttribute('style') ?? null
+  const panelOpacity = $('.app')?.style.getPropertyValue('--panel-opacity') ?? null
+  const thumbShown = !!$('[data-test=bg-thumb] img')
   $('[data-test=bg-clear]')?.click()
-  const bgCleared = await waitFor(() => !$('[data-test=terminal-bg]'))
+  const bgCleared = await waitFor(() => !$('[data-test=app-background]'))
+  $('[data-test=settings-nav-update]')?.click()
+  await sleep(50)
   // 检查更新：开发模式下 electron-updater 报「未打包」→ error；打包版对着可达的更新源 → none / available
   const updateStatuses = []
   api.update.onStatus((s) => updateStatuses.push(s))
@@ -259,10 +272,16 @@ const SETTINGS_SCRIPT = (pngPath: string): string => `(async () => {
       installButton: $('[data-test=update-install]')?.textContent?.trim() ?? null,
     }
   }
-  $('[data-test=settings-done]')?.click()
+  $('[data-test=settings-cancel]')?.click()
   await sleep(50)
   const modalClosed = !$('[data-test=settings-modal]')
-  return { modalOpened, aboutVersion, autoLaunch, bgShown, dimStyle, bgCleared, updateSettled, updateStatus, updateText, download, modalClosed }
+  // 左栏齿轮也能打开同一个弹窗（托盘入口即上面那次广播）
+  $('[data-test=open-settings]')?.click()
+  await sleep(50)
+  const gearOpened = !!$('[data-test=settings-modal]')
+  $('[data-test=settings-cancel]')?.click()
+  await sleep(50)
+  return { modalOpened, gearOpened, navLabels, appearanceShown, aboutVersion, autoLaunch, bgShown, bgStyle, panelOpacity, thumbShown, bgCleared, updateSettled, updateStatus, updateText, download, modalClosed }
 })()`
 
 /** 1×1 PNG，供背景图往返测试 */

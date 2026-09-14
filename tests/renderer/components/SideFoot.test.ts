@@ -12,4 +12,13 @@ describe('SideFoot', () => {
     expect(wrapper.emitted('newSession')).toHaveLength(1)
     expect(wrapper.emitted('manageTags')).toHaveLength(1)
   })
+
+  it('齿轮按钮发出 settings（主窗口内的设置入口，托盘入口保留）', async () => {
+    const wrapper = mount(SideFoot)
+    const gear = wrapper.find('[data-test=open-settings]')
+
+    expect(gear.attributes('title')).toBe('设置')
+    await gear.trigger('click')
+    expect(wrapper.emitted('settings')).toHaveLength(1)
+  })
 })
