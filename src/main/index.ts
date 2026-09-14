@@ -140,6 +140,7 @@ function quitApp(): void {
 const ptyManager = new PtyManager({
   onData: (sessionId, data) => broadcast('pty:data', sessionId, data),
   onExit: (e) => broadcast('pty:exit', e),
+  isFile: existsSync, // spawn 前把 shell 名解析成绝对路径：开机自启时工作目录是 System32，相对名会撞 node-pty 的缺陷
 })
 console.log('[pty] node-pty 已加载')
 

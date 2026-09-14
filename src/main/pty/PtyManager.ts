@@ -13,6 +13,8 @@ export interface PtyManagerDeps {
   /** 已合并的输出批次 */
   onData: (sessionId: string, data: string) => void
   onExit: (e: PtyExitEvent) => void
+  /** 文件存在性谓词（装配层传 existsSync）：spawn 前把 shell 名解析成绝对路径要用，见 shellArgs.resolveShellFile */
+  isFile: (fullPath: string) => boolean
 }
 
 export interface SpawnOptions {
@@ -39,7 +41,7 @@ export class PtyManager {
 
   spawn(sessionId: string, opts: SpawnOptions): { pid: number } {
     if (this.entries.has(sessionId)) throw new Error(`会话 ${sessionId} 的终端已在运行`)
-    const spec = buildSpawnSpec(opts.shell, opts.cwd, process.env)
+    const spec = buildSpawnSpec(opts.shell, opts.cwd, process.env, this.deps.isFile)
     const pty = nodePty.spawn(spec.file, spec.commandLine, {
       name: 'xterm-256color',
       cwd: opts.cwd,
@@ -61,7 +63,7 @@ export class PtyManager {
       this.resolveExitWaiters(sessionId)
     })
     console.log(
-      `[pty] spawn session=${sessionId} pid=${pty.pid} shell=${opts.shell} cwd=${opts.cwd}`,
+      `[pty] spawn session=${sessionId} pid=${pty.pid} shell=${opts.shell} file=${spec.file} cwd=${opts.cwd}`,
     )
     return { pid: pty.pid }
   }

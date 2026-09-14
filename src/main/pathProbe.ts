@@ -1,6 +1,7 @@
 /**
  * PATH 探测（纯函数，文件存在性判定以参数注入）：
- * - findOnPath：给定名字列表，按 .exe / .cmd / .bat / 无后缀任一命中即视为已安装
+ * - resolveOnPath：给定名字，返回 PATH 上第一个命中的可执行文件绝对路径（按 无后缀 / .exe / .cmd / .bat 试）
+ * - findOnPath：给定名字列表，命中即视为已安装
  * - detectAvailableShells：按 SHELL_KINDS 顺序检查 shell 可执行文件
  */
 import { join } from 'node:path'
@@ -15,15 +16,27 @@ function splitPath(pathEnv: string): string[] {
     .filter(Boolean)
 }
 
+/** PATH 上第一个命中的绝对路径：按目录顺序、每个目录内按后缀顺序试；找不到返回 null */
+export function resolveOnPath(
+  name: string,
+  pathEnv: string,
+  isFile: (fullPath: string) => boolean,
+): string | null {
+  for (const dir of splitPath(pathEnv)) {
+    for (const ext of EXECUTABLE_EXTS) {
+      const candidate = join(dir, name + ext)
+      if (isFile(candidate)) return candidate
+    }
+  }
+  return null
+}
+
 export function findOnPath<T extends string>(
   names: readonly T[],
   pathEnv: string,
   isFile: (fullPath: string) => boolean,
 ): T[] {
-  const dirs = splitPath(pathEnv)
-  return names.filter((name) =>
-    dirs.some((dir) => EXECUTABLE_EXTS.some((ext) => isFile(join(dir, name + ext)))),
-  )
+  return names.filter((name) => resolveOnPath(name, pathEnv, isFile) !== null)
 }
 
 export function detectAvailableShells(

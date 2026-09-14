@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { registerIpc, type IpcDeps } from '../../src/main/ipc'
@@ -45,6 +45,7 @@ describe('IPC 接口层', () => {
         output[id] = (output[id] ?? '') + d
       },
       onExit: (e) => exits.push(e),
+      isFile: existsSync,
     })
     ipc = createFakeIpcMain()
     autoUpdater = new FakeAutoUpdater()

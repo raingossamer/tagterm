@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import type { PtyExitEvent } from '@shared/ipc'
 import { PtyManager } from '../../src/main/pty/PtyManager'
 import { waitFor } from './helpers'
@@ -15,6 +17,7 @@ describe('PtyManager', () => {
         output[id] = (output[id] ?? '') + data
       },
       onExit: (e) => exits.push(e),
+      isFile: existsSync,
     })
     return manager
   }
@@ -73,5 +76,20 @@ describe('PtyManager', () => {
     expect(() => pm.write('nope', 'x')).not.toThrow()
     expect(() => pm.resize('nope', 1, 1)).not.toThrow()
     expect(() => pm.kill('nope')).not.toThrow()
+  })
+
+  it('主进程工作目录是 System32 时也能起 cmd.exe（开机自启由注册表 Run 项拉起时就是这个工作目录）', async () => {
+    // node-pty 对相对名 cmd.exe 会先看当前目录：System32 里正好有一个，它的 get_shell_path 反而返回空串并抛
+    // 「File not found: 」。修法是传绝对路径；这里把进程工作目录真切到 System32 复现那个场景，结束后切回
+    const original = process.cwd()
+    process.chdir(join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32'))
+    try {
+      const pm = createManager()
+      pm.spawn('boot', { cwd: original, shell: 'cmd.exe', cols: 80, rows: 24 })
+      pm.write('boot', 'echo tagterm-boot\r')
+      await waitFor(() => (output['boot'] ?? '').includes('tagterm-boot'))
+    } finally {
+      process.chdir(original)
+    }
   })
 })
