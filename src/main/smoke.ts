@@ -207,6 +207,47 @@ const FOCUS_AND_PREPARE_CLIPBOARD = `(async () => {
   return document.activeElement?.tagName ?? null
 })()`
 
+/** 当前可见终端 host 的中心点（视口坐标），供真实右键点击 */
+const TERMINAL_CENTER = `(() => {
+  const host = [...document.querySelectorAll('[data-test=terminal-pane] > div')].find((h) => h.style.display === 'block')
+  const r = host?.getBoundingClientRect()
+  return r ? { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } : null
+})()`
+
+/** 左栏塞进 25 个会话（不开终端）：.side 不得高过窗口、列表区 .groups 自己滚动、底部按钮条在窗口内；测完全部移除 */
+const SIDEBAR_SCRIPT = `(async () => {
+  const api = window.tagterm
+  const $ = (sel) => document.querySelector(sel)
+  const $$ = (sel) => [...document.querySelectorAll(sel)]
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  const waitFor = async (cond, timeoutMs = 8000) => {
+    const start = Date.now()
+    while (!cond()) {
+      if (Date.now() - start > timeoutMs) return false
+      await sleep(50)
+    }
+    return true
+  }
+  const created = []
+  for (let i = 0; i < 25; i++) created.push(await api.session.create({ name: 'smoke-fill-' + i, cwd: 'C:\\\\Windows' }))
+  const filled = await waitFor(() => $$('[data-test=session-row]').length >= 25)
+  const side = $('.side').getBoundingClientRect()
+  const foot = $('.side-foot').getBoundingClientRect()
+  const groups = $('.groups')
+  const result = {
+    filled,
+    innerHeight,
+    sideBottom: Math.round(side.bottom),
+    footBottom: Math.round(foot.bottom),
+    sideFits: side.bottom <= innerHeight + 1,
+    footVisible: foot.top >= 0 && foot.bottom <= innerHeight + 1,
+    listScrolls: groups.scrollHeight > groups.clientHeight + 1,
+  }
+  for (const s of created) await api.session.remove(s.id)
+  await waitFor(() => !$$('[data-test=session-row]').some((r) => r.textContent.includes('smoke-fill-')))
+  return result
+})()`
+
 /** 聚焦当前可见终端的输入框（Ctrl+K 真实按键测试前） */
 const FOCUS_TERMINAL = `(() => {
   const host = [...document.querySelectorAll('[data-test=terminal-pane] > div')].find((h) => h.style.display === 'block')
@@ -362,6 +403,32 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         `({ focusedBeforeCtrlK: ${JSON.stringify(focusedBeforeCtrlK)}, focusedAfterCtrlK: document.activeElement?.getAttribute('data-test') ?? document.activeElement?.tagName ?? null, outputGrew: (window.__smokeOutputs?.[${outputKey}] ?? '').length > ${outputLenBefore} })`,
       )) as Record<string, unknown>
 
+      // 右键真实点击（mouseDown / mouseUp button=right，Chromium 自己派发 contextmenu）：无选区时读剪贴板粘贴，且只粘一次；
+      // 上面的合成 contextmenu 事件只经过我们的监听器，量不出真实点击会不会被粘两遍
+      const termCenter = (await win.webContents.executeJavaScript(TERMINAL_CENTER)) as {
+        x: number
+        y: number
+      } | null
+      let rightClick: Record<string, unknown> = { termCenter }
+      if (termCenter) {
+        await win.webContents.executeJavaScript(
+          `navigator.clipboard.writeText('echo 右键真实粘贴OK')`,
+        )
+        const lenBefore = (await win.webContents.executeJavaScript(
+          `(window.__smokeOutputs?.[${outputKey}] ?? '').length`,
+        )) as number
+        const mouse = { x: termCenter.x, y: termCenter.y, button: 'right' as const, clickCount: 1 }
+        win.webContents.sendInputEvent({ type: 'mouseDown', ...mouse })
+        win.webContents.sendInputEvent({ type: 'mouseUp', ...mouse })
+        await sleep(800)
+        const pasteCount = (await win.webContents.executeJavaScript(
+          `(window.__smokeOutputs?.[${outputKey}] ?? '').slice(${lenBefore}).split('右键真实粘贴OK').length - 1`,
+        )) as number
+        deps.pty.write(sessionIds[0]!, '\r') // 把粘进去的那行执行掉，别留在提示符上
+        await sleep(300)
+        rightClick = { termCenter, pasteCount }
+      }
+
       // 托盘「设置」的广播 → 设置弹窗；背景图设 / 清往返
       const pngPath = join(app.getPath('userData'), 'smoke-bg.png')
       writeFileSync(pngPath, PNG_1X1)
@@ -370,6 +437,13 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         win.webContents.executeJavaScript(SETTINGS_SCRIPT(pngPath)),
         180000,
         '设置弹窗烟测',
+      )
+
+      // 左栏塞满会话：列表区自己滚动，底部按钮条钉在窗口内
+      const sidebar = await withTimeout(
+        win.webContents.executeJavaScript(SIDEBAR_SCRIPT),
+        60000,
+        '左栏溢出烟测',
       )
 
       // 关窗 → 只隐藏；pty 存活；托盘「显示窗口」恢复
@@ -397,7 +471,9 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
             ...result,
             clipboard,
             search,
+            rightClick,
             settings,
+            sidebar,
             lifecycle,
             remaining,
             tagsFile,
