@@ -57,7 +57,7 @@ export class PtyManager {
       batcher.dispose()
       this.entries.delete(sessionId)
       console.log(`[pty] 退出 session=${sessionId} pid=${pty.pid} code=${exitCode}`)
-      this.deps.onExit({ sessionId, exitCode, signal })
+      this.deps.onExit({ sessionId, exitCode, signal, pid: pty.pid })
       this.resolveExitWaiters(sessionId)
     })
     console.log(

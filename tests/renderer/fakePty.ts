@@ -84,10 +84,19 @@ export class FakePty implements FakePtyPort {
     for (const h of [...this.dataHandlers]) h(sessionId, data)
   }
 
-  /** pty 退出：删条目后再通知（与 PtyManager 顺序一致） */
-  emitExit(sessionId: string, exitCode: number): void {
+  /**
+   * pty 退出：删条目后再通知（与 PtyManager 顺序一致）。
+   * `pid` 可显式指定，用来模拟「上一条 pty 迟到的退出事件」。
+   */
+  emitExit(sessionId: string, exitCode: number, pid?: number): void {
+    const actual = pid ?? this.running.get(sessionId) ?? 0
     this.running.delete(sessionId)
-    for (const h of [...this.exitHandlers]) h({ sessionId, exitCode })
+    for (const h of [...this.exitHandlers]) h({ sessionId, exitCode, pid: actual })
+  }
+
+  /** 该会话当前运行中的 pid（测试用来构造迟到的退出事件） */
+  pidOf(sessionId: string): number | undefined {
+    return this.running.get(sessionId)
   }
 
   /** 下一次 open 以 err 拒绝（不登记条目，记入 opens 但 created 为 false），模拟主进程 spawn 失败 */

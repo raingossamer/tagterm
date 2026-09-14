@@ -225,6 +225,48 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
     })
   })
 
+  it('12 重开期间上一条 pty 迟到的退出事件不认领：新终端保持 running、按键照常转发（否则界面上就是打字没反应的假死）', async () => {
+    setup({ manualOpen: true })
+    const first = core.select(a.id)
+    pty.resolveOpens()
+    await first
+    const oldPid = pty.pidOf(a.id)!
+    pty.emitExit(a.id, 0, oldPid)
+    expect(core.snapshot().runtime[a.id]).toEqual({ phase: 'exited', exitCode: 0 })
+
+    // 回车重启：open 挂起期间，上一条 pty（oldPid）的退出事件才姗姗来迟
+    terminals[0]!.typeInput('\r')
+    await flush()
+    expect(core.snapshot().runtime[a.id]).toEqual({ phase: 'opening' })
+    pty.emitExit(a.id, 0, oldPid)
+    pty.resolveOpens()
+    await flush()
+
+    expect(core.snapshot().runtime[a.id]).toEqual({ phase: 'running' })
+    expect(terminals[1]!.written).not.toContain('[进程已退出')
+    pty.written.length = 0
+    terminals[1]!.typeInput('x')
+    expect(pty.written).toEqual([[a.id, 'x']])
+  })
+
+  it('13 重开期间新 pty 自己退出（pid 相同）仍要认领：phase exited、终端写提示', async () => {
+    setup({ manualOpen: true })
+    const first = core.select(a.id)
+    pty.resolveOpens()
+    await first
+    pty.emitExit(a.id, 0, pty.pidOf(a.id)!)
+
+    terminals[0]!.typeInput('\r')
+    await flush()
+    const newPid = pty.pidOf(a.id)! // manualOpen 下 open 已登记新 pid，只是还没 resolve
+    pty.emitExit(a.id, 9, newPid)
+    pty.resolveOpens()
+    await flush()
+
+    expect(core.snapshot().runtime[a.id]).toEqual({ phase: 'exited', exitCode: 9 })
+    expect(terminals[1]!.written).toContain('[进程已退出，代码 9]')
+  })
+
   it('11 pty.open 失败：原因写进终端、phase exited（无 exitCode）、console.error 一次、实例仍显示；回车即重试', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
     pty.failNextOpen(new Error('spawn 失败'))

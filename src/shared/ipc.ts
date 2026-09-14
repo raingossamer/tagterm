@@ -59,6 +59,8 @@ export interface PtyExitEvent {
   sessionId: string
   exitCode: number
   signal?: number
+  /** 退出的是哪条 pty：重开会话时用来认出「上一条 pty 迟到的退出事件」，避免把刚开好的终端误标为已退出 */
+  pid: number
 }
 
 export interface PtyOpenResult {
