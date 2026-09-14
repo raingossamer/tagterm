@@ -51,8 +51,15 @@ export function createXtermFactory(getOptions: () => ITerminalOptions): Terminal
     })
 
     const onContextMenu = (e: MouseEvent): void => {
+      // 程序开了鼠标追踪时右键让给它（xterm 已把它作为鼠标事件报上去），我们不 preventDefault、不粘贴
+      const action = clipboardActionForRightClick(
+        term.hasSelection(),
+        term.modes.mouseTrackingMode !== 'none',
+        e.shiftKey,
+      )
+      if (action === null) return
       e.preventDefault()
-      if (clipboardActionForRightClick(term.hasSelection()) === 'copy') copySelection()
+      if (action === 'copy') copySelection()
       else void pasteFromClipboard()
     }
 
