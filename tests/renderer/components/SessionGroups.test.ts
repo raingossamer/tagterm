@@ -31,16 +31,14 @@ describe('SessionGroups', () => {
     const confirm = stubConfirm(true)
     const wrapper = mount(SessionGroups, { attachTo: document.body })
     const openMenu = async () => {
-      wrapper
-        .find('[data-test=session-row]')
-        .element.dispatchEvent(
-          new MouseEvent('contextmenu', {
-            bubbles: true,
-            cancelable: true,
-            clientX: 10,
-            clientY: 10,
-          }),
-        )
+      wrapper.find('[data-test=session-row]').element.dispatchEvent(
+        new MouseEvent('contextmenu', {
+          bubbles: true,
+          cancelable: true,
+          clientX: 10,
+          clientY: 10,
+        }),
+      )
       await nextTick()
     }
 
