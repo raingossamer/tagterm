@@ -225,12 +225,15 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
     })
   })
 
-  it('11 pty.open 失败：phase exited（无 exitCode）、console.error 一次、实例仍显示；回车即重试', async () => {
+  it('11 pty.open 失败：原因写进终端、phase exited（无 exitCode）、console.error 一次、实例仍显示；回车即重试', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
     pty.failNextOpen(new Error('spawn 失败'))
     await core.select(a.id)
     expect(core.snapshot().runtime[a.id]).toEqual({ phase: 'exited' })
     expect(error).toHaveBeenCalledTimes(1)
+    // 终端里必须看得见原因，否则界面上只剩一片空白
+    expect(terminals[0]!.written).toContain('[打开终端失败：spawn 失败]')
+    expect(terminals[0]!.written).toContain('[按回车重试]')
     expect(terminals[0]!.isVisible).toBe(true)
 
     terminals[0]!.typeInput('\r')
