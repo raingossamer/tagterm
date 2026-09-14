@@ -150,16 +150,28 @@ const SMOKE_SCRIPT = `(async () => {
   await api.tag.reorder([tagA.id, tagB.id])
   await waitFor(() => groupTitles()[0] === 'smoke-标签A')
 
-  // 启用 / 禁用左栏展示：隐藏 A → A 组与胶囊消失、只挂 A 的 smoke-临时 落到「未打标签」、会话仍在；取消隐藏 → 恢复
+  // 启用 / 禁用左栏展示：隐藏标签 = 把这一组会话整体从左栏收起来（不是落到「未打标签」），会话本身不丢。
+  // 此刻 smoke-临时 与 smoke-2 都只挂着 A（B 已在路径条那步摘掉）
   await api.tag.update(tagA.id, { hidden: true })
   const hiddenApplied = await waitFor(
     () => !groupTitles().includes('smoke-标签A') && !chipTitles().includes('smoke-标签A'),
   )
-  const groupsWhenAHidden = groupTitles()
-  const tempStillListed = !!rowOf('smoke-临时') // 会话不因标签隐藏而消失
-  const tempDotsWhenAHidden = dotsOf('smoke-临时') // 只挂 A，隐藏后左栏无色点
+  const rowsWhenAHidden = $$('[data-test=session-row]').length // 两个会话都收起来 → 0 行
+  const untaggedWhenAHidden = groupTitles().includes('未打标签') // 不该落到「未打标签」
+  setSearch('smoke-临时')
+  await sleep(120)
+  const searchFindsHidden = $$('[data-test=session-row]').length > 0 // 搜索也搜不到
+  setSearch('')
+  await sleep(120)
+  const sessionsKeptWhenHidden = (await api.session.list()).length // 会话没丢
+  // 混合标签：给 smoke-临时 再挂上未隐藏的 B → 它回到 B 组显示
+  await api.tag.attach(s1.id, tagB.id)
+  const mixedShown = await waitFor(() => !!rowOf('smoke-临时'))
+  const groupsWhenMixed = groupTitles()
+  await api.tag.detach(s1.id, tagB.id)
+  await waitFor(() => !rowOf('smoke-临时'))
   await api.tag.update(tagA.id, { hidden: false })
-  const shownAgain = await waitFor(() => groupTitles().includes('smoke-标签A') && chipTitles().includes('smoke-标签A'))
+  const shownAgain = await waitFor(() => groupTitles().includes('smoke-标签A') && !!rowOf('smoke-临时'))
 
   // 删标签 → 分组与色点消失
   await api.tag.remove(tagA.id)
@@ -219,7 +231,8 @@ const SMOKE_SCRIPT = `(async () => {
       gotTagDot, tagDotColor, groupsTagged, s2Tooltip, chipCounts, groupsAny, groupsAll, rowsAll, groupsCleared,
       rowsWhenSearching, emptyText, pillsBefore, pillRemoved, popOptions, popClosed, tagDotCleared, groupsAfterRemove,
       groupsBeforeReorder, reorderApplied, groupsAfterReorder, chipsAfterReorder,
-      hiddenApplied, groupsWhenAHidden, tempStillListed, tempDotsWhenAHidden, shownAgain,
+      hiddenApplied, rowsWhenAHidden, untaggedWhenAHidden, searchFindsHidden, sessionsKeptWhenHidden,
+      mixedShown, groupsWhenMixed, shownAgain,
     },
   }
 })()`
