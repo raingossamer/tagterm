@@ -19,10 +19,10 @@ const SECTIONS: Array<{ key: SectionKey; label: string }> = [
   { key: 'about', label: '关于' },
 ]
 
-const FITS: Array<{ value: BackgroundFit; label: string }> = [
-  { value: 'contain', label: '完整显示' },
-  { value: 'cover', label: '填充窗口' },
-  { value: 'tile', label: '平铺' },
+const FITS: Array<{ value: BackgroundFit; label: string; hint: string }> = [
+  { value: 'contain', label: '完整显示', hint: '保留整张图片，空白区域使用主题底色' },
+  { value: 'cover', label: '填充窗口', hint: '等比放大铺满窗口，超出的部分裁掉' },
+  { value: 'tile', label: '平铺', hint: '按原始尺寸重复铺满窗口' },
 ]
 
 const emit = defineEmits<{ close: [] }>()
@@ -50,6 +50,8 @@ const isImageMissing = computed(() => hasImage.value && thumbnail.value === null
 const imagePercent = computed(() => Math.round(draft.value.imageOpacity * 100))
 const panelPercent = computed(() => Math.round(draft.value.panelOpacity * 100))
 const minPanelPercent = Math.round(MIN_PANEL_OPACITY * 100)
+/** 显示方式的说明随选项变化（原型图只画了「完整显示」那一条） */
+const fitHint = computed(() => FITS.find((f) => f.value === draft.value.fit)?.hint ?? '')
 
 const updateText = computed(() => describeUpdateStatus(update.status))
 /** 检查 / 下载进行中不允许再点 */
@@ -219,7 +221,7 @@ function onKeydown(e: KeyboardEvent): void {
             <div class="field-row">
               <div class="label">
                 <b>显示方式</b>
-                <span class="hint">保留整张图片，空白区域使用主题底色</span>
+                <span class="hint" data-test="bg-fit-hint">{{ fitHint }}</span>
               </div>
               <select
                 class="select"

@@ -242,16 +242,39 @@ const SETTINGS_SCRIPT = (pngPath: string): string => `(async () => {
   $('[data-test=settings-nav-about]')?.click()
   await waitFor(() => /v[0-9]/.test($('[data-test=about-version]')?.textContent ?? ''))
   const aboutVersion = $('[data-test=about-version]')?.textContent ?? null
-  // 全局背景往返：主进程写入一张图 → 背景层出现并带模糊 → 面板不透明度写到根上 → 移除后整层消失
+  // 全局背景往返：主进程写入一张图（代替文件对话框）→ 背景层出现并带模糊 → 面板不透明度写在根元素上且面板计算底色真的半透明
+  //   → 重开弹窗让草稿拿到这张图 → 「移除背景」只预览：整层消失 → 「取消」还原 → 主进程清掉图片：整层消失、面板恢复不透明
   $('[data-test=settings-nav-appearance]')?.click()
   await sleep(50)
   await api.settings.update({ background: { imagePath: ${JSON.stringify(pngPath)}, fit: 'cover', imageOpacity: 0.3, panelOpacity: 0.8, blurPx: 6 } })
   const bgShown = await waitFor(() => ($('[data-test=app-background]')?.getAttribute('style') ?? '').includes('data:image/png'))
   const bgStyle = $('[data-test=app-background]')?.getAttribute('style') ?? null
-  const panelOpacity = $('.app')?.style.getPropertyValue('--panel-opacity') ?? null
-  const thumbShown = !!$('[data-test=bg-thumb] img')
+  const panelOpacity = document.documentElement.style.getPropertyValue('--panel-opacity') || null
+  // 变量值对还不够，面板的计算底色必须真的带 alpha：0.2.4 把变量写在 .app 上，变量是 0.8、面板却仍不透明
+  const alphaOf = (el) => {
+    const c = el ? getComputedStyle(el).backgroundColor : ''
+    const m = /\\/\\s*([\\d.]+)\\)$/.exec(c) ?? /^rgba\\([^,]+,[^,]+,[^,]+,\\s*([\\d.]+)\\)$/.exec(c)
+    return m ? Number(m[1]) : 1
+  }
+  const panelBg = { side: $('.side') ? getComputedStyle($('.side')).backgroundColor : null, term: $('.term-wrap') ? getComputedStyle($('.term-wrap')).backgroundColor : null }
+  const panelsTranslucent = alphaOf($('.side')) < 1 && alphaOf($('.term-wrap')) < 1
+  // 弹窗的草稿是打开时抓的快照，不跟广播走：关掉再从左栏齿轮重开，草稿才拿到这张图、「移除背景」才可点
+  $('[data-test=settings-cancel]')?.click()
+  await sleep(50)
+  $('[data-test=open-settings]')?.click()
+  await sleep(50)
+  const gearOpened = !!$('[data-test=settings-modal]')
+  const thumbShown = await waitFor(() => !!$('[data-test=bg-thumb] img'))
+  const bgName = $('[data-test=bg-name]')?.textContent?.trim() ?? null
   $('[data-test=bg-clear]')?.click()
   const bgCleared = await waitFor(() => !$('[data-test=app-background]'))
+  $('[data-test=settings-cancel]')?.click()
+  const bgRestored = await waitFor(() => !!$('[data-test=app-background]'))
+  await api.settings.update({ background: { imagePath: null, fit: 'contain', imageOpacity: 0.35, panelOpacity: 0.75, blurPx: 4 } })
+  const bgRemoved = await waitFor(() => !$('[data-test=app-background]'))
+  const panelOpacityCleared = document.documentElement.style.getPropertyValue('--panel-opacity') || null
+  $('[data-test=open-settings]')?.click()
+  await sleep(50)
   $('[data-test=settings-nav-update]')?.click()
   await sleep(50)
   // 检查更新：开发模式下 electron-updater 报「未打包」→ error；打包版对着可达的更新源 → none / available
@@ -275,13 +298,7 @@ const SETTINGS_SCRIPT = (pngPath: string): string => `(async () => {
   $('[data-test=settings-cancel]')?.click()
   await sleep(50)
   const modalClosed = !$('[data-test=settings-modal]')
-  // 左栏齿轮也能打开同一个弹窗（托盘入口即上面那次广播）
-  $('[data-test=open-settings]')?.click()
-  await sleep(50)
-  const gearOpened = !!$('[data-test=settings-modal]')
-  $('[data-test=settings-cancel]')?.click()
-  await sleep(50)
-  return { modalOpened, gearOpened, navLabels, appearanceShown, aboutVersion, autoLaunch, bgShown, bgStyle, panelOpacity, thumbShown, bgCleared, updateSettled, updateStatus, updateText, download, modalClosed }
+  return { modalOpened, gearOpened, navLabels, appearanceShown, aboutVersion, autoLaunch, bgShown, bgStyle, panelOpacity, panelBg, panelsTranslucent, thumbShown, bgName, bgCleared, bgRestored, bgRemoved, panelOpacityCleared, updateSettled, updateStatus, updateText, download, modalClosed }
 })()`
 
 /** 1×1 PNG，供背景图往返测试 */
