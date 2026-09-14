@@ -1,6 +1,6 @@
 {
   "name": "tagterm",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "private": true,
   "description": "TagTerm：多标签终端会话管理 —— 一个会话 = 一个固定工作目录的终端",
   "main": "./out/main/index.js",
