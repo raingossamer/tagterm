@@ -130,6 +130,9 @@ onUnmounted(() => {
   z-index: 1;
   display: grid;
   grid-template-columns: 296px 1fr;
+  /* 原型没写行轨道：隐式 auto 行会被左栏的会话列表撑到比窗口还高，列表滚不了、底部按钮条被推出窗外；
+     锁成 minmax(0, 1fr) 让两栏恰好等于窗口高，.groups 才能自己滚动 */
+  grid-template-rows: minmax(0, 1fr);
   height: 100vh;
   transition: grid-template-columns 0.15s;
 }
