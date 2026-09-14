@@ -1,25 +1,55 @@
 <script setup lang="ts">
-// 「设置」弹窗（主窗口内 modal）：终端背景（选图 / 清除 / 遮罩滑块即时预览）、启动（开机自启开关，真相在系统登录项）、
-// 更新（检查 / 下载 / 安装）、关于
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+// 「设置」弹窗：左侧四段导航（外观 / 启动 / 更新 / 关于）。
+// 外观段是草稿语义（决策 2）：改动只进本地草稿，经 settings.previewBackground 整窗实时生效但不落盘；
+// 「保存设置」才提交，「取消」/ Esc / 点遮罩丢弃草稿并还原。启动 / 更新 / 关于三段即时生效。
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { AutoLaunchStatus } from '@shared/ipc'
+import type { AppBackground, BackgroundFit } from '@shared/models'
+import { MAX_BLUR_PX, MIN_PANEL_OPACITY } from '@shared/models'
 import { useSettingsStore } from '../stores/settings'
 import { useUpdateStore } from '../stores/update'
 import { describeUpdateStatus } from '../composables/updateStatus'
+
+type SectionKey = 'appearance' | 'startup' | 'update' | 'about'
+
+const SECTIONS: Array<{ key: SectionKey; label: string }> = [
+  { key: 'appearance', label: '外观' },
+  { key: 'startup', label: '启动' },
+  { key: 'update', label: '更新' },
+  { key: 'about', label: '关于' },
+]
+
+const FITS: Array<{ value: BackgroundFit; label: string }> = [
+  { value: 'contain', label: '完整显示' },
+  { value: 'cover', label: '填充窗口' },
+  { value: 'tile', label: '平铺' },
+]
 
 const emit = defineEmits<{ close: [] }>()
 const settings = useSettingsStore()
 const update = useUpdateStore()
 
+const section = ref<SectionKey>('appearance')
 const version = ref('')
 const dataDir = ref('')
 const error = ref('')
 /** 开机自启：打开弹窗时向主进程取一次，改动后以返回的实际状态回填（不进 store、不落盘） */
 const autoLaunch = ref<AutoLaunchStatus>({ enabled: false, blockedBySystem: false })
+/** 外观段草稿：打开时取已保存值，改动只进这里，保存才落盘 */
+const draft = ref<AppBackground>({ ...settings.background })
+const isLivePreview = ref(true)
+/** 关掉实时预览时弹窗内缩略图要单独读图（整窗仍用已保存值） */
+const draftImage = ref<string | null>(null)
 
-const imagePath = computed(() => settings.settings.terminalBackground.imagePath)
-const dimPercent = computed(() => Math.round(settings.terminalBackground.dimOpacity * 100))
-const isImageMissing = computed(() => !!imagePath.value && settings.backgroundImage === null)
+const hasImage = computed(() => draft.value.imagePath !== null)
+const fileName = computed(() => draft.value.imagePath?.split(/[\\/]/).pop() ?? '未设置背景')
+const thumbnail = computed(() =>
+  isLivePreview.value ? settings.backgroundImage : draftImage.value,
+)
+const isImageMissing = computed(() => hasImage.value && thumbnail.value === null)
+const imagePercent = computed(() => Math.round(draft.value.imageOpacity * 100))
+const panelPercent = computed(() => Math.round(draft.value.panelOpacity * 100))
+const minPanelPercent = Math.round(MIN_PANEL_OPACITY * 100)
 
 const updateText = computed(() => describeUpdateStatus(update.status))
 /** 检查 / 下载进行中不允许再点 */
@@ -48,6 +78,53 @@ onMounted(async () => {
 })
 onUnmounted(() => document.removeEventListener('keydown', onKeydown))
 
+// 草稿或预览开关变化 → 整窗预览跟着变（关掉预览就还原为已保存值）
+watch(
+  [draft, isLivePreview],
+  () => {
+    void applyPreview()
+  },
+  { deep: true },
+)
+
+async function applyPreview(): Promise<void> {
+  error.value = ''
+  try {
+    await settings.previewBackground(isLivePreview.value ? { ...draft.value } : null)
+    if (!isLivePreview.value) await loadDraftImage()
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+/** 预览关闭时缩略图自己读图（读取失败按「文件不存在」处理，红字由调用处显示） */
+async function loadDraftImage(): Promise<void> {
+  const path = draft.value.imagePath
+  draftImage.value = path ? await window.tagterm.settings.readBackgroundImage(path) : null
+}
+
+async function pickImage(): Promise<void> {
+  const picked = await window.tagterm.app.pickImage()
+  if (picked) draft.value = { ...draft.value, imagePath: picked }
+}
+
+function clearImage(): void {
+  draft.value = { ...draft.value, imagePath: null }
+}
+
+function onFitChange(e: Event): void {
+  draft.value = { ...draft.value, fit: (e.target as HTMLSelectElement).value as BackgroundFit }
+}
+function onImageOpacity(e: Event): void {
+  draft.value = { ...draft.value, imageOpacity: Number((e.target as HTMLInputElement).value) / 100 }
+}
+function onPanelOpacity(e: Event): void {
+  draft.value = { ...draft.value, panelOpacity: Number((e.target as HTMLInputElement).value) / 100 }
+}
+function onBlur(e: Event): void {
+  draft.value = { ...draft.value, blurPx: Number((e.target as HTMLInputElement).value) }
+}
+
 /** 勾选即写登录项；失败（如开发模式）红字提示并把复选框还原为实际状态 */
 async function onAutoLaunchChange(e: Event): Promise<void> {
   const input = e.target as HTMLInputElement
@@ -60,150 +137,228 @@ async function onAutoLaunchChange(e: Event): Promise<void> {
   }
 }
 
-async function save(path: string | null, dimOpacity: number): Promise<void> {
+async function save(): Promise<void> {
   error.value = ''
   try {
-    await settings.saveTerminalBackground({ imagePath: path, dimOpacity })
+    await settings.saveBackground({ ...draft.value })
+    emit('close')
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   }
 }
 
-async function pickImage(): Promise<void> {
-  const picked = await window.tagterm.app.pickImage()
-  if (picked) await save(picked, settings.terminalBackground.dimOpacity)
-}
-
-function clearImage(): Promise<void> {
-  return save(null, settings.terminalBackground.dimOpacity)
-}
-
-/** 拖动中只预览，松手（change）才落盘 */
-function onDimInput(e: Event): void {
-  settings.previewDim(Number((e.target as HTMLInputElement).value) / 100)
-}
-function onDimChange(e: Event): Promise<void> {
-  return save(imagePath.value, Number((e.target as HTMLInputElement).value) / 100)
+/** 取消 / Esc / 点遮罩：丢弃草稿，整窗还原为已保存值 */
+async function cancel(): Promise<void> {
+  await settings.previewBackground(null)
+  emit('close')
 }
 
 function onBackdropMousedown(e: MouseEvent): void {
-  if (e.target === e.currentTarget) emit('close')
+  if (e.target === e.currentTarget) void cancel()
 }
 function onKeydown(e: KeyboardEvent): void {
-  if (e.key === 'Escape') emit('close')
+  if (e.key === 'Escape') void cancel()
 }
 </script>
 
 <template>
   <div class="backdrop show" data-test="settings-modal" @mousedown="onBackdropMousedown">
     <div class="modal">
-      <h3>设置</h3>
-
-      <section>
-        <h4>终端背景</h4>
-        <div class="row">
-          <span class="path mono" data-test="bg-path">{{ imagePath ?? '未设置（纯色）' }}</span>
-          <button class="btn sm" type="button" data-test="bg-pick" @click="pickImage">
-            选择图片…
-          </button>
-          <button
-            class="btn sm"
-            type="button"
-            :disabled="!imagePath"
-            data-test="bg-clear"
-            @click="clearImage"
-          >
-            清除
-          </button>
-        </div>
-        <p v-if="isImageMissing" class="warn" data-test="bg-missing">
-          图片文件不存在，已回退为纯色
-        </p>
-        <div class="row">
-          <label for="bgDim">遮罩</label>
-          <input
-            id="bgDim"
-            type="range"
-            min="0"
-            max="100"
-            :value="dimPercent"
-            :disabled="!imagePath"
-            data-test="bg-dim"
-            @input="onDimInput"
-            @change="onDimChange"
-          />
-          <span class="val" data-test="bg-dim-value">{{ dimPercent }}%</span>
-        </div>
-        <p class="hint">图片上方的黑色遮罩，越高文字越清晰。</p>
-      </section>
-
-      <section data-test="auto-launch-section">
-        <h4>启动</h4>
-        <div class="row">
-          <label class="check" data-test="auto-launch-label">
-            <input
-              type="checkbox"
-              :checked="autoLaunch.enabled"
-              data-test="auto-launch"
-              @change="onAutoLaunchChange"
-            />
-            开机时自动启动 TagTerm
-          </label>
-          <span v-if="autoLaunch.blockedBySystem" class="hint" data-test="auto-launch-blocked">
-            已在系统「启动应用」中被禁用
-          </span>
-        </div>
-      </section>
-
-      <section>
-        <h4>更新</h4>
-        <div class="row">
-          <button
-            class="btn sm"
-            type="button"
-            :disabled="isUpdateBusy"
-            data-test="update-check"
-            @click="runUpdateAction(update.check)"
-          >
-            检查更新
-          </button>
-          <button
-            v-if="update.status.state === 'available'"
-            class="btn sm primary"
-            type="button"
-            data-test="update-download"
-            @click="runUpdateAction(update.download)"
-          >
-            下载
-          </button>
-          <button
-            v-if="update.status.state === 'downloaded'"
-            class="btn sm primary"
-            type="button"
-            data-test="update-install"
-            @click="runUpdateAction(update.install)"
-          >
-            立即安装并重启
-          </button>
-          <span class="hint" data-test="update-status">{{ updateText }}</span>
-        </div>
-      </section>
-
-      <section>
-        <h4>关于</h4>
-        <div class="about">
-          <span data-test="about-version">TagTerm v{{ version }}</span>
-          <span class="hint">数据目录</span>
-          <span class="path mono" data-test="about-data-dir">{{ dataDir }}</span>
-        </div>
-      </section>
-
-      <p v-if="error" class="error" data-test="settings-error">{{ error }}</p>
-      <div class="actions">
-        <button class="btn primary" type="button" data-test="settings-done" @click="emit('close')">
-          完成
+      <header>
+        <h3>设置</h3>
+        <button class="x" type="button" title="关闭" data-test="settings-close" @click="cancel">
+          ×
         </button>
+      </header>
+
+      <div class="body">
+        <nav class="nav">
+          <button
+            v-for="s in SECTIONS"
+            :key="s.key"
+            class="nav-item"
+            :class="{ on: section === s.key }"
+            type="button"
+            :data-test="`settings-nav-${s.key}`"
+            @click="section = s.key"
+          >
+            {{ s.label }}
+          </button>
+        </nav>
+
+        <div class="pane">
+          <section v-if="section === 'appearance'" data-test="appearance-section">
+            <h4>全局背景</h4>
+            <p class="hint">应用于侧边栏、标签栏和终端等整个窗口</p>
+            <div class="bg-row">
+              <div class="thumb" data-test="bg-thumb">
+                <img v-if="thumbnail" :src="thumbnail" alt="" />
+                <span v-else class="none">无背景</span>
+              </div>
+              <div class="bg-actions">
+                <button class="btn primary" type="button" data-test="bg-pick" @click="pickImage">
+                  更换图片
+                </button>
+                <button
+                  class="btn"
+                  type="button"
+                  :disabled="!hasImage"
+                  data-test="bg-clear"
+                  @click="clearImage"
+                >
+                  移除背景
+                </button>
+                <p class="hint">支持 PNG、JPG、WebP</p>
+              </div>
+            </div>
+            <p class="name mono" data-test="bg-name">{{ fileName }}</p>
+            <p v-if="isImageMissing" class="warn" data-test="bg-missing">
+              图片文件不存在，已回退为纯色
+            </p>
+
+            <div class="field-row">
+              <div class="label">
+                <b>显示方式</b>
+                <span class="hint">保留整张图片，空白区域使用主题底色</span>
+              </div>
+              <select
+                class="select"
+                :value="draft.fit"
+                :disabled="!hasImage"
+                data-test="bg-fit"
+                @change="onFitChange"
+              >
+                <option v-for="f in FITS" :key="f.value" :value="f.value">{{ f.label }}</option>
+              </select>
+            </div>
+
+            <div class="field-row">
+              <div class="label">
+                <b>背景不透明度</b>
+                <span class="hint">数值越低，背景图片越淡</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                :value="imagePercent"
+                :disabled="!hasImage"
+                data-test="bg-image-opacity"
+                @input="onImageOpacity"
+              />
+              <span class="val" data-test="bg-image-opacity-value">{{ imagePercent }}%</span>
+            </div>
+
+            <div class="field-row">
+              <div class="label">
+                <b>面板不透明度</b>
+                <span class="hint">调高面板遮罩，文字保持清晰</span>
+              </div>
+              <input
+                type="range"
+                :min="minPanelPercent"
+                max="100"
+                :value="panelPercent"
+                :disabled="!hasImage"
+                data-test="bg-panel-opacity"
+                @input="onPanelOpacity"
+              />
+              <span class="val" data-test="bg-panel-opacity-value">{{ panelPercent }}%</span>
+            </div>
+
+            <div class="field-row">
+              <div class="label">
+                <b>背景模糊</b>
+                <span class="hint">让背景更柔和</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                :max="MAX_BLUR_PX"
+                :value="draft.blurPx"
+                :disabled="!hasImage"
+                data-test="bg-blur"
+                @input="onBlur"
+              />
+              <span class="val" data-test="bg-blur-value">{{ draft.blurPx }} px</span>
+            </div>
+
+            <p class="note">背景在整个窗口连续显示，文字与图标不受透明度影响。</p>
+          </section>
+
+          <section v-else-if="section === 'startup'" data-test="auto-launch-section">
+            <h4>启动</h4>
+            <label class="check" data-test="auto-launch-label">
+              <input
+                type="checkbox"
+                :checked="autoLaunch.enabled"
+                data-test="auto-launch"
+                @change="onAutoLaunchChange"
+              />
+              开机时自动启动 TagTerm
+            </label>
+            <p class="hint" data-test="auto-launch-instant">即时生效，不受下方「保存设置」影响</p>
+            <p v-if="autoLaunch.blockedBySystem" class="hint" data-test="auto-launch-blocked">
+              已在系统「启动应用」中被禁用
+            </p>
+          </section>
+
+          <section v-else-if="section === 'update'">
+            <h4>更新</h4>
+            <div class="row">
+              <button
+                class="btn sm"
+                type="button"
+                :disabled="isUpdateBusy"
+                data-test="update-check"
+                @click="runUpdateAction(update.check)"
+              >
+                检查更新
+              </button>
+              <button
+                v-if="update.status.state === 'available'"
+                class="btn sm primary"
+                type="button"
+                data-test="update-download"
+                @click="runUpdateAction(update.download)"
+              >
+                下载
+              </button>
+              <button
+                v-if="update.status.state === 'downloaded'"
+                class="btn sm primary"
+                type="button"
+                data-test="update-install"
+                @click="runUpdateAction(update.install)"
+              >
+                立即安装并重启
+              </button>
+            </div>
+            <p class="hint" data-test="update-status">{{ updateText }}</p>
+          </section>
+
+          <section v-else>
+            <h4>关于</h4>
+            <p data-test="about-version">TagTerm v{{ version }}</p>
+            <p class="hint">数据目录</p>
+            <p class="name mono" data-test="about-data-dir">{{ dataDir }}</p>
+          </section>
+
+          <p v-if="error" class="error" data-test="settings-error">{{ error }}</p>
+        </div>
       </div>
+
+      <footer>
+        <label class="check" data-test="live-preview-label">
+          <input type="checkbox" v-model="isLivePreview" data-test="live-preview" />
+          实时预览
+        </label>
+        <span class="spacer"></span>
+        <button class="btn" type="button" data-test="settings-cancel" @click="cancel">取消</button>
+        <button class="btn primary" type="button" data-test="settings-save" @click="save">
+          保存设置
+        </button>
+      </footer>
     </div>
   </div>
 </template>
@@ -219,41 +374,165 @@ function onKeydown(e: KeyboardEvent): void {
   z-index: 20;
 }
 .modal {
-  width: 520px;
+  width: 680px;
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 32px);
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
   background: #fff;
   border-radius: 10px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
-  padding: 18px 20px;
 }
-.modal h3 {
-  margin: 0 0 12px;
+header {
+  display: flex;
+  align-items: center;
+  padding: 14px 18px 10px;
+}
+header h3 {
+  margin: 0;
   font-size: 16px;
+  flex: 1;
 }
-section {
-  padding: 10px 0;
-  border-top: 1px solid var(--line);
+.x {
+  font-size: 18px;
+  line-height: 1;
+  color: var(--muted);
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.x:hover {
+  background: #f0f2f5;
+}
+.body {
+  display: flex;
+  gap: 14px;
+  padding: 0 18px;
+  min-height: 0;
+  flex: 1;
+}
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 116px;
+  flex: none;
+}
+.nav-item {
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text);
+}
+.nav-item:hover {
+  background: #f0f2f5;
+}
+.nav-item.on {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.pane {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding-bottom: 8px;
 }
 section h4 {
+  margin: 0 0 2px;
+  font-size: 14px;
+}
+.hint {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--muted);
-  font-weight: 600;
+}
+.bg-row {
+  display: flex;
+  gap: 12px;
+  margin: 10px 0 6px;
+}
+.thumb {
+  width: 190px;
+  height: 110px;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.thumb .none {
+  font-size: 12px;
+  color: var(--muted);
+}
+.bg-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+.name {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mono {
+  font-family: var(--mono);
+}
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.field-row .label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.field-row .label b {
+  font-size: 13px;
+  font-weight: 500;
+}
+.field-row .label .hint {
+  margin: 0;
+}
+.field-row input[type='range'] {
+  width: 150px;
+  flex: none;
+}
+.select {
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  min-width: 130px;
+}
+.val {
+  font-size: 12.5px;
+  min-width: 44px;
+  text-align: right;
 }
 .row {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
-}
-.row label {
-  font-size: 12.5px;
-  color: var(--muted);
-}
-.row input[type='range'] {
-  flex: 1;
+  margin: 10px 0 6px;
 }
 .check {
   display: inline-flex;
@@ -262,31 +541,13 @@ section h4 {
   font-size: 13px;
   cursor: pointer;
 }
-.val {
-  font-size: 12.5px;
-  min-width: 36px;
-  text-align: right;
-}
-.path {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12.5px;
-  padding: 3px 8px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 5px;
-}
-.mono {
-  font-family: var(--mono);
-}
-.about {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
+.note {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--accent-soft);
+  border-radius: 6px;
+  padding: 8px 10px;
 }
 .warn {
   margin: 0 0 8px;
@@ -294,13 +555,18 @@ section h4 {
   color: #b45309;
 }
 .error {
-  margin: 8px 0 0;
+  margin: 10px 0 0;
   font-size: 12px;
   color: #b42318;
 }
-.actions {
+footer {
   display: flex;
-  justify-content: flex-end;
-  margin-top: 12px;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px 14px;
+  border-top: 1px solid var(--line);
+}
+.spacer {
+  flex: 1;
 }
 </style>
