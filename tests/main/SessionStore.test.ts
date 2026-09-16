@@ -121,4 +121,49 @@ describe('SessionStore', () => {
 
     await expect(store.load()).rejects.toThrow(/版本/)
   })
+
+  it('reorder 按 ids 顺序把 sortOrder 整体重写为 1..n，落盘并回调全量列表', async () => {
+    const changed: Session[][] = []
+    const store = new SessionStore(dir, { onChanged: (list) => changed.push(list) })
+    await store.load()
+    const a = await store.create({ cwd: 'D:\\a' })
+    const b = await store.create({ cwd: 'D:\\b' })
+    const c = await store.create({ cwd: 'D:\\c' })
+    changed.length = 0
+
+    await store.reorder([c.id, a.id, b.id])
+
+    expect(store.list().map((s) => [s.id, s.sortOrder])).toEqual([
+      [c.id, 1],
+      [a.id, 2],
+      [b.id, 3],
+    ])
+    expect(changed).toHaveLength(1) // 一次原子写一次广播
+    const file = JSON.parse(readFileSync(join(dir, 'sessions.json'), 'utf8'))
+    expect(file.sessions.map((s: Session) => s.id)).toEqual([c.id, a.id, b.id])
+  })
+
+  it('reorder 的 ids 不是全部会话 id 的一个排列时抛错，且不落盘不广播', async () => {
+    const changed: Session[][] = []
+    const store = new SessionStore(dir, { onChanged: (list) => changed.push(list) })
+    await store.load()
+    const a = await store.create({ cwd: 'D:\\a' })
+    const b = await store.create({ cwd: 'D:\\b' })
+    changed.length = 0
+    const before = store.list()
+
+    const bad = [
+      [a.id], // 缺
+      [a.id, b.id, a.id], // 多
+      [a.id, a.id], // 重复
+      [a.id, 'nope'], // 不存在
+      [], // 空
+    ]
+    for (const ids of bad) {
+      await expect(store.reorder(ids)).rejects.toThrow('排序参数必须是全部会话 id 的一个排列')
+    }
+
+    expect(store.list()).toEqual(before)
+    expect(changed).toHaveLength(0)
+  })
 })

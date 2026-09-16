@@ -35,5 +35,10 @@ export const useSessionsStore = defineStore('sessions', () => {
     return window.tagterm.session.remove(id)
   }
 
-  return { sessions, count, byId, load, create, update, remove }
+  /** 整体重排：ids 必须是全部会话 id 的一个排列，顺序以 session:changed 广播为准 */
+  function reorder(ids: string[]): Promise<void> {
+    return window.tagterm.session.reorder(ids)
+  }
+
+  return { sessions, count, byId, load, create, update, remove, reorder }
 })

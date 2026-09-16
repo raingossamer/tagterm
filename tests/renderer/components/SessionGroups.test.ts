@@ -279,4 +279,91 @@ describe('SessionGroups', () => {
     expect(wrapper.findAll('[data-test=group-head]')).toHaveLength(0)
     expect(wrapper.text()).toContain('没有匹配的会话。换个标签组合，或新建一个会话。')
   })
+
+  it('组内拖拽：按槽位置换算出新的全局顺序调 session.reorder，组外会话位置不动', async () => {
+    // 全局顺序 a b c d；iot 组 = a c（占第 1、3 位），把 c 拖到组内第一位 → 全局 c b a d
+    const [a, b, c, d] = [
+      makeSession({ name: 'a', sortOrder: 1 }),
+      makeSession({ name: 'b', sortOrder: 2 }),
+      makeSession({ name: 'c', sortOrder: 3 }),
+      makeSession({ name: 'd', sortOrder: 4 }),
+    ]
+    const iot = makeTag({ name: 'iot', sortOrder: 1 })
+    useSessionsStore().sessions = [a!, b!, c!, d!]
+    const tags = useTagsStore()
+    tags.tags = [iot]
+    tags.sessionTags = [
+      { sessionId: a!.id, tagId: iot.id },
+      { sessionId: c!.id, tagId: iot.id },
+    ]
+    const api = installFakeApi()
+    const wrapper = mount(SessionGroups)
+
+    const iotRows = wrapper.findAll('[data-test=group]')[0]!.findAll('[data-test=session-row]')
+    expect(iotRows).toHaveLength(2)
+    await iotRows[1]!.trigger('dragstart')
+    await iotRows[0]!.trigger('drop')
+    await flushPromises()
+
+    expect(api.session.reorder).toHaveBeenCalledWith([c!.id, b!.id, a!.id, d!.id])
+  })
+
+  it('跨组拖拽不生效：起点与落点不在同一个组时不调 reorder', async () => {
+    const [a, b] = [
+      makeSession({ name: 'a', sortOrder: 1 }),
+      makeSession({ name: 'b', sortOrder: 2 }),
+    ]
+    const iot = makeTag({ name: 'iot', sortOrder: 1 })
+    const py = makeTag({ name: 'python', sortOrder: 2 })
+    useSessionsStore().sessions = [a!, b!]
+    const tags = useTagsStore()
+    tags.tags = [iot, py]
+    tags.sessionTags = [
+      { sessionId: a!.id, tagId: iot.id },
+      { sessionId: b!.id, tagId: py.id },
+    ]
+    const api = installFakeApi()
+    const wrapper = mount(SessionGroups)
+
+    const groups = wrapper.findAll('[data-test=group]')
+    await groups[0]!.find('[data-test=session-row]').trigger('dragstart')
+    await groups[1]!.find('[data-test=session-row]').trigger('drop')
+    await flushPromises()
+
+    expect(api.session.reorder).not.toHaveBeenCalled()
+  })
+
+  it('左栏正在搜索时行不可拖（组内只剩子集）', async () => {
+    const s = makeSession({ name: 'simba-api' })
+    useSessionsStore().sessions = [s]
+    installFakeApi()
+    const wrapper = mount(SessionGroups)
+    expect(wrapper.find('[data-test=session-row]').attributes('draggable')).toBe('true')
+
+    useFilterStore().setSearch('simba')
+    await nextTick()
+    expect(wrapper.find('[data-test=session-row]').attributes('draggable')).toBe('false')
+  })
+
+  it('reorder 失败时列表顶部显示红字，1.2 s 后消失', async () => {
+    vi.useFakeTimers()
+    const [a, b] = [
+      makeSession({ name: 'a', sortOrder: 1 }),
+      makeSession({ name: 'b', sortOrder: 2 }),
+    ]
+    useSessionsStore().sessions = [a!, b!]
+    installFakeApi({ session: { reorder: async () => Promise.reject(new Error('排序参数不对')) } })
+    const wrapper = mount(SessionGroups)
+
+    const rows = wrapper.findAll('[data-test=session-row]')
+    await rows[1]!.trigger('dragstart')
+    await rows[0]!.trigger('drop')
+    await flushPromises()
+    expect(wrapper.find('[data-test=groups-error]').text()).toBe('排序参数不对')
+
+    vi.advanceTimersByTime(1200)
+    await nextTick()
+    expect(wrapper.find('[data-test=groups-error]').exists()).toBe(false)
+    vi.useRealTimers()
+  })
 })

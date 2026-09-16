@@ -81,6 +81,7 @@ export interface IpcInvokeMap {
   'session:create': { args: [input: CreateSessionInput]; result: Session }
   'session:update': { args: [id: string, patch: SessionPatch]; result: Session } // 含 cwd / shell 时：有程序在跑 reject，空闲先 kill 再改
   'session:remove': { args: [id: string]; result: void } // 同时 kill 其 pty
+  'session:reorder': { args: [ids: string[]]; result: void } // ids 必须是全部会话 id 的一个排列；按位置写 sortOrder 1..n
   'session:pick-directory': { args: []; result: string | null }
   'settings:get': { args: []; result: Settings }
   'settings:update': { args: [patch: SettingsPatch]; result: Settings } // 补丁合并，返回全量

@@ -6,8 +6,10 @@ import { makeSession } from '../fakeApi'
 describe('SessionRow', () => {
   const session = makeSession({ name: 'simba-api', cwd: 'D:\\Projects\\simba\\api' })
 
-  function mountRow() {
-    return mount(SessionRow, { props: { session, active: false, tags: [], peer: false } })
+  function mountRow(canDrag = true) {
+    return mount(SessionRow, {
+      props: { session, active: false, tags: [], peer: false, canDrag },
+    })
   }
 
   it('根元素不是 button 但可键盘操作：click / Enter / Space 都发出 select', async () => {
@@ -47,5 +49,29 @@ describe('SessionRow', () => {
 
     expect(event.defaultPrevented).toBe(true)
     expect(wrapper.emitted('menu')).toEqual([[session.id, 40, 50]])
+  })
+
+  it('整行可拖：draggable 为真，dragstart / drop / dragend 各上抛一次（不加拖拽手柄）', async () => {
+    const wrapper = mountRow()
+    const row = wrapper.find('[data-test=session-row]')
+
+    expect(row.attributes('draggable')).toBe('true')
+    expect(wrapper.find('[data-test=row-handle]').exists()).toBe(false)
+
+    await row.trigger('dragstart')
+    await row.trigger('drop')
+    await row.trigger('dragend')
+    expect(wrapper.emitted('dragStart')).toEqual([[session.id]])
+    expect(wrapper.emitted('dropOn')).toEqual([[session.id]])
+    expect(wrapper.emitted('dragEnd')).toEqual([[]])
+  })
+
+  it('canDrag 为假（左栏正在搜索）时整行不可拖，但单击照常选中', async () => {
+    const wrapper = mountRow(false)
+    const row = wrapper.find('[data-test=session-row]')
+
+    expect(row.attributes('draggable')).toBe('false')
+    await row.trigger('click')
+    expect(wrapper.emitted('select')).toEqual([[session.id]])
   })
 })

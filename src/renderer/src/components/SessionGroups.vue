@@ -4,11 +4,12 @@
 // 组内无会话显示「这个标签下还没有会话」，整体无匹配显示「没有匹配的会话…」。
 // 移除会话的唯一入口在这里（右键菜单「移除会话」）：confirm 后只调 sessions.remove，关标签页靠主进程广播；
 // 右键菜单唯一实例挂在这里（usePopover 管点外部关闭），「编辑会话」上抛 edit 由 App 开弹窗
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import SessionMenu from './SessionMenu.vue'
 import SessionRow from './SessionRow.vue'
 import { usePopover } from '../composables/usePopover'
-import { buildSessionGroups } from '../composables/useSessionGroups'
+import { buildSessionGroups, type SessionGroup } from '../composables/useSessionGroups'
+import { reorderWithinGroup } from '../composables/sessionOrder'
 import { useFilterStore } from '../stores/filter'
 import { useSessionsStore } from '../stores/sessions'
 import { useTagsStore } from '../stores/tags'
@@ -74,10 +75,63 @@ const groups = computed(() =>
 )
 // 与原型一致：没有分组或所有分组都为空 → 整体空态
 const isEmpty = computed(() => groups.value.every((g) => g.sessions.length === 0))
+
+// ---- 组内拖拽排序 ----
+
+const ERROR_FLASH_MS = 1200
+const error = ref('')
+let errorTimer: ReturnType<typeof setTimeout> | null = null
+function flashError(message: string): void {
+  error.value = message
+  if (errorTimer) clearTimeout(errorTimer)
+  errorTimer = setTimeout(() => {
+    error.value = ''
+  }, ERROR_FLASH_MS)
+}
+onUnmounted(() => {
+  if (errorTimer) clearTimeout(errorTimer)
+})
+
+// 搜索时组内只剩子集，拖了容易误以为改的是完整顺序 —— 直接禁用
+const canDrag = computed(() => !filter.search.trim())
+
+/** 拖拽起点：会话 id + 它所在的分组 key；跨组落点一律忽略（加减标签只走胶囊 / 「+ 标签」/ 管理标签） */
+let dragFrom: { id: string; groupKey: string } | null = null
+
+function onDragStart(groupKey: string, id: string): void {
+  dragFrom = { id, groupKey }
+}
+
+/** 拖到组头或列表空白处松手不会触发 drop，靠 dragend 复位，避免下次拖拽用到脏起点 */
+function onDragEnd(): void {
+  dragFrom = null
+}
+
+/**
+ * 同组内落点：把该组占据的那些全局槽位按新的组内顺序填回，组外会话一个不动（见 sessionOrder.ts）。
+ * 不做本地乐观重排，顺序以主进程 session:changed 广播为准。
+ */
+function onDrop(group: SessionGroup, targetId: string): void {
+  const from = dragFrom
+  dragFrom = null
+  if (!from || from.groupKey !== group.key || from.id === targetId) return
+  const groupIds = group.sessions.map((s) => s.id)
+  const allIds = [...sessions.sessions].sort((a, b) => a.sortOrder - b.sortOrder).map((s) => s.id)
+  const next = reorderWithinGroup(
+    allIds,
+    groupIds,
+    groupIds.indexOf(from.id),
+    groupIds.indexOf(targetId),
+  )
+  void sessions
+    .reorder(next)
+    .catch((err) => flashError(err instanceof Error ? err.message : String(err)))
+}
 </script>
 
 <template>
   <div class="groups">
+    <p v-if="error" class="groups-error" data-test="groups-error">{{ error }}</p>
     <div v-if="isEmpty" class="empty-side">没有匹配的会话。换个标签组合，或新建一个会话。</div>
     <template v-else>
       <div
@@ -101,10 +155,14 @@ const isEmpty = computed(() => groups.value.every((g) => g.sessions.length === 0
             :active="s.id === workspace.activeId"
             :tags="tags.visibleTagsOf(s.id)"
             :peer="s.id === workspace.hoveredId"
+            :can-drag="canDrag"
             @select="emit('select', $event)"
             @hover="workspace.setHovered($event)"
             @leave="onLeave"
             @menu="onMenu"
+            @drag-start="onDragStart(g.key, $event)"
+            @drop-on="onDrop(g, $event)"
+            @drag-end="onDragEnd"
           />
           <div v-if="g.sessions.length === 0" class="none" data-test="group-empty">
             这个标签下还没有会话
@@ -182,6 +240,12 @@ const isEmpty = computed(() => groups.value.every((g) => g.sessions.length === 0
   padding: 4px 22px;
   font-size: 12px;
   color: var(--muted);
+}
+.groups-error {
+  margin: 0 0 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+  color: var(--danger, #d14343);
 }
 .empty-side {
   padding: 24px 12px;

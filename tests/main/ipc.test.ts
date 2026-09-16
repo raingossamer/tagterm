@@ -369,6 +369,25 @@ describe('IPC 接口层', () => {
     await expect(ipc.invoke('session-tag:detach', '', 'y')).rejects.toThrow('会话 id 不能为空')
   })
 
+  it('session:reorder 按 ids 重写 sortOrder 为 1..n；非字符串数组在接口层被拒绝', async () => {
+    const a = (await ipc.invoke('session:create', { cwd: process.cwd(), name: 'a' })) as Session
+    const b = (await ipc.invoke('session:create', { cwd: process.cwd(), name: 'b' })) as Session
+
+    await ipc.invoke('session:reorder', [b.id, a.id])
+    const list = (await ipc.invoke('session:list')) as Session[]
+    expect(list.map((s) => [s.name, s.sortOrder])).toEqual([
+      ['b', 1],
+      ['a', 2],
+    ])
+
+    // 类型守卫在接口层，排列是否合法交给 SessionStore 判定
+    await expect(ipc.invoke('session:reorder', 'nope')).rejects.toThrow('会话 id 列表格式不正确')
+    await expect(ipc.invoke('session:reorder', ['a', ''])).rejects.toThrow('会话 id 列表格式不正确')
+    await expect(ipc.invoke('session:reorder', [a.id])).rejects.toThrow(
+      '排序参数必须是全部会话 id 的一个排列',
+    )
+  })
+
   it('session:remove 级联删掉该会话的标签关联（kill pty → 删会话 → 删关联）', async () => {
     const s = (await ipc.invoke('session:create', { cwd: process.cwd() })) as Session
     const a = (await ipc.invoke('tag:create', 'simba')) as Tag

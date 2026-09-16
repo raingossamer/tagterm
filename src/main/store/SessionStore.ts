@@ -83,6 +83,25 @@ export class SessionStore {
     return next
   }
 
+  /**
+   * 按 ids 顺序整体重排 sortOrder 为 1..n；ids 必须是当前全部会话 id 的一个排列，否则拒绝且不改动。
+   * 排列校验在此、不在接口层：只有本模块认识「全部会话」。与 TagStore.reorder 同形。
+   */
+  async reorder(ids: readonly string[]): Promise<void> {
+    const current = new Set(this.sessions.map((s) => s.id))
+    const given = new Set(ids)
+    if (
+      ids.length !== this.sessions.length ||
+      given.size !== ids.length ||
+      ![...given].every((id) => current.has(id))
+    ) {
+      throw new Error('排序参数必须是全部会话 id 的一个排列')
+    }
+    const byId = new Map(this.sessions.map((s) => [s.id, s]))
+    this.sessions = ids.map((id, i) => ({ ...byId.get(id)!, sortOrder: i + 1 }))
+    await this.save()
+  }
+
   /** 找不到即抛错（message 面向用户可读） */
   get(id: string): Session {
     const session = this.sessions.find((s) => s.id === id)

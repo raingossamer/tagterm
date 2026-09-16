@@ -77,6 +77,11 @@ const SMOKE_SCRIPT = `(async () => {
   const s2AliveAfterClose = await api.pty.isAlive(s2.id)
   const hostsAfterClose = ($('[data-test=terminal-pane]')?.children ?? []).length
 
+  // 终端右侧滚动条：滑块透明（用户要求取消，滑轮照常）。xterm 是 VS Code 式自绘滚动条
+  const sliderEl = $('[data-test=terminal-pane] .xterm-scrollable-element > .scrollbar > .slider')
+  const sliderBg = sliderEl ? getComputedStyle(sliderEl).backgroundColor : null
+  const sliderHidden = sliderBg === 'rgba(0, 0, 0, 0)' || sliderBg === 'transparent'
+
   // 唤起区、侧栏收起
   const launchers = $$('[data-test=launch-cmd]').map((b) => b.textContent.trim())
   $('[data-test=tab-side]')?.click()
@@ -149,6 +154,20 @@ const SMOKE_SCRIPT = `(async () => {
   // 还原顺序，避免影响后续断言
   await api.tag.reorder([tagA.id, tagB.id])
   await waitFor(() => groupTitles()[0] === 'smoke-标签A')
+
+  // 会话组内拖拽排序：组内第二行拖到第一行 → 两行互换（槽位置换，全局顺序跟着变）
+  const rowNames = () => $$('[data-test=session-row]').map((r) => r.querySelector('.name')?.textContent)
+  const orderedIds = async () => (await api.session.list()).slice().sort((a, b) => a.sortOrder - b.sortOrder).map((s) => s.id)
+  const idsBeforeDrag = await orderedIds()
+  const namesBeforeDrag = rowNames()
+  const dragRows = $$('[data-test=session-row]')
+  dragRows[1]?.dispatchEvent(new DragEvent('dragstart', { bubbles: true }))
+  dragRows[0]?.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true }))
+  const dragApplied = await waitFor(() => rowNames()[0] === namesBeforeDrag[1])
+  const namesAfterDrag = rowNames()
+  const globalOrderChanged = (await orderedIds()).join() !== idsBeforeDrag.join()
+  await api.session.reorder(idsBeforeDrag) // 还原，避免影响后续断言
+  await waitFor(() => rowNames()[0] === namesBeforeDrag[0])
 
   // 启用 / 禁用左栏展示：隐藏标签 = 把这一组会话整体从左栏收起来（不是落到「未打标签」），会话本身不丢。
   // 此刻 smoke-临时 与 smoke-2 都只挂着 A（B 已在路径条那步摘掉）
@@ -227,6 +246,8 @@ const SMOKE_SCRIPT = `(async () => {
     terminal: { gotPrompt1, gotEcho, gotRightClickPaste, gotPrompt2, hosts: hosts.length, visibleHosts, hasXterm: !!$('[data-test=terminal-pane] .xterm'), hasCanvas: !!$('[data-test=terminal-pane] canvas'), dataEvents },
     tabs: { tabNames, activeTab, activeAfterSwitch, tabsAfterClose, s2AliveAfterClose, hostsAfterClose },
     strip: { launchers, sideHidden },
+    scrollbar: { sliderBg, sliderHidden },
+    sessionDrag: { namesBeforeDrag, dragApplied, namesAfterDrag, globalOrderChanged },
     tags: {
       gotTagDot, tagDotColor, groupsTagged, s2Tooltip, chipCounts, groupsAny, groupsAll, rowsAll, groupsCleared,
       rowsWhenSearching, emptyText, pillsBefore, pillRemoved, popOptions, popClosed, tagDotCleared, groupsAfterRemove,
