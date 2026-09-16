@@ -33,6 +33,8 @@ export interface TagTermApi {
     create(input: CreateSessionInput): Promise<Session>
     update(id: string, patch: SessionPatch): Promise<Session>
     remove(id: string): Promise<void>
+    /** 按 ids 顺序整体重排；ids 必须是全部会话 id 的一个排列 */
+    reorder(ids: string[]): Promise<void>
     pickDirectory(): Promise<string | null>
     onChanged(cb: (sessions: Session[]) => void): Unsubscribe
   }

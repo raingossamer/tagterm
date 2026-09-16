@@ -51,6 +51,7 @@ export function createFakeApi(overrides: Overrides = {}): TagTermApi {
       create: vi.fn(async (input) => makeSession({ cwd: input.cwd, name: input.name ?? 'new' })),
       update: vi.fn(async (id, patch) => makeSession({ id, ...patch })),
       remove: vi.fn(async () => {}),
+      reorder: vi.fn(async () => {}),
       pickDirectory: vi.fn(async () => null),
       onChanged: vi.fn(() => () => {}),
       ...overrides.session,

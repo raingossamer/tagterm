@@ -11,6 +11,13 @@ export const CAMPBELL_THEME: ITheme = {
   foreground: '#CCCCCC',
   cursor: '#FFFFFF',
   selectionBackground: '#FFFFFF40',
+  // 滚动条滑块三态全透明：用户要求取消右侧滚动条，滚轮滚就够了（2026-09-16 反馈）。
+  // 只藏滑块、不动 scrollback —— FitAddon 的 proposeDimensions 里写死
+  // `scrollback === 0 ? 0 : (overviewRuler?.width || 14)`，那 14px 空档只有关掉整个回滚缓冲才能拿回来，
+  // 而关掉就再也滚不上去了，与诉求相悖。改颜色零布局变化、滚轮与 scrollOnUserInput 全不受影响
+  scrollbarSliderBackground: '#00000000',
+  scrollbarSliderHoverBackground: '#00000000',
+  scrollbarSliderActiveBackground: '#00000000',
   black: '#0C0C0C',
   red: '#C50F1F',
   green: '#13A10E',

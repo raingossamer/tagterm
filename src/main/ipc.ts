@@ -115,6 +115,8 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
     await deps.store.remove(sessionId)
     await deps.tags.detachAllOf(sessionId)
   })
+  // 排列是否合法（缺 / 多 / 重复 / 不存在）由 SessionStore 判定，它才认识全部会话；接口层只守卫类型
+  handle('session:reorder', (ids) => deps.store.reorder(assertSessionIds(ids)))
   handle('session:pick-directory', () => deps.pickDirectory())
 
   handle('settings:get', () => deps.settings.get())
@@ -315,6 +317,13 @@ function assertTagPatch(patch: unknown): TagPatch {
     out.hidden = o.hidden
   }
   return out
+}
+
+function assertSessionIds(ids: unknown): string[] {
+  if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string' || !id)) {
+    throw new Error('会话 id 列表格式不正确')
+  }
+  return ids as string[]
 }
 
 function assertTagIds(ids: unknown): string[] {

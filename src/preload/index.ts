@@ -51,6 +51,7 @@ const api: TagTermApi = {
     create: (input) => invoke('session:create', input),
     update: (id, patch) => invoke('session:update', id, patch),
     remove: (id) => invoke('session:remove', id),
+    reorder: (ids) => invoke('session:reorder', ids),
     pickDirectory: () => invoke('session:pick-directory'),
     onChanged: (cb) => subscribe('session:changed', cb),
   },
