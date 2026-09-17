@@ -3,7 +3,8 @@
  * （真实会话新建 → 打开两个终端 → 切换 / 关闭标签页 → 中文 echo 往返 → 右键 / Ctrl+V 粘贴 →
  * 标签链路：建标签 / 挂标签 / 分组与副本 / 任一 / 全部 / 搜索 / 路径条胶囊与弹出层 / 删标签 →
  * 右键菜单编辑会话改名 / 移除会话 → 真实 Ctrl+K 聚焦搜索 → 设置弹窗四段导航与全局背景往返），
- * 再在主进程侧核查「关窗只隐藏、pty 存活、托盘恢复」与 tags.json 落盘，最后清理会话并走正常退出路径（before-quit killAll）。
+ * 再在主进程侧核查「关窗只隐藏、pty 存活、托盘恢复」、「结束 pty 后整页重载 → 标签页与当前页恢复、只有当前页重新 spawn」
+ * 与 tags.json 落盘，最后清理会话并走正常退出路径（before-quit killAll）。
  * 以 JSON 打印到 stdout。生产运行不触发。
  */
 import { app, type BrowserWindow } from 'electron'
@@ -401,6 +402,59 @@ const SETTINGS_SCRIPT = (pngPath: string): string => `(async () => {
   return { modalOpened, gearOpened, navLabels, appearanceShown, aboutVersion, autoLaunch, bgShown, bgStyle, panelOpacity, panelBg, panelsTranslucent, thumbShown, bgName, bgCleared, bgRestored, bgRemoved, panelOpacityCleared, updateSettled, updateStatus, updateText, download, modalClosed }
 })()`
 
+/** 恢复标签页准备：再开两个会话并打开终端，把当前页放中间（标签页 [s1, r3, r4]，当前页 r3）；返回 id 与 localStorage 记下的内容 */
+const RESTORE_PREPARE_SCRIPT = `(async () => {
+  const api = window.tagterm
+  const $ = (sel) => document.querySelector(sel)
+  const $$ = (sel) => [...document.querySelectorAll(sel)]
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  const waitFor = async (cond, timeoutMs = 8000) => {
+    const start = Date.now()
+    while (!cond()) {
+      if (Date.now() - start > timeoutMs) return false
+      await sleep(50)
+    }
+    return true
+  }
+  const rowOf = (name) => $$('[data-test=session-row]').find((r) => r.textContent.includes(name))
+  const tabNames = () => $$('[data-test=tab-name]').map((t) => t.textContent)
+  const activeTab = () => $('[data-test=tab].active [data-test=tab-name]')?.textContent ?? null
+  const r3 = await api.session.create({ cwd: 'C:\\\\Windows', name: 'smoke-r3' })
+  const r4 = await api.session.create({ cwd: 'C:\\\\Windows', name: 'smoke-r4' })
+  await waitFor(() => !!rowOf('smoke-r4'))
+  rowOf('smoke-r3')?.click()
+  await waitFor(() => activeTab() === 'smoke-r3')
+  rowOf('smoke-r4')?.click()
+  await waitFor(() => activeTab() === 'smoke-r4')
+  $$('[data-test=tab]').find((t) => t.textContent.includes('smoke-r3'))?.click()
+  const prepared = await waitFor(() => activeTab() === 'smoke-r3')
+  await sleep(300)
+  return { ids: [r3.id, r4.id], prepared, tabsBefore: tabNames(), activeBefore: activeTab(), stored: localStorage.getItem('tagterm.openTabs') }
+})()`
+
+/** 整页重载后：等标签页恢复，返回标签页、当前页与终端是否就位 */
+const RESTORE_CHECK_SCRIPT = `(async () => {
+  const $ = (sel) => document.querySelector(sel)
+  const $$ = (sel) => [...document.querySelectorAll(sel)]
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  const waitFor = async (cond, timeoutMs = 8000) => {
+    const start = Date.now()
+    while (!cond()) {
+      if (Date.now() - start > timeoutMs) return false
+      await sleep(50)
+    }
+    return true
+  }
+  const restored = await waitFor(() => $$('[data-test=tab]').length >= 3 && !!$('[data-test=tab].active'))
+  await sleep(500)
+  return {
+    restored,
+    tabsAfter: $$('[data-test=tab-name]').map((t) => t.textContent),
+    activeAfter: $('[data-test=tab].active [data-test=tab-name]')?.textContent ?? null,
+    hostsAfter: ($('[data-test=terminal-pane]')?.children ?? []).length,
+  }
+})()`
+
 /** 1×1 PNG，供背景图往返测试 */
 const PNG_1X1 = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
@@ -517,6 +571,35 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
       await sleep(200)
       Object.assign(lifecycle, { visibleAfterShow: win.isVisible() })
 
+      // 恢复标签页：再开两个会话把当前页放中间 → 结束三条 pty（模拟退出）→ 整页重载（模拟重开）
+      //   → 标签页顺序与当前页照旧，pty 只有当前页那一条重新 spawn，其余标签页点到才起
+      const prepare = (await withTimeout(
+        win.webContents.executeJavaScript(RESTORE_PREPARE_SCRIPT),
+        30000,
+        '恢复标签页准备',
+      )) as { ids: string[] } & Record<string, unknown>
+      const restoreIds = [sessionIds[0]!, ...prepare.ids]
+      for (const id of restoreIds) await deps.pty.killAndWait(id)
+      const aliveBeforeReload = restoreIds.filter((id) => deps.pty.has(id)).length
+      const reloaded = new Promise<void>((r) => win.webContents.once('did-finish-load', () => r()))
+      win.webContents.reload()
+      await reloaded
+      await sleep(800)
+      const check = (await withTimeout(
+        win.webContents.executeJavaScript(RESTORE_CHECK_SCRIPT),
+        30000,
+        '恢复标签页核查',
+      )) as Record<string, unknown>
+      const aliveAfterReload = restoreIds.filter((id) => deps.pty.has(id))
+      const restore = {
+        ...prepare,
+        ...check,
+        aliveBeforeReload,
+        aliveAfterReload: aliveAfterReload.length,
+        onlyActiveSpawned: aliveAfterReload.length === 1 && aliveAfterReload[0] === prepare.ids[0],
+      }
+      sessionIds.push(...prepare.ids)
+
       // 清理烟测会话（正常退出路径由 before-quit killAll 结束 pty）；tags.json 应已落盘且只剩空集合
       for (const id of sessionIds) await deps.store.remove(id)
       const remaining = deps.store.list().length
@@ -534,6 +617,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
             settings,
             sidebar,
             lifecycle,
+            restore,
             remaining,
             tagsFile,
             consoleErrors,

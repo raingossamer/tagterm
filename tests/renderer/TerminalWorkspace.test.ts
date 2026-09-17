@@ -334,6 +334,26 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
     expect(terminals[1]!.focusCount).toBe(2)
   })
 
+  it('16 restoreTabs：只填标签页（去重、忽略未知 id、保持传入顺序），当前页仍为空、不建实例、不调 pty.open；emit 一次快照；空数组无变化', async () => {
+    const seen: WorkspaceSnapshot[] = []
+    core.subscribe((s) => seen.push(s))
+
+    core.restoreTabs([b.id, a.id, 'ghost', a.id])
+    expect(core.snapshot()).toEqual({ openTabs: [b.id, a.id], activeId: null, runtime: {} })
+    expect(terminals).toHaveLength(0)
+    expect(pty.opens).toEqual([])
+    expect(seen).toHaveLength(1)
+
+    core.restoreTabs([])
+    expect(core.snapshot().openTabs).toEqual([b.id, a.id])
+
+    // 恢复后选中其中一个：只有它 spawn，标签页顺序不变
+    await core.select(a.id)
+    expect(core.snapshot()).toMatchObject({ openTabs: [b.id, a.id], activeId: a.id })
+    expect(pty.opens.map((o) => o.sessionId)).toEqual([a.id])
+    expect(terminals).toHaveLength(1)
+  })
+
   it('13 subscribe 每次变化收到新快照对象且等于 snapshot()，退订后不再收到；dispose 退订 pty、销毁全部实例、清空记录', async () => {
     const seen: WorkspaceSnapshot[] = []
     const off = core.subscribe((s) => seen.push(s))
