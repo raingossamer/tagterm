@@ -58,7 +58,7 @@ export interface IpcDeps {
   pickImage: () => Promise<string | null>
   /** 本机可用 shell（启动时探测） */
   listShells: () => ShellKind[]
-  /** shell 进程有没有子进程（processTree.hasChildProcesses；测试注入假实现） */
+  /** shell 进程有没有子进程（装配层注入 ProcessTreeProbe.hasChildren；测试注入假实现） */
   hasChildProcesses: (pid: number) => Promise<boolean>
   /** 系统登录项读写（平台层注入，未打包时 get 恒 false、set 抛错） */
   getAutoLaunch: () => AutoLaunchStatus

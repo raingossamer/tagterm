@@ -46,4 +46,27 @@ describe('AgentDetector（运行时状态机）', () => {
     expect(removed).toEqual(['s1', 's2'])
     expect(changes).toHaveLength(2)
   })
+
+  it('进程树快照：写入 agent（变化才回调）；agent 消失 → idle 并清 pendingHint；快照里没有的会话不动；未知会话忽略', () => {
+    detector.ptySpawned('s1')
+    detector.ptySpawned('s2')
+    changes.length = 0
+
+    detector.processSnapshot(
+      new Map([
+        ['s1', 'claude'],
+        ['ghost', 'pi'],
+      ]),
+    )
+    expect(changes).toEqual([{ sessionId: 's1', alive: true, agent: 'claude', status: 'idle' }])
+    expect(detector.list().find((r) => r.sessionId === 's2')?.agent).toBeNull()
+
+    detector.processSnapshot(new Map([['s1', 'claude']]))
+    expect(changes).toHaveLength(1)
+
+    detector.processSnapshot(new Map([['s1', null]]))
+    expect(changes).toHaveLength(2)
+    expect(changes[1]).toEqual({ sessionId: 's1', alive: true, agent: null, status: 'idle' })
+    expect(changes[1]).not.toHaveProperty('pendingHint')
+  })
 })

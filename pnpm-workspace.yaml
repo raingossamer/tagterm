@@ -4,11 +4,13 @@
 # - esbuild：postinstall 校验 / 安装平台二进制（平台包 @esbuild/win32-x64 已随可选依赖装好），放行无害
 # - node-pty：直接加载包内 prebuilds/win32-x64 的 N-API 预编译产物，不做 node-gyp rebuild，明确禁止
 # - electron-winstaller：Squirrel 安装器（本项目用 nsis），其 postinstall 会下载 Squirrel 二进制，明确禁止
+# - @vscode/windows-process-tree：包内自带 build/Release/windows_process_tree.node（N-API 预编译，M3 进程树），不做 node-gyp rebuild，明确禁止
 allowBuilds:
   electron: true
   esbuild: true
   node-pty: false
   electron-winstaller: false
+  '@vscode/windows-process-tree': false
 
 # app-builder-lib 26.15.3 声明 @electron/get ^3.0.0 但代码用到 3.1.0 才有的 ElectronDownloadCacheMode，
 # pnpm 会给它解析到 3.0.0 导致打包时 "Cannot read properties of undefined (reading 'ReadWrite')"

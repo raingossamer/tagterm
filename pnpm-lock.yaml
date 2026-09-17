@@ -11,6 +11,9 @@ importers:
 
   .:
     dependencies:
+      '@vscode/windows-process-tree':
+        specifier: 0.8.0
+        version: 0.8.0
       '@xterm/addon-fit':
         specifier: 0.11.0
         version: 0.11.0
@@ -827,6 +830,9 @@ packages:
 
   '@volar/typescript@2.4.28':
     resolution: {integrity: sha512-Ja6yvWrbis2QtN4ClAKreeUZPVYMARDYZl9LMEv1iQ1QdepB6wn0jTRxA9MftYmYa4DQ4k/DaSZpFPUfxl8giw==}
+
+  '@vscode/windows-process-tree@0.8.0':
+    resolution: {integrity: sha512-TI+h2GRwX+igD/YYJMQQVAFcsCNSg7Te2yYxQpKMzwto5RsJ8d2KKgOeur/p/6sAOQwZvopiTDOClyTHEn9MhQ==}
 
   '@vue/compiler-core@3.5.42':
     resolution: {integrity: sha512-2Ye1ilMtKXxl8qZUrQ5j0CdgenFp/HFQmta6rfRyfEsTG69L6Wk+tWuNoHYHMx9E8tF2Slvdg1FuwDvAXdy1LQ==}
@@ -2874,6 +2880,10 @@ snapshots:
       '@volar/language-core': 2.4.28
       path-browserify: 1.0.1
       vscode-uri: 3.2.0
+
+  '@vscode/windows-process-tree@0.8.0':
+    dependencies:
+      node-addon-api: 7.1.0
 
   '@vue/compiler-core@3.5.42':
     dependencies:
