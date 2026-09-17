@@ -28,6 +28,7 @@ import {
   type TagColor,
 } from '@shared/models'
 import type { PtyManager } from './pty/PtyManager'
+import type { AgentDetector } from './agent/AgentDetector'
 import type { SessionStore } from './store/SessionStore'
 import type { SettingsStore } from './store/SettingsStore'
 import type { TagStore } from './store/TagStore'
@@ -48,6 +49,7 @@ export interface IpcDeps {
   tags: TagStore
   updater: Updater
   pty: PtyManager
+  agent: AgentDetector
   /** 数据目录（设置「关于」显示） */
   dataDir: string
   /** 系统目录选择框（平台层注入，服务层不 import electron） */
@@ -108,12 +110,14 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
     }
     return deps.store.update(sessionId, p)
   })
-  // 跨 store 级联在编排层顺序执行：结束 pty → 删会话 → 删其标签关联（两次写、两次广播）
+  // 跨 store 级联在编排层顺序执行：结束 pty → 删会话 → 删其标签关联（两次写、两次广播）→ 清运行时记录
+  //（pty 退出事件也会清，但没开过终端的会话只能靠这里）
   handle('session:remove', async (id) => {
     const sessionId = assertId(id)
     deps.pty.kill(sessionId)
     await deps.store.remove(sessionId)
     await deps.tags.detachAllOf(sessionId)
+    deps.agent.sessionRemoved(sessionId)
   })
   // 排列是否合法（缺 / 多 / 重复 / 不存在）由 SessionStore 判定，它才认识全部会话；接口层只守卫类型
   handle('session:reorder', (ids) => deps.store.reorder(assertSessionIds(ids)))
@@ -143,6 +147,9 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   handle('session-tag:detach', (sessionId, tagId) =>
     deps.tags.detach(assertId(sessionId), assertTagId(tagId)),
   )
+
+  handle('agent:list', () => deps.agent.list())
+  handle('agent:set-viewed', (id) => deps.agent.setViewed(assertViewedId(id)))
 
   handle('update:get-status', () => deps.updater.status())
   handle('update:check', () => deps.updater.check())
@@ -184,6 +191,12 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
 
 function assertId(id: unknown): string {
   if (typeof id !== 'string' || !id) throw new Error('会话 id 不能为空')
+  return id
+}
+
+function assertViewedId(id: unknown): string | null {
+  if (id === null) return null
+  if (typeof id !== 'string' || !id) throw new Error('会话 id 必须是非空字符串或 null')
   return id
 }
 

@@ -13,7 +13,15 @@ import type {
   TagListResult,
   TagPatch,
 } from './ipc'
-import type { Session, Settings, ShellKind, Tag, TagColor, UpdateStatus } from './models'
+import type {
+  Session,
+  SessionRuntime,
+  Settings,
+  ShellKind,
+  Tag,
+  TagColor,
+  UpdateStatus,
+} from './models'
 
 export type Unsubscribe = () => void
 
@@ -61,6 +69,12 @@ export interface TagTermApi {
     attach(sessionId: string, tagId: string): Promise<void>
     detach(sessionId: string, tagId: string): Promise<void>
     onChanged(cb: (result: TagListResult) => void): Unsubscribe
+  }
+  agent: {
+    list(): Promise<SessionRuntime[]>
+    /** 正被查看的会话（不可见或失焦发 null） */
+    setViewed(sessionId: string | null): Promise<void>
+    onStatus(cb: (runtime: SessionRuntime) => void): Unsubscribe
   }
   pty: {
     open(sessionId: string, size: PtySize): Promise<PtyOpenResult>

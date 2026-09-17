@@ -13,6 +13,8 @@ export interface PtyManagerDeps {
   /** 已合并的输出批次 */
   onData: (sessionId: string, data: string) => void
   onExit: (e: PtyExitEvent) => void
+  /** 新 spawn 了一条 pty（装配层把它接给 AgentDetector 建运行时记录） */
+  onSpawn?: (sessionId: string, pid: number) => void
   /** 文件存在性谓词（装配层传 existsSync）：spawn 前把 shell 名解析成绝对路径要用，见 shellArgs.resolveShellFile */
   isFile: (fullPath: string) => boolean
 }
@@ -65,6 +67,7 @@ export class PtyManager {
     console.log(
       `[pty] spawn session=${sessionId} pid=${pty.pid} shell=${opts.shell} file=${spec.file} cwd=${opts.cwd}`,
     )
+    this.deps.onSpawn?.(sessionId, pty.pid)
     return { pid: pty.pid }
   }
 

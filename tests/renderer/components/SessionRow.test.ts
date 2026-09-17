@@ -12,6 +12,14 @@ describe('SessionRow', () => {
     })
   }
 
+  it('状态点按 status prop 加类名，缺省 idle', () => {
+    expect(mountRow().find('.dot').classes()).toContain('idle')
+    const wrapper = mount(SessionRow, {
+      props: { session, active: false, tags: [], peer: false, canDrag: true, status: 'working' },
+    })
+    expect(wrapper.find('.dot').classes()).toContain('working')
+  })
+
   it('根元素不是 button 但可键盘操作：click / Enter / Space 都发出 select', async () => {
     const wrapper = mountRow()
     const row = wrapper.find('[data-test=session-row]')

@@ -11,9 +11,9 @@ import type { TagTermApi, Unsubscribe } from '@shared/api'
 import type { TerminalFactory } from './TerminalInstance'
 import { TerminalPool } from './TerminalPool'
 
-/** 每会话运行态：无记录 = 没有终端实例（从未打开，或已移除） */
+/** 每会话 pty 运行态：无记录 = 没有终端实例（从未打开，或已移除）。与 shared 的 SessionRuntime（M3 agent 状态）是两回事 */
 export type PtyPhase = 'opening' | 'running' | 'exited'
-export interface SessionRuntime {
+export interface PtyRuntime {
   phase: PtyPhase
   exitCode?: number // exited 且由 pty:exit 触发时有值；open 失败导致的 exited 无值
 }
@@ -22,7 +22,7 @@ export interface SessionRuntime {
 export interface WorkspaceSnapshot {
   readonly openTabs: readonly string[]
   readonly activeId: string | null
-  readonly runtime: Readonly<Record<string, SessionRuntime>>
+  readonly runtime: Readonly<Record<string, PtyRuntime>>
 }
 
 /** pty 端口 = window.tagterm.pty 的结构子集；生产直接传 window.tagterm.pty，测试传剧本式 FakePty */
@@ -44,7 +44,7 @@ export class TerminalWorkspace {
   private sessions = new Map<string, Session>()
   private openTabs: string[] = []
   private activeId: string | null = null
-  private readonly runtime = new Map<string, SessionRuntime>()
+  private readonly runtime = new Map<string, PtyRuntime>()
   /** 每会话当前 pty 的 pid：退出事件靠它认领 */
   private readonly pids = new Map<string, number>()
   /** 重开期间被替换掉的那条 pty 的 pid：它的退出事件迟到了也只认成「上一条」，直接丢弃 */

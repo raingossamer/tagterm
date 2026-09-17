@@ -6,6 +6,7 @@ import type {
   AppBackground,
   LaunchCommand,
   Session,
+  SessionRuntime,
   SessionTag,
   Settings,
   ShellKind,
@@ -101,6 +102,9 @@ export interface IpcInvokeMap {
   'pty:resize': { args: [sessionId: string, size: PtySize]; result: void }
   'pty:kill': { args: [sessionId: string]; result: void }
   'pty:is-alive': { args: [sessionId: string]; result: boolean }
+  // ---- agent 状态（M3）----
+  'agent:list': { args: []; result: SessionRuntime[] } // 全部会话的运行时记录（启动时镜像）
+  'agent:set-viewed': { args: [sessionId: string | null]; result: void } // 正被查看的会话：当前页变化 / 焦点 / 可见性变化时上报，不可见或失焦发 null
 }
 
 // 单向高频：ipcRenderer.send → ipcMain.on（键入不等待响应）
@@ -117,6 +121,7 @@ export interface IpcEventMap {
   'app:open-settings': [] // 托盘「设置」→ 渲染进程打开设置弹窗
   'update:status': [status: UpdateStatus] // 更新状态机每次变化
   'tag:changed': [result: TagListResult] // 标签或关联变更后全量广播（启动清理不广播）
+  'agent:status': [runtime: SessionRuntime] // 某会话运行时记录变化；记录删除时发 alive: false 的空闲记录
 }
 
 export type SendChannel = keyof IpcSendMap

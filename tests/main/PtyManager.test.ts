@@ -9,6 +9,7 @@ import { waitFor } from './helpers'
 describe('PtyManager', () => {
   const output: Record<string, string> = {}
   const exits: PtyExitEvent[] = []
+  const spawns: Array<[sessionId: string, pid: number]> = []
   let manager: PtyManager
 
   function createManager(): PtyManager {
@@ -17,6 +18,7 @@ describe('PtyManager', () => {
         output[id] = (output[id] ?? '') + data
       },
       onExit: (e) => exits.push(e),
+      onSpawn: (id, pid) => spawns.push([id, pid]),
       isFile: existsSync,
     })
     return manager
@@ -25,6 +27,7 @@ describe('PtyManager', () => {
   afterEach(() => {
     manager?.killAll()
     exits.length = 0
+    spawns.length = 0
     for (const k of Object.keys(output)) delete output[k]
   })
 
@@ -33,6 +36,7 @@ describe('PtyManager', () => {
     const { pid } = pm.spawn('s1', { cwd: process.cwd(), shell: 'cmd.exe', cols: 80, rows: 24 })
     expect(pid).toBeGreaterThan(0)
     expect(pm.has('s1')).toBe(true)
+    expect(spawns).toEqual([['s1', pid]]) // 装配层靠它把 spawn 接给 AgentDetector
 
     pm.write('s1', 'echo tagterm-ok\r')
     await waitFor(() => (output['s1'] ?? '').includes('tagterm-ok'))

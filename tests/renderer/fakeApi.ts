@@ -75,6 +75,12 @@ export function createFakeApi(overrides: Overrides = {}): TagTermApi {
       onChanged: vi.fn(() => () => {}),
       ...overrides.tag,
     },
+    agent: {
+      list: vi.fn(async () => []),
+      setViewed: vi.fn(async () => {}),
+      onStatus: vi.fn(() => () => {}),
+      ...overrides.agent,
+    },
     pty: {
       open: vi.fn(async () => ({ created: true, pid: 4242 })),
       write: vi.fn(),

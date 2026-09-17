@@ -78,6 +78,11 @@ const api: TagTermApi = {
     detach: (sessionId, tagId) => invoke('session-tag:detach', sessionId, tagId),
     onChanged: (cb) => subscribe('tag:changed', cb),
   },
+  agent: {
+    list: () => invoke('agent:list'),
+    setViewed: (sessionId) => invoke('agent:set-viewed', sessionId),
+    onStatus: (cb) => subscribe('agent:status', cb),
+  },
   pty: {
     open: (sessionId, size) => invoke('pty:open', sessionId, size),
     write: (sessionId, data) => send('pty:write', sessionId, data),

@@ -10,6 +10,7 @@ import SessionRow from './SessionRow.vue'
 import { usePopover } from '../composables/usePopover'
 import { buildSessionGroups, type SessionGroup } from '../composables/useSessionGroups'
 import { reorderWithinGroup } from '../composables/sessionOrder'
+import { useAgentStore } from '../stores/agent'
 import { useFilterStore } from '../stores/filter'
 import { useSessionsStore } from '../stores/sessions'
 import { useTagsStore } from '../stores/tags'
@@ -19,6 +20,7 @@ const sessions = useSessionsStore()
 const tags = useTagsStore()
 const filter = useFilterStore()
 const workspace = useWorkspaceStore()
+const agent = useAgentStore()
 const emit = defineEmits<{ select: [id: string]; edit: [id: string] }>()
 
 const menuEl = ref<HTMLElement | null>(null)
@@ -156,6 +158,7 @@ function onDrop(group: SessionGroup, targetId: string): void {
             :tags="tags.visibleTagsOf(s.id)"
             :peer="s.id === workspace.hoveredId"
             :can-drag="canDrag"
+            :status="agent.statusOf(s.id)"
             @select="emit('select', $event)"
             @hover="workspace.setHovered($event)"
             @leave="onLeave"
