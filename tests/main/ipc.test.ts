@@ -439,6 +439,8 @@ describe('IPC 接口层', () => {
     await ipc.invoke('session:remove', s.id)
     await waitFor(() => agentRemovals.length === 2)
     await expect(ipc.invoke('agent:list')).resolves.toEqual([])
+    // 等这条 pty 真的退出再结束用例，别让 afterEach 的 killAll 撞上正在退出的 pty
+    await waitFor(() => exits.filter((e) => e.sessionId === s.id).length === 2)
   })
 
   it('agent:report-output（单向）：合法报告按会话 shell 交给状态机（cwdNow 更新）；非法参数 / 未知会话静默忽略', async () => {

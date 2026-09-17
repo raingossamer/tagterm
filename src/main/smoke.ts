@@ -48,6 +48,9 @@ const SMOKE_SCRIPT = `(async () => {
   let dataEvents = 0
   api.pty.onData((id, d) => { outputs[id] = (outputs[id] ?? '') + d; dataEvents += 1 })
 
+  // 上一轮烟测中途出错会留下 smoke-* 会话（清理在最后）：先清掉，否则行序错位、后面的断言全偏
+  for (const s of await api.session.list()) if (s.name.startsWith('smoke-')) await api.session.remove(s.id)
+  await sleep(100)
   const before = await api.session.list()
   const s1 = await api.session.create({ cwd: 'C:\\\\Windows\\\\Temp', name: 'smoke-临时' })
   const s2 = await api.session.create({ cwd: 'C:\\\\Windows', name: 'smoke-2' })
@@ -575,7 +578,11 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
       const idleAfterPing = await pollChildren(false, 8000)
       const processTree = { shellPid, idleBefore, busyDuringPing, idleAfterPing }
 
-      // Ctrl+V 真实按键 → 浏览器原生 paste → xterm 粘贴 → pty 执行
+      // Ctrl+V 真实按键 → 浏览器原生 paste → xterm 粘贴 → pty 执行。
+      // 先把窗口抢回前台：navigator.clipboard 要求文档聚焦，渲染脚本跑了几十秒期间桌面上别的东西可能拿走了焦点
+      win.show()
+      win.focus()
+      await sleep(200)
       const focused = (await withTimeout(
         win.webContents.executeJavaScript(FOCUS_AND_PREPARE_CLIPBOARD),
         10000,
@@ -701,6 +708,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         return false
       }
       const clickTab = async (name: string): Promise<void> => {
+        win.focus() // 「正被查看」要求窗口聚焦
         await win.webContents.executeJavaScript(
           `[...document.querySelectorAll('[data-test=tab]')].find((t) => t.textContent.includes(${JSON.stringify(name)}))?.click()`,
         )
