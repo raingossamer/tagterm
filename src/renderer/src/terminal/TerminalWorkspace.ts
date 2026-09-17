@@ -142,6 +142,18 @@ export class TerminalWorkspace {
     this.emit()
   }
 
+  /**
+   * 启动时恢复上次的标签页：只把 id 按顺序填进标签页列表（去重、忽略不在会话列表里的 id），
+   * 不建实例、不 spawn、不改当前页；有变化才 emit 一次。要恢复的当前页由调用方随后 select（只有它会 spawn）
+   */
+  restoreTabs(ids: readonly string[]): void {
+    const next = [...this.openTabs]
+    for (const id of ids) if (this.sessions.has(id) && !next.includes(id)) next.push(id)
+    if (next.length === this.openTabs.length) return
+    this.openTabs = next
+    this.emit()
+  }
+
   /** 只动标签页：实例与 pty 都保留；关当前页激活 openTabs[min(i, len-1)]，全关则隐藏全部 */
   closeTab(id: string): void {
     if (!this.openTabs.includes(id)) return

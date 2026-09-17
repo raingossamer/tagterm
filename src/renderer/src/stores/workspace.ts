@@ -3,6 +3,8 @@
  * 标签页 / 当前页 / 每会话运行态来自核心的不可变快照（shallowRef 整体替换），写操作一律委托核心，
  * 组件不能直接改 activeId / openTabs；sideHidden / hoveredId 是纯 UI 状态，不进核心。
  * 会话镜像（sessions store）每次变化都喂给核心 syncSessions —— 移除会话只走主进程广播这一条路。
+ * 标签页与当前页在每次快照变化时写入 localStorage 键 tagterm.openTabs（读写包 try / catch，坏数据视为空），
+ * 启动时由 App 在会话列表到位后调 restore() 恢复：只填标签页，再 select 上次的当前页 —— 只有它会 spawn。
  */
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef, watch } from 'vue'
@@ -11,6 +13,42 @@ import type { PtyPhase, TerminalWorkspace, WorkspaceSnapshot } from '../terminal
 import { useSessionsStore } from './sessions'
 
 const EMPTY_SNAPSHOT: WorkspaceSnapshot = { openTabs: [], activeId: null, runtime: {} }
+
+export const OPEN_TABS_STORAGE_KEY = 'tagterm.openTabs'
+
+/** 上次退出时的标签页与当前页 */
+interface StoredTabs {
+  ids: string[]
+  activeId: string | null
+}
+
+const EMPTY_STORED: StoredTabs = { ids: [], activeId: null }
+
+function readOpenTabs(): StoredTabs {
+  try {
+    const raw = localStorage.getItem(OPEN_TABS_STORAGE_KEY)
+    if (!raw) return EMPTY_STORED
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== 'object' || parsed === null) return EMPTY_STORED
+    const { ids, activeId } = parsed as Record<string, unknown>
+    if (!Array.isArray(ids)) return EMPTY_STORED
+    return {
+      ids: ids.filter((id): id is string => typeof id === 'string'),
+      activeId: typeof activeId === 'string' ? activeId : null,
+    }
+  } catch {
+    return EMPTY_STORED
+  }
+}
+
+function writeOpenTabs(snapshot: WorkspaceSnapshot): void {
+  try {
+    const stored: StoredTabs = { ids: [...snapshot.openTabs], activeId: snapshot.activeId }
+    localStorage.setItem(OPEN_TABS_STORAGE_KEY, JSON.stringify(stored))
+  } catch (err) {
+    console.warn('[workspace] 标签页写入 localStorage 失败', err)
+  }
+}
 
 export const useWorkspaceStore = defineStore('workspace', () => {
   const sessions = useSessionsStore()
@@ -28,6 +66,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   /** 没有实例（从未打开或已移除）视为 closed */
   const phaseOf = (id: string): PtyPhase | 'closed' => snap.value.runtime[id]?.phase ?? 'closed'
 
+  /** 上次退出时的标签页：store 创建时读一次，之后的快照写入不会覆盖它 */
+  const stored = readOpenTabs()
+
   /** 装配根调用一次：喂入当前会话列表、镜像快照、订阅变化、watch 会话镜像；返回拆除函数 */
   function attachCore(next: TerminalWorkspace): Unsubscribe {
     core = next
@@ -35,6 +76,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     snap.value = next.snapshot()
     const unsubscribe = next.subscribe((s) => {
       snap.value = s
+      writeOpenTabs(s)
     })
     const stop = watch(
       () => sessions.sessions,
@@ -48,6 +90,19 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   const select = (id: string): Promise<void> => core?.select(id) ?? Promise.resolve()
+
+  /**
+   * 恢复上次的标签页与当前页：必须在会话列表到位后调用（--hidden 自启同样走这里）。
+   * 先把当前列表喂给核心（watch 是异步的，这里不能等它），核心 restoreTabs 丢掉已删除的会话、去重、不 spawn；
+   * 再 select 上次的当前页（仍存在才选），只有这一个会 spawn
+   */
+  async function restore(): Promise<void> {
+    if (!core) return
+    core.syncSessions(sessions.sessions)
+    core.restoreTabs(stored.ids)
+    if (stored.activeId !== null && sessions.byId(stored.activeId))
+      await core.select(stored.activeId)
+  }
 
   function closeTab(id: string): void {
     core?.closeTab(id)
@@ -72,6 +127,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     phaseOf,
     attachCore,
     select,
+    restore,
     closeTab,
     toggleSide,
     setHovered,

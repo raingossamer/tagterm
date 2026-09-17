@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 应用骨架：左栏（会话列表）+ 右栏（标签页 / 工作区 / 空状态 + 状态栏），布局照原型 .app 双栏 grid；
-// 启动依次加载 settings / update / sessions / tags（tags 的派生以会话列表为主表，放最后）；
+// 启动依次加载 settings / update / sessions / tags（tags 的派生以会话列表为主表，放最后），再恢复上次的标签页与当前页（只 spawn 当前页）；
 // 装配会话生命周期核心 TerminalWorkspace：provide 给 TerminalPane / SideHead（宿主操作），attachCore 给 workspace store（快照镜像）。
 // 选中 / 关页 / 重启 / 移除的编排全在核心里，这里只做接线
 import { onMounted, onUnmounted, provide, ref } from 'vue'
@@ -77,6 +77,7 @@ onMounted(async () => {
     await update.load()
     await sessions.load()
     await tags.load()
+    await workspace.restore()
   } catch (err) {
     loadError.value = err instanceof Error ? err.message : String(err)
   }

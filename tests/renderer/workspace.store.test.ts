@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
-import { useWorkspaceStore } from '../../src/renderer/src/stores/workspace'
+import { OPEN_TABS_STORAGE_KEY, useWorkspaceStore } from '../../src/renderer/src/stores/workspace'
 import { useSessionsStore } from '../../src/renderer/src/stores/sessions'
 import { TerminalWorkspace } from '../../src/renderer/src/terminal/TerminalWorkspace'
 import { FakePty } from './fakePty'
@@ -14,15 +14,54 @@ describe('workspace store（TerminalWorkspace 的薄适配器 + 纯 UI 状态）
   let pty: FakePty
   let core: TerminalWorkspace
 
-  beforeEach(() => {
-    setActivePinia(createPinia())
-    useSessionsStore().sessions = [a, b]
+  const c = makeSession({ name: 'c' })
+
+  function makeCore(): TerminalWorkspace {
     pty = new FakePty()
-    core = new TerminalWorkspace({
+    return new TerminalWorkspace({
       pty,
       createTerminal: () => new FakeTerminal(),
       raf: (fn) => fn(),
     })
+  }
+
+  beforeEach(() => {
+    localStorage.clear()
+    setActivePinia(createPinia())
+    useSessionsStore().sessions = [a, b]
+    core = makeCore()
+  })
+
+  it('标签页与当前页随每次快照变化写入 localStorage；新 pinia + 新核心 restore() 后顺序与当前页一致，只有当前页 spawn', async () => {
+    const ws = useWorkspaceStore()
+    useSessionsStore().sessions = [a, b, c]
+    ws.attachCore(core)
+    await ws.select(a.id)
+    await ws.select(b.id)
+    await ws.select(c.id)
+    await ws.select(b.id)
+    expect(JSON.parse(localStorage.getItem(OPEN_TABS_STORAGE_KEY)!)).toEqual({
+      ids: [a.id, b.id, c.id],
+      activeId: b.id,
+    })
+    ws.closeTab(c.id)
+    expect(JSON.parse(localStorage.getItem(OPEN_TABS_STORAGE_KEY)!)).toEqual({
+      ids: [a.id, b.id],
+      activeId: b.id,
+    })
+
+    // 重开：新 pinia、新核心、会话列表到位后 restore
+    setActivePinia(createPinia())
+    useSessionsStore().sessions = [a, b, c]
+    const fresh = useWorkspaceStore()
+    const freshCore = makeCore()
+    fresh.attachCore(freshCore)
+    await fresh.restore()
+    expect(fresh.openTabs).toEqual([a.id, b.id])
+    expect(fresh.activeId).toBe(b.id)
+    expect(pty.opens.map((o) => o.sessionId)).toEqual([b.id])
+    expect(fresh.phaseOf(a.id)).toBe('closed')
+    expect(fresh.phaseOf(b.id)).toBe('running')
   })
 
   it('attachCore 后镜像核心快照；select / closeTab 委托到核心，openTabs / activeId / runtime 随之变化', async () => {
@@ -43,6 +82,55 @@ describe('workspace store（TerminalWorkspace 的薄适配器 + 纯 UI 状态）
     ws.closeTab(b.id)
     expect(ws.openTabs).toEqual([a.id])
     expect(ws.activeId).toBe(a.id)
+  })
+
+  it('localStorage 坏 JSON / 不是对象 / ids 不是数组 / 混入非字符串：restore() 不抛，无标签页、不 spawn', async () => {
+    for (const raw of ['{ not json', '[1,2]', JSON.stringify({ ids: 'a', activeId: a.id })]) {
+      localStorage.setItem(OPEN_TABS_STORAGE_KEY, raw)
+      setActivePinia(createPinia())
+      useSessionsStore().sessions = [a, b]
+      const ws = useWorkspaceStore()
+      ws.attachCore(makeCore())
+      await expect(ws.restore()).resolves.toBeUndefined()
+      expect(ws.openTabs).toEqual([])
+      expect(ws.activeId).toBeNull()
+      expect(pty.opens).toEqual([])
+    }
+
+    localStorage.setItem(
+      OPEN_TABS_STORAGE_KEY,
+      JSON.stringify({ ids: [a.id, 5, null, b.id], activeId: 7 }),
+    )
+    setActivePinia(createPinia())
+    useSessionsStore().sessions = [a, b]
+    const ws = useWorkspaceStore()
+    ws.attachCore(makeCore())
+    await ws.restore()
+    expect(ws.openTabs).toEqual([a.id, b.id])
+    expect(ws.activeId).toBeNull()
+    expect(pty.opens).toEqual([])
+  })
+
+  it('上次开着的会话已被删除 → 静默跳过；当前页被删 → 不选中、不 spawn；未 attachCore 时 restore 无副作用', async () => {
+    localStorage.setItem(
+      OPEN_TABS_STORAGE_KEY,
+      JSON.stringify({ ids: [a.id, c.id, b.id], activeId: c.id }),
+    )
+    setActivePinia(createPinia())
+    useSessionsStore().sessions = [a, b] // c 已被删除
+    const ws = useWorkspaceStore()
+    ws.attachCore(makeCore())
+    await ws.restore()
+    expect(ws.openTabs).toEqual([a.id, b.id])
+    expect(ws.activeId).toBeNull()
+    expect(pty.opens).toEqual([])
+
+    localStorage.setItem(OPEN_TABS_STORAGE_KEY, JSON.stringify({ ids: [a.id], activeId: a.id }))
+    setActivePinia(createPinia())
+    useSessionsStore().sessions = [a, b]
+    const detached = useWorkspaceStore()
+    await detached.restore()
+    expect(detached.openTabs).toEqual([])
   })
 
   it('未 attachCore 时 select / closeTab 无副作用', async () => {
