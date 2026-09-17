@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import TabBar from '../../../src/renderer/src/components/TabBar.vue'
 import { useWorkspaceStore } from '../../../src/renderer/src/stores/workspace'
+import { useAgentStore } from '../../../src/renderer/src/stores/agent'
 import { installFakeApi, makeSession } from '../fakeApi'
 import { installFakeWorkspace, type FakeWorkspace } from '../fakeWorkspace'
 
@@ -55,5 +56,15 @@ describe('TabBar', () => {
 
     await wrapper.find('[data-test=tab-add]').trigger('click')
     expect(wrapper.emitted('newSession')).toHaveLength(1)
+  })
+
+  it('标签页的状态点取 agent store：无记录为 idle，有记录按状态加类名', async () => {
+    const agent = useAgentStore()
+    agent.runtime = { [b.id]: { sessionId: b.id, alive: true, agent: 'claude', status: 'blocked' } }
+    const wrapper = mount(TabBar)
+    const dots = wrapper.findAll('[data-test=tab] .dot')
+
+    expect(dots[0]!.classes()).toContain('idle')
+    expect(dots[1]!.classes()).toContain('blocked')
   })
 })

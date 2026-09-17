@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 应用骨架：左栏（会话列表）+ 右栏（标签页 / 工作区 / 空状态 + 状态栏），布局照原型 .app 双栏 grid；
-// 启动依次加载 settings / update / sessions / tags（tags 的派生以会话列表为主表，放最后），再恢复上次的标签页与当前页（只 spawn 当前页）；
+// 启动依次加载 settings / update / sessions / tags / agent（tags 的派生以会话列表为主表），再恢复上次的标签页与当前页（只 spawn 当前页）；
+// 「正被查看」的会话由 useViewedSession 在当前页 / 焦点 / 可见性变化时上报主进程；
 // 装配会话生命周期核心 TerminalWorkspace：provide 给 TerminalPane / SideHead（宿主操作），attachCore 给 workspace store（快照镜像）。
 // 选中 / 关页 / 重启 / 移除的编排全在核心里，这里只做接线
 import { onMounted, onUnmounted, provide, ref } from 'vue'
@@ -20,6 +21,8 @@ import NewSessionModal from './components/NewSessionModal.vue'
 import EditSessionModal from './components/EditSessionModal.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import ManageTagsModal from './components/ManageTagsModal.vue'
+import { useViewedSession } from './composables/useViewedSession'
+import { useAgentStore } from './stores/agent'
 import { useSessionsStore } from './stores/sessions'
 import { useSettingsStore } from './stores/settings'
 import { useTagsStore } from './stores/tags'
@@ -35,6 +38,7 @@ const settings = useSettingsStore()
 const tags = useTagsStore()
 const update = useUpdateStore()
 const workspace = useWorkspaceStore()
+const agent = useAgentStore()
 const isNewModalOpen = ref(false)
 /** 右键菜单「编辑会话」的目标；非空即显示编辑弹窗 */
 const editingSession = ref<Session | null>(null)
@@ -51,6 +55,7 @@ const core = new TerminalWorkspace({
 })
 provide(TERMINAL_WORKSPACE_KEY, core)
 const detachCore = workspace.attachCore(core)
+useViewedSession()
 
 function onCreated(session: Session): void {
   isNewModalOpen.value = false
@@ -77,6 +82,7 @@ onMounted(async () => {
     await update.load()
     await sessions.load()
     await tags.load()
+    await agent.load()
     await workspace.restore()
   } catch (err) {
     loadError.value = err instanceof Error ? err.message : String(err)

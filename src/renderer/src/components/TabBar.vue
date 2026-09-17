@@ -3,11 +3,13 @@
 // 关闭标签页只从 openTabs 移除，pty 与终端实例都保留。
 import { computed } from 'vue'
 import StatusDot from './StatusDot.vue'
+import { useAgentStore } from '../stores/agent'
 import { useSessionsStore } from '../stores/sessions'
 import { useWorkspaceStore } from '../stores/workspace'
 
 const sessions = useSessionsStore()
 const workspace = useWorkspaceStore()
+const agent = useAgentStore()
 const emit = defineEmits<{ select: [id: string]; newSession: [] }>()
 
 const tabs = computed(() =>
@@ -45,7 +47,7 @@ function onTabKeydown(e: KeyboardEvent, id: string): void {
       @click="emit('select', s.id)"
       @keydown="onTabKeydown($event, s.id)"
     >
-      <StatusDot />
+      <StatusDot :status="agent.statusOf(s.id)" />
       <span data-test="tab-name">{{ s.name }}</span>
       <button
         class="x"

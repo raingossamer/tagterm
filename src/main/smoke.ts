@@ -78,6 +78,17 @@ const SMOKE_SCRIPT = `(async () => {
   const s2AliveAfterClose = await api.pty.isAlive(s2.id)
   const hostsAfterClose = ($('[data-test=terminal-pane]')?.children ?? []).length
 
+  // agent 运行时记录：两个终端开着（s1 在跑、s2 关了标签页但 pty 还在）→ 两条 alive 记录、全部 idle；状态点与状态栏计数都是空闲
+  const agentList = await api.agent.list()
+  const agentRuntime = {
+    aliveIds: agentList.filter((r) => r.alive).map((r) => r.sessionId).sort(),
+    expectedIds: [s1.id, s2.id].sort(),
+    allIdle: agentList.every((r) => r.status === 'idle' && r.agent === null),
+    rowDotIdle: $$('[data-test=session-row] .dot').every((d) => d.classList.contains('idle')),
+    tabDotIdle: $$('[data-test=tab] .dot').every((d) => d.classList.contains('idle')),
+    counts: ['working', 'blocked', 'done'].map((k) => $('[data-test=status-' + k + ']')?.textContent.trim()),
+  }
+
   // 终端右侧滚动条：滑块透明（用户要求取消，滑轮照常）。xterm 是 VS Code 式自绘滚动条
   const sliderEl = $('[data-test=terminal-pane] .xterm-scrollable-element > .scrollbar > .slider')
   const sliderBg = sliderEl ? getComputedStyle(sliderEl).backgroundColor : null
@@ -248,6 +259,7 @@ const SMOKE_SCRIPT = `(async () => {
     tabs: { tabNames, activeTab, activeAfterSwitch, tabsAfterClose, s2AliveAfterClose, hostsAfterClose },
     strip: { launchers, sideHidden },
     scrollbar: { sliderBg, sliderHidden },
+    agentRuntime,
     sessionDrag: { namesBeforeDrag, dragApplied, namesAfterDrag, globalOrderChanged },
     tags: {
       gotTagDot, tagDotColor, groupsTagged, s2Tooltip, chipCounts, groupsAny, groupsAll, rowsAll, groupsCleared,

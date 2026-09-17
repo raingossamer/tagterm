@@ -9,8 +9,9 @@ import { TagStore } from '../../src/main/store/TagStore'
 import { Updater } from '../../src/main/updater/Updater'
 import { FakeAutoUpdater } from './fakeAutoUpdater'
 import { PtyManager } from '../../src/main/pty/PtyManager'
+import { AgentDetector } from '../../src/main/agent/AgentDetector'
 import type { AutoLaunchStatus, PtyExitEvent, PtyOpenResult, TagListResult } from '@shared/ipc'
-import type { Session, Settings, Tag, UpdateStatus } from '@shared/models'
+import type { Session, SessionRuntime, Settings, Tag, UpdateStatus } from '@shared/models'
 import { createFakeIpcMain, type FakeIpcMain } from './fakeIpcMain'
 import { waitFor } from './helpers'
 
@@ -22,6 +23,9 @@ describe('IPC 接口层', () => {
   let settings: SettingsStore
   let tags: TagStore
   let pty: PtyManager
+  let agent: AgentDetector
+  const agentChanges: SessionRuntime[] = []
+  const agentRemovals: string[] = []
   let autoUpdater: FakeAutoUpdater
   const updateStatuses: UpdateStatus[] = []
   const output: Record<string, string> = {}
@@ -40,11 +44,21 @@ describe('IPC 接口层', () => {
     await settings.load()
     tags = new TagStore(dir)
     await tags.load()
+    agent = new AgentDetector({
+      now: () => Date.now(),
+      onChange: (r) => agentChanges.push(r),
+      onRemove: (id) => agentRemovals.push(id),
+    })
+    // 与装配层同样的接线：PtyManager 的 spawn / exit 接给 AgentDetector
     pty = new PtyManager({
       onData: (id, d) => {
         output[id] = (output[id] ?? '') + d
       },
-      onExit: (e) => exits.push(e),
+      onExit: (e) => {
+        exits.push(e)
+        agent.ptyExited(e.sessionId)
+      },
+      onSpawn: (id) => agent.ptySpawned(id),
       isFile: existsSync,
     })
     ipc = createFakeIpcMain()
@@ -63,6 +77,7 @@ describe('IPC 接口层', () => {
       tags,
       updater,
       pty,
+      agent,
       dataDir: dir,
       pickImage: async () => join(dir, 'picked.png'),
       pickDirectory: async () => 'D:\\picked',
@@ -85,6 +100,8 @@ describe('IPC 接口层', () => {
     childQueries = 0
     autoLaunch = { enabled: false, blockedBySystem: false }
     exits.length = 0
+    agentChanges.length = 0
+    agentRemovals.length = 0
     updateStatuses.length = 0
     for (const k of Object.keys(output)) delete output[k]
     rmSync(dir, { recursive: true, force: true })
@@ -385,6 +402,40 @@ describe('IPC 接口层', () => {
     await expect(ipc.invoke('session:reorder', ['a', ''])).rejects.toThrow('会话 id 列表格式不正确')
     await expect(ipc.invoke('session:reorder', [a.id])).rejects.toThrow(
       '排序参数必须是全部会话 id 的一个排列',
+    )
+  })
+
+  it('agent:list 返回全部运行时记录：pty:open 后出现空闲记录，pty 退出后消失；session:remove 同样清掉（未开终端的会话也一样）', async () => {
+    await expect(ipc.invoke('agent:list')).resolves.toEqual([])
+    const s = (await ipc.invoke('session:create', { cwd: process.cwd() })) as Session
+    await ipc.invoke('pty:open', s.id, { cols: 80, rows: 24 })
+    await expect(ipc.invoke('agent:list')).resolves.toEqual([
+      { sessionId: s.id, alive: true, agent: null, status: 'idle' },
+    ])
+    expect(agentChanges).toHaveLength(1)
+
+    await ipc.invoke('pty:kill', s.id)
+    await waitFor(() => exits.some((e) => e.sessionId === s.id))
+    await expect(ipc.invoke('agent:list')).resolves.toEqual([])
+    expect(agentRemovals).toEqual([s.id])
+
+    await ipc.invoke('pty:open', s.id, { cols: 80, rows: 24 })
+    await ipc.invoke('session:remove', s.id)
+    await waitFor(() => agentRemovals.length === 2)
+    await expect(ipc.invoke('agent:list')).resolves.toEqual([])
+  })
+
+  it('agent:set-viewed 接受 null 与非空字符串，其余拒绝', async () => {
+    await expect(ipc.invoke('agent:set-viewed', null)).resolves.toBeUndefined()
+    await expect(ipc.invoke('agent:set-viewed', 'abc')).resolves.toBeUndefined()
+    await expect(ipc.invoke('agent:set-viewed', '')).rejects.toThrow(
+      '会话 id 必须是非空字符串或 null',
+    )
+    await expect(ipc.invoke('agent:set-viewed', 5)).rejects.toThrow(
+      '会话 id 必须是非空字符串或 null',
+    )
+    await expect(ipc.invoke('agent:set-viewed', undefined)).rejects.toThrow(
+      '会话 id 必须是非空字符串或 null',
     )
   })
 

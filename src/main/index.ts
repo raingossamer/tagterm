@@ -19,6 +19,7 @@ import { SettingsStore } from './store/SettingsStore'
 import { TagStore } from './store/TagStore'
 import { resolveDataDir } from './store/paths'
 import { PtyManager } from './pty/PtyManager'
+import { AgentDetector } from './agent/AgentDetector'
 import { Updater } from './updater/Updater'
 import { detectAvailableShells, findOnPath } from './pathProbe'
 import { IMAGE_EXTENSIONS } from './store/backgroundImage'
@@ -137,9 +138,21 @@ function quitApp(): void {
   app.quit()
 }
 
+// 会话运行时状态机：变化即广播；记录删除时广播一条 alive: false 的空闲记录，渲染进程据此删镜像
+const agentDetector = new AgentDetector({
+  now: () => Date.now(),
+  onChange: (runtime) => broadcast('agent:status', runtime),
+  onRemove: (sessionId) =>
+    broadcast('agent:status', { sessionId, alive: false, agent: null, status: 'idle' }),
+})
+
 const ptyManager = new PtyManager({
   onData: (sessionId, data) => broadcast('pty:data', sessionId, data),
-  onExit: (e) => broadcast('pty:exit', e),
+  onExit: (e) => {
+    broadcast('pty:exit', e)
+    agentDetector.ptyExited(e.sessionId)
+  },
+  onSpawn: (sessionId) => agentDetector.ptySpawned(sessionId),
   isFile: existsSync, // spawn 前把 shell 名解析成绝对路径：开机自启时工作目录是 System32，相对名会撞 node-pty 的缺陷
 })
 console.log('[pty] node-pty 已加载')
@@ -196,6 +209,7 @@ app.whenReady().then(async () => {
     tags,
     updater,
     pty: ptyManager,
+    agent: agentDetector,
     dataDir,
     pickDirectory,
     pickImage,

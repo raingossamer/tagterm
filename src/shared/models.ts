@@ -22,6 +22,20 @@ export interface Session {
 export const DEFAULT_AGENTS = ['claude', 'gemini', 'codex', 'pi'] as const
 export type AgentKind = (typeof DEFAULT_AGENTS)[number]
 
+// ---- 会话运行时状态（M3，不落盘；主进程 AgentDetector 拥有，渲染进程只镜像）----
+
+/** 空闲 / 运行中 / 等你确认 / 已完成未查看（原型状态点四态） */
+export type AgentStatus = 'idle' | 'working' | 'blocked' | 'done'
+
+export interface SessionRuntime {
+  sessionId: string
+  alive: boolean // pty 是否在跑
+  agent: AgentKind | null // 当前在哪个工具里，进程树为准
+  status: AgentStatus
+  cwdNow?: string // 从提示符解析到的当前目录
+  pendingHint?: string // 等你确认时的那一行提示
+}
+
 export const SESSIONS_FILE_VERSION = 1
 
 export interface SessionsFile {

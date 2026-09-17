@@ -7,6 +7,7 @@ import { useSessionsStore } from '../../../src/renderer/src/stores/sessions'
 import { useWorkspaceStore } from '../../../src/renderer/src/stores/workspace'
 import { useTagsStore } from '../../../src/renderer/src/stores/tags'
 import { useFilterStore } from '../../../src/renderer/src/stores/filter'
+import { useAgentStore } from '../../../src/renderer/src/stores/agent'
 import { installFakeApi, makeSession, makeTag } from '../fakeApi'
 import { installFakeWorkspace } from '../fakeWorkspace'
 
@@ -365,5 +366,35 @@ describe('SessionGroups', () => {
     await nextTick()
     expect(wrapper.find('[data-test=groups-error]').exists()).toBe(false)
     vi.useRealTimers()
+  })
+
+  it('每行的状态点取 agent store：同一会话在多个分组里的副本状态一致，无记录为 idle', () => {
+    installFakeApi()
+    const s1 = makeSession({ name: 'iot', sortOrder: 1 })
+    const s2 = makeSession({ name: 'api', sortOrder: 2 })
+    useSessionsStore().sessions = [s1, s2]
+    const java = makeTag({ name: 'java', sortOrder: 2 })
+    const simba = makeTag({ name: 'simba', sortOrder: 1 })
+    const tags = useTagsStore()
+    tags.tags = [java, simba]
+    tags.sessionTags = [
+      { sessionId: s1.id, tagId: java.id },
+      { sessionId: s1.id, tagId: simba.id },
+      { sessionId: s2.id, tagId: java.id },
+    ]
+    const agent = useAgentStore()
+    agent.runtime = { [s1.id]: { sessionId: s1.id, alive: true, agent: 'claude', status: 'done' } }
+
+    const rows = mount(SessionGroups).findAll('[data-test=session-row]')
+    const dotsOfIot = rows
+      .filter((r) => r.text().includes('iot'))
+      .map((r) => r.find('.dot').classes())
+    expect(dotsOfIot).toHaveLength(2)
+    expect(dotsOfIot.every((c) => c.includes('done'))).toBe(true)
+    const dotsOfApi = rows
+      .filter((r) => r.text().includes('api'))
+      .map((r) => r.find('.dot').classes())
+    expect(dotsOfApi).toHaveLength(1)
+    expect(dotsOfApi[0]).toContain('idle')
   })
 })
