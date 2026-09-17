@@ -82,6 +82,8 @@ const api: TagTermApi = {
     list: () => invoke('agent:list'),
     setViewed: (sessionId) => invoke('agent:set-viewed', sessionId),
     reportOutput: (sessionId, report) => send('agent:report-output', sessionId, report),
+    getHooksStatus: () => invoke('agent:get-hooks-status'),
+    setHooks: (agent, enabled) => invoke('agent:set-hooks', agent, enabled),
     onStatus: (cb) => subscribe('agent:status', cb),
   },
   pty: {

@@ -79,6 +79,19 @@ export function createFakeApi(overrides: Overrides = {}): TagTermApi {
       list: vi.fn(async () => []),
       setViewed: vi.fn(async () => {}),
       reportOutput: vi.fn(),
+      getHooksStatus: vi.fn(async () => ({
+        claude: {
+          installed: false,
+          port: 51233,
+          settingsPath: 'C:/Users/test/.claude/settings.json',
+        },
+        codex: { installed: false, port: 51233, settingsPath: 'C:/Users/test/.codex/hooks.json' },
+      })),
+      setHooks: vi.fn(async (agent: 'claude' | 'codex', enabled: boolean) => ({
+        installed: enabled,
+        port: 51233,
+        settingsPath: 'C:/Users/test/.' + agent + '/x.json',
+      })),
       onStatus: vi.fn(() => () => {}),
       ...overrides.agent,
     },

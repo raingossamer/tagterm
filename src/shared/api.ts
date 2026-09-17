@@ -5,6 +5,9 @@
 import type {
   AutoLaunchStatus,
   CreateSessionInput,
+  HookAgent,
+  HooksStatus,
+  HooksStatusMap,
   OutputReport,
   PtyExitEvent,
   PtyOpenResult,
@@ -77,6 +80,9 @@ export interface TagTermApi {
     setViewed(sessionId: string | null): Promise<void>
     /** 某会话静默 1.5 s 后屏幕末尾的几行（单向，不等待） */
     reportOutput(sessionId: string, report: OutputReport): void
+    getHooksStatus(): Promise<HooksStatusMap>
+    /** 打开 = 备份并追加我们的 hooks 条目，关闭 = 只删我们的；返回该目标的实际状态 */
+    setHooks(agent: HookAgent, enabled: boolean): Promise<HooksStatus>
     onStatus(cb: (runtime: SessionRuntime) => void): Unsubscribe
   }
   pty: {

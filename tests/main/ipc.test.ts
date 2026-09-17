@@ -10,6 +10,7 @@ import { Updater } from '../../src/main/updater/Updater'
 import { FakeAutoUpdater } from './fakeAutoUpdater'
 import { PtyManager } from '../../src/main/pty/PtyManager'
 import { AgentDetector } from '../../src/main/agent/AgentDetector'
+import { HookInstaller } from '../../src/main/agent/HookInstaller'
 import type { AutoLaunchStatus, PtyExitEvent, PtyOpenResult, TagListResult } from '@shared/ipc'
 import type { Session, SessionRuntime, Settings, Tag, UpdateStatus } from '@shared/models'
 import { createFakeIpcMain, type FakeIpcMain } from './fakeIpcMain'
@@ -78,6 +79,21 @@ describe('IPC 接口层', () => {
       updater,
       pty,
       agent,
+      hooks: {
+        claude: new HookInstaller(
+          {
+            agent: 'claude',
+            settingsPath: join(dir, 'claude-settings.json'),
+            createIfMissing: false,
+          },
+          { now: () => Date.now() },
+        ),
+        codex: new HookInstaller(
+          { agent: 'codex', settingsPath: join(dir, 'codex-hooks.json'), createIfMissing: true },
+          { now: () => Date.now() },
+        ),
+      },
+      hookPort: 51233,
       dataDir: dir,
       pickImage: async () => join(dir, 'picked.png'),
       pickDirectory: async () => 'D:\\picked',
@@ -440,6 +456,40 @@ describe('IPC 接口层', () => {
     ipc.send('agent:report-output', s.id, { tail: new Array(51).fill('C:\\x>'), silentMs: 0 })
     ipc.send('agent:report-output', 5, { tail: ['C:\\x>'], silentMs: 0 })
     expect(agentChanges).toHaveLength(count)
+  })
+
+  it('agent:get-hooks-status 返回两个目标；agent:set-hooks 安装 / 卸载后返回该目标状态；agent 非 claude / codex 或 enabled 非布尔拒绝', async () => {
+    const claudeFile = join(dir, 'claude-settings.json')
+    writeFileSync(claudeFile, JSON.stringify({ model: 'opus' }))
+    await expect(ipc.invoke('agent:get-hooks-status')).resolves.toEqual({
+      claude: { installed: false, port: 51233, settingsPath: claudeFile },
+      codex: { installed: false, port: 51233, settingsPath: join(dir, 'codex-hooks.json') },
+    })
+
+    await expect(ipc.invoke('agent:set-hooks', 'codex', true)).resolves.toEqual({
+      installed: true,
+      port: 51233,
+      settingsPath: join(dir, 'codex-hooks.json'),
+    })
+    const status = (await ipc.invoke('agent:get-hooks-status')) as Record<
+      string,
+      { installed: boolean }
+    >
+    expect(status['codex']!.installed).toBe(true)
+    expect(status['claude']!.installed).toBe(false)
+    await expect(ipc.invoke('agent:set-hooks', 'codex', false)).resolves.toMatchObject({
+      installed: false,
+    })
+    await expect(ipc.invoke('agent:set-hooks', 'claude', true)).resolves.toMatchObject({
+      installed: true,
+    })
+
+    await expect(ipc.invoke('agent:set-hooks', 'gemini', true)).rejects.toThrow(
+      'hooks 目标只能是 claude 或 codex',
+    )
+    await expect(ipc.invoke('agent:set-hooks', 'claude', 'yes')).rejects.toThrow(
+      'hooks 开关参数必须是布尔',
+    )
   })
 
   it('agent:set-viewed 接受 null 与非空字符串，其余拒绝', async () => {

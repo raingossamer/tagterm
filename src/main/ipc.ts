@@ -5,6 +5,7 @@
 import type {
   AutoLaunchStatus,
   CreateSessionInput,
+  HookAgent,
   InvokeArgs,
   InvokeChannel,
   InvokeResult,
@@ -30,6 +31,7 @@ import {
 } from '@shared/models'
 import type { PtyManager } from './pty/PtyManager'
 import type { AgentDetector } from './agent/AgentDetector'
+import type { HookInstaller } from './agent/HookInstaller'
 import type { SessionStore } from './store/SessionStore'
 import type { SettingsStore } from './store/SettingsStore'
 import type { TagStore } from './store/TagStore'
@@ -51,6 +53,10 @@ export interface IpcDeps {
   updater: Updater
   pty: PtyManager
   agent: AgentDetector
+  /** 两个 hooks 安装目标（Claude ~/.claude/settings.json、Codex ~/.codex/hooks.json），路径由装配层注入 */
+  hooks: Record<HookAgent, HookInstaller>
+  /** HookServer 实际监听的端口：安装时写进命令、状态里报给用户 */
+  hookPort: number
   /** 数据目录（设置「关于」显示） */
   dataDir: string
   /** 系统目录选择框（平台层注入，服务层不 import electron） */
@@ -151,6 +157,19 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
 
   handle('agent:list', () => deps.agent.list())
   handle('agent:set-viewed', (id) => deps.agent.setViewed(assertViewedId(id)))
+  handle('agent:get-hooks-status', async () => {
+    const [claude, codex] = await Promise.all([
+      deps.hooks.claude.status(deps.hookPort),
+      deps.hooks.codex.status(deps.hookPort),
+    ])
+    return { claude, codex }
+  })
+  handle('agent:set-hooks', (agent, enabled) => {
+    const installer = deps.hooks[assertHookAgent(agent)]
+    return assertHooksEnabled(enabled)
+      ? installer.install(deps.hookPort)
+      : installer.uninstall(deps.hookPort)
+  })
 
   handle('update:get-status', () => deps.updater.status())
   handle('update:check', () => deps.updater.check())
@@ -217,6 +236,16 @@ function isOutputReport(report: unknown): report is OutputReport {
     Number.isInteger(o.silentMs) &&
     (o.silentMs as number) >= 0
   )
+}
+
+function assertHookAgent(agent: unknown): HookAgent {
+  if (agent !== 'claude' && agent !== 'codex') throw new Error('hooks 目标只能是 claude 或 codex')
+  return agent
+}
+
+function assertHooksEnabled(enabled: unknown): boolean {
+  if (typeof enabled !== 'boolean') throw new Error('hooks 开关参数必须是布尔')
+  return enabled
 }
 
 function assertViewedId(id: unknown): string | null {

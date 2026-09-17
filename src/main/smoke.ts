@@ -367,6 +367,17 @@ const SETTINGS_SCRIPT = (pngPath: string): string => `(async () => {
     blocked: !!$('[data-test=auto-launch-blocked]'),
     instant: !!$('[data-test=auto-launch-instant]'),
   }
+  // Agent 段：只读核查两个开关与端口（不切开关 —— 那会改用户真实的 hooks 配置文件）
+  $('[data-test=settings-nav-agent]')?.click()
+  await sleep(50)
+  const hooksSection = {
+    shown: !!$('[data-test=agent-section]'),
+    claudeBox: !!$('[data-test=hooks-claude]'),
+    codexBox: !!$('[data-test=hooks-codex]'),
+    statuses: [$('[data-test=hooks-claude-status]')?.textContent, $('[data-test=hooks-codex-status]')?.textContent],
+    port: $('[data-test=hooks-port]')?.textContent ?? null,
+    instant: !!$('[data-test=hooks-instant]'),
+  }
   $('[data-test=settings-nav-about]')?.click()
   await waitFor(() => /v[0-9]/.test($('[data-test=about-version]')?.textContent ?? ''))
   const aboutVersion = $('[data-test=about-version]')?.textContent ?? null
@@ -426,7 +437,7 @@ const SETTINGS_SCRIPT = (pngPath: string): string => `(async () => {
   $('[data-test=settings-cancel]')?.click()
   await sleep(50)
   const modalClosed = !$('[data-test=settings-modal]')
-  return { modalOpened, gearOpened, navLabels, appearanceShown, aboutVersion, autoLaunch, bgShown, bgStyle, panelOpacity, panelBg, panelsTranslucent, thumbShown, bgName, bgCleared, bgRestored, bgRemoved, panelOpacityCleared, updateSettled, updateStatus, updateText, download, modalClosed }
+  return { modalOpened, gearOpened, navLabels, appearanceShown, aboutVersion, autoLaunch, hooksSection, bgShown, bgStyle, panelOpacity, panelBg, panelsTranslucent, thumbShown, bgName, bgCleared, bgRestored, bgRemoved, panelOpacityCleared, updateSettled, updateStatus, updateText, download, modalClosed }
 })()`
 
 /** 恢复标签页准备：再开两个会话并打开终端，把当前页放中间（标签页 [s1, r3, r4]，当前页 r3）；返回 id 与 localStorage 记下的内容 */
