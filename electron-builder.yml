@@ -13,8 +13,13 @@ files:
   - resources/** # ?asset 导入解析为 out/main 相对的 ../../resources/*，打包后从 asar 内读取
   - package.json
   - '!**/*.pdb' # 调试符号不进包（node-pty prebuilds 里每个 .node 都带 pdb）
+  # windows-process-tree 的构建中间产物不进包（只要 build/Release/windows_process_tree.node）
+  - '!**/node_modules/@vscode/windows-process-tree/build/Release/obj/**'
+  - '!**/node_modules/@vscode/windows-process-tree/build/Release/*.{iobj,ipdb,exp,lib,lastcodeanalysissucceeded}'
+  - '!**/node_modules/@vscode/windows-process-tree/{src,typings,binding.gyp,tsconfig.json,tslint.json}'
 asarUnpack:
   - node_modules/node-pty/**
+  - node_modules/@vscode/windows-process-tree/** # 原生 .node 必须在 asar 外（M3 进程树）
 win:
   target:
     - nsis

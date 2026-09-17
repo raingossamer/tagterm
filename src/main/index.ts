@@ -12,7 +12,6 @@ import { DEFAULT_AGENTS } from '@shared/models'
 import { createMainWindow, showMainWindow } from './window'
 import { createTray } from './tray'
 import { registerIpc } from './ipc'
-import { hasChildProcesses } from './processTree'
 import { runSmokeCheck } from './smoke'
 import { SessionStore } from './store/SessionStore'
 import { SettingsStore } from './store/SettingsStore'
@@ -20,6 +19,8 @@ import { TagStore } from './store/TagStore'
 import { resolveDataDir } from './store/paths'
 import { PtyManager } from './pty/PtyManager'
 import { AgentDetector } from './agent/AgentDetector'
+import { ProcessTreeProbe } from './agent/ProcessTreeProbe'
+import { listSubtree } from './agent/windowsProcessTree'
 import { Updater } from './updater/Updater'
 import { detectAvailableShells, findOnPath } from './pathProbe'
 import { IMAGE_EXTENSIONS } from './store/backgroundImage'
@@ -146,13 +147,21 @@ const agentDetector = new AgentDetector({
     broadcast('agent:status', { sessionId, alive: false, agent: null, status: 'idle' }),
 })
 
+// 进程树探针：只在有 pty 存活时每 2 s 扫一轮（原生模块一次十几毫秒），快照变化才喂给状态机；也回答 session:update 的空闲核对
+const processProbe = new ProcessTreeProbe({ listSubtree, intervalMs: 2000 })
+processProbe.onSnapshot((agents) => agentDetector.processSnapshot(agents))
+
 const ptyManager = new PtyManager({
   onData: (sessionId, data) => broadcast('pty:data', sessionId, data),
   onExit: (e) => {
     broadcast('pty:exit', e)
+    processProbe.unwatch(e.sessionId)
     agentDetector.ptyExited(e.sessionId)
   },
-  onSpawn: (sessionId) => agentDetector.ptySpawned(sessionId),
+  onSpawn: (sessionId, pid) => {
+    agentDetector.ptySpawned(sessionId)
+    processProbe.watch(sessionId, pid)
+  },
   isFile: existsSync, // spawn 前把 shell 名解析成绝对路径：开机自启时工作目录是 System32，相对名会撞 node-pty 的缺陷
 })
 console.log('[pty] node-pty 已加载')
@@ -214,7 +223,7 @@ app.whenReady().then(async () => {
     pickDirectory,
     pickImage,
     listShells: () => availableShells,
-    hasChildProcesses,
+    hasChildProcesses: (pid) => processProbe.hasChildren(pid),
     getAutoLaunch,
     setAutoLaunch,
   })
@@ -225,7 +234,8 @@ app.whenReady().then(async () => {
     showOnReady: !isHiddenStart,
   })
   tray = createTray({ onShow: showWindow, onOpenSettings: openSettings, onQuit: quitApp })
-  if (isSmoke) runSmokeCheck(mainWindow, { store, tags, pty: ptyManager, quit: quitApp })
+  if (isSmoke)
+    runSmokeCheck(mainWindow, { store, tags, pty: ptyManager, probe: processProbe, quit: quitApp })
   // 未打包（开发）时 electron-updater 会直接报错，只在打包版自动检查
   else if (app.isPackaged) updater.scheduleAutoCheck(10_000)
 })

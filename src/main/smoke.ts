@@ -11,6 +11,7 @@ import { app, type BrowserWindow } from 'electron'
 import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { PtyManager } from './pty/PtyManager'
+import type { ProcessTreeProbe } from './agent/ProcessTreeProbe'
 import type { SessionStore } from './store/SessionStore'
 import type { TagStore } from './store/TagStore'
 
@@ -18,6 +19,7 @@ export interface SmokeDeps {
   store: SessionStore
   tags: TagStore
   pty: PtyManager
+  probe: ProcessTreeProbe
   quit: () => void
 }
 
@@ -501,6 +503,22 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
       const sessionIds = (result['sessionIds'] as string[] | undefined) ?? []
       const pids = sessionIds.map((id) => deps.pty.getPid(id))
 
+      // 进程树（原生模块在开发版 Electron 内加载成功的证据）：空闲 cmd 无子进程 → 跑 ping 期间有 → 跑完又没有
+      const shellPid = pids[0] ?? 0
+      const pollChildren = async (expected: boolean, timeoutMs: number): Promise<boolean> => {
+        const start = Date.now()
+        while (Date.now() - start < timeoutMs) {
+          if ((await deps.probe.hasChildren(shellPid)) === expected) return true
+          await sleep(100)
+        }
+        return false
+      }
+      const idleBefore = await pollChildren(false, 3000)
+      deps.pty.write(sessionIds[0]!, 'ping -n 2 127.0.0.1\r')
+      const busyDuringPing = await pollChildren(true, 3000)
+      const idleAfterPing = await pollChildren(false, 8000)
+      const processTree = { shellPid, idleBefore, busyDuringPing, idleAfterPing }
+
       // Ctrl+V 真实按键 → 浏览器原生 paste → xterm 粘贴 → pty 执行
       const focused = (await withTimeout(
         win.webContents.executeJavaScript(FOCUS_AND_PREPARE_CLIPBOARD),
@@ -630,6 +648,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
             sidebar,
             lifecycle,
             restore,
+            processTree,
             remaining,
             tagsFile,
             consoleErrors,

@@ -3,7 +3,7 @@
  * 输入全是方法调用（装配层把 PtyManager / ProcessTreeProbe / HookServer / 渲染进程的事件接过来），
  * 输出是每次记录变化回调一条记录、记录删除回调一个 id；时钟注入，不 import electron。
  */
-import type { SessionRuntime } from '@shared/models'
+import type { AgentKind, SessionRuntime } from '@shared/models'
 
 export interface AgentDetectorDeps {
   now: () => number
@@ -32,6 +32,23 @@ export class AgentDetector {
 
   sessionRemoved(sessionId: string): void {
     this.remove(sessionId)
+  }
+
+  /**
+   * 进程树快照（sessionId → 工具 | null）：agent 以它为准；快照里没有的会话不动。
+   * 工具消失（退出 / Ctrl+C）→ 一律回空闲并清掉提示，不留幽灵状态
+   */
+  processSnapshot(agents: ReadonlyMap<string, AgentKind | null>): void {
+    for (const [sessionId, agent] of agents) {
+      const current = this.runtimes.get(sessionId)
+      if (!current || current.agent === agent) continue
+      if (agent === null) {
+        const { pendingHint: _hint, ...rest } = current
+        this.commit({ ...rest, agent: null, status: 'idle' })
+      } else {
+        this.commit({ ...current, agent })
+      }
+    }
   }
 
   /** 渲染进程上报正被查看的会话（不可见 / 失焦为 null） */
