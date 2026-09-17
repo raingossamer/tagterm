@@ -354,6 +354,49 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
     expect(terminals).toHaveLength(1)
   })
 
+  it('17 静默上报：pty 数据后静默 1.5 s 经 reportOutput 上报该实例末尾非空行（≤ 8 行）；期间再来数据重新计时；会话移除后不上报', async () => {
+    vi.useFakeTimers()
+    try {
+      const reports: Array<[string, string[]]> = []
+      pty = new FakePty()
+      terminals = []
+      core = new TerminalWorkspace({
+        pty,
+        createTerminal: () => {
+          const t = new FakeTerminal()
+          terminals.push(t)
+          return t
+        },
+        raf: (fn) => fn(),
+        reportOutput: (id, report) => reports.push([id, report.tail]),
+      })
+      core.syncSessions([a, b])
+      await core.select(a.id)
+
+      pty.emitData(a.id, 'hello\r\n')
+      vi.advanceTimersByTime(1000)
+      pty.emitData(a.id, 'C:\\x>')
+      vi.advanceTimersByTime(1000)
+      expect(reports).toEqual([])
+      vi.advanceTimersByTime(500)
+      expect(reports).toEqual([[a.id, ['hello', 'C:\\x>']]])
+
+      // 只取末尾 8 行
+      pty.emitData(a.id, Array.from({ length: 12 }, (_, i) => `l${i}`).join('\r\n'))
+      vi.advanceTimersByTime(1500)
+      expect(reports[1]![1]).toHaveLength(8)
+      expect(reports[1]![1][7]).toBe('l11')
+
+      // 会话被移除：计时取消，不再上报
+      pty.emitData(a.id, 'bye')
+      core.syncSessions([b])
+      vi.advanceTimersByTime(1500)
+      expect(reports).toHaveLength(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('13 subscribe 每次变化收到新快照对象且等于 snapshot()，退订后不再收到；dispose 退订 pty、销毁全部实例、清空记录', async () => {
     const seen: WorkspaceSnapshot[] = []
     const off = core.subscribe((s) => seen.push(s))

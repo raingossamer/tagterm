@@ -81,6 +81,7 @@ const api: TagTermApi = {
   agent: {
     list: () => invoke('agent:list'),
     setViewed: (sessionId) => invoke('agent:set-viewed', sessionId),
+    reportOutput: (sessionId, report) => send('agent:report-output', sessionId, report),
     onStatus: (cb) => subscribe('agent:status', cb),
   },
   pty: {

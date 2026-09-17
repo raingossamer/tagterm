@@ -6,6 +6,7 @@ import { useSessionsStore } from '../../../src/renderer/src/stores/sessions'
 import { useWorkspaceStore } from '../../../src/renderer/src/stores/workspace'
 import { useSettingsStore } from '../../../src/renderer/src/stores/settings'
 import { useTagsStore } from '../../../src/renderer/src/stores/tags'
+import { useAgentStore } from '../../../src/renderer/src/stores/agent'
 import { installFakeApi, makeCommand, makeSession, makeSettings, makeTag } from '../fakeApi'
 import { installFakeWorkspace } from '../fakeWorkspace'
 
@@ -209,5 +210,46 @@ describe('PathStrip', () => {
     await flushPromises()
     expect(wrapper.find('[data-test=tag-pop]').exists()).toBe(false)
     wrapper.unmount()
+  })
+
+  it('有追踪到的当前目录（cwdNow）时路径条显示它（同样缩略），tooltip 第一行当前目录、第二行固定目录；「复制」仍复制当前目录；没有则显示固定目录', async () => {
+    installFakeApi()
+    const agent = useAgentStore()
+    const wrapper = mount(PathStrip)
+    expect(wrapper.find('[data-test=strip-path]').text()).toBe('D:\\Projects\\simba\\api')
+
+    agent.runtime = {
+      [session.id]: {
+        sessionId: session.id,
+        alive: true,
+        agent: null,
+        status: 'idle',
+        cwdNow: 'C:\\Users\\k\\Desktop\\deep\\dir',
+      },
+    }
+    await flushPromises()
+    const path = wrapper.find('[data-test=strip-path]')
+    expect(path.text()).toBe('C:\\Users\\k\\Desktop\\…')
+    expect(path.attributes('title')).toBe(
+      'C:\\Users\\k\\Desktop\\deep\\dir\n会话固定在：D:\\Projects\\simba\\api',
+    )
+    await wrapper.find('[data-test=strip-copy]').trigger('click')
+    await flushPromises()
+    expect(writeText).toHaveBeenCalledWith('C:\\Users\\k\\Desktop\\deep\\dir')
+
+    // 当前目录又回到固定目录：tooltip 回到单行说明
+    agent.runtime = {
+      [session.id]: {
+        sessionId: session.id,
+        alive: true,
+        agent: null,
+        status: 'idle',
+        cwdNow: session.cwd,
+      },
+    }
+    await flushPromises()
+    expect(wrapper.find('[data-test=strip-path]').attributes('title')).toBe(
+      'D:\\Projects\\simba\\api\n会话固定在这个目录',
+    )
   })
 })

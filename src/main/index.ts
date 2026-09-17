@@ -152,7 +152,10 @@ const processProbe = new ProcessTreeProbe({ listSubtree, intervalMs: 2000 })
 processProbe.onSnapshot((agents) => agentDetector.processSnapshot(agents))
 
 const ptyManager = new PtyManager({
-  onData: (sessionId, data) => broadcast('pty:data', sessionId, data),
+  onData: (sessionId, data) => {
+    broadcast('pty:data', sessionId, data)
+    agentDetector.ptyData(sessionId) // 只记「有输出到达」这个事实，不看内容
+  },
   onExit: (e) => {
     broadcast('pty:exit', e)
     processProbe.unwatch(e.sessionId)

@@ -64,6 +64,12 @@ export interface PtyExitEvent {
   pid: number
 }
 
+/** 渲染进程的「静默末尾」报告：某会话 silentMs 无输出后屏幕末尾的非空行（≤ 50 行），主进程只做判定不记录 */
+export interface OutputReport {
+  tail: string[]
+  silentMs: number
+}
+
 export interface PtyOpenResult {
   created: boolean // true=本次新 spawn；false=复用已在运行的 pty
   pid: number
@@ -110,6 +116,7 @@ export interface IpcInvokeMap {
 // 单向高频：ipcRenderer.send → ipcMain.on（键入不等待响应）
 export interface IpcSendMap {
   'pty:write': [sessionId: string, data: string]
+  'agent:report-output': [sessionId: string, report: OutputReport] // 静默末尾报告（高频单向，非法参数静默忽略）
 }
 
 // 主进程 → 渲染进程：webContents.send → ipcRenderer.on

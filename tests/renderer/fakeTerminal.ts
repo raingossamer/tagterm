@@ -43,6 +43,14 @@ export class FakeTerminal implements TerminalInstance {
   setWebgl(enabled: boolean): void {
     this.isWebgl = enabled
   }
+  /** 把写入内容按行拆开、去掉空行，取末尾 lines 行（真 xterm 读的是缓冲区，这里以写入流近似） */
+  readTail(lines: number): string[] {
+    return this.written
+      .split(/\r?\n/)
+      .map((l) => l.trimEnd())
+      .filter((l) => l !== '')
+      .slice(-lines)
+  }
   dispose(): void {
     this.isDisposed = true
   }

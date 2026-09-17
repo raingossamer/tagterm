@@ -20,6 +20,28 @@ describe('SessionRow', () => {
     expect(wrapper.find('.dot').classes()).toContain('working')
   })
 
+  it('等你确认时 tooltip 追加一行「等你确认：<提示>」；其他状态不追加', () => {
+    const blocked = mount(SessionRow, {
+      props: {
+        session,
+        active: false,
+        tags: [],
+        peer: false,
+        canDrag: true,
+        status: 'blocked',
+        pendingHint: 'Allow execution?',
+      },
+    })
+    expect(blocked.find('[data-test=session-row]').attributes('title')).toBe(
+      `${session.cwd}
+等你确认：Allow execution?`,
+    )
+    const working = mount(SessionRow, {
+      props: { session, active: false, tags: [], peer: false, canDrag: true, status: 'working' },
+    })
+    expect(working.find('[data-test=session-row]').attributes('title')).toBe(session.cwd)
+  })
+
   it('根元素不是 button 但可键盘操作：click / Enter / Space 都发出 select', async () => {
     const wrapper = mountRow()
     const row = wrapper.find('[data-test=session-row]')

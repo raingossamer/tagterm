@@ -19,8 +19,10 @@ const props = withDefaults(
     canDrag: boolean
     /** 运行时状态（agent store 的 statusOf），缺省空闲 */
     status?: AgentStatus
+    /** 等你确认时的那一行提示（tooltip 追加显示） */
+    pendingHint?: string
   }>(),
-  { status: 'idle' },
+  { status: 'idle', pendingHint: undefined },
 )
 const emit = defineEmits<{
   select: [id: string]
@@ -37,11 +39,13 @@ function onDragStart(e: DragEvent): void {
   emit('dragStart', props.session.id)
 }
 
-const tooltip = computed(() =>
-  props.tags.length > 1
-    ? `${props.session.cwd}\n同时在：${props.tags.map((t) => t.name).join('、')}`
-    : props.session.cwd,
-)
+// tooltip：完整路径；多标签追加「同时在：a、b」；等你确认追加「等你确认：<提示>」（不切过去也知道它在问什么）
+const tooltip = computed(() => {
+  const lines = [props.session.cwd]
+  if (props.tags.length > 1) lines.push(`同时在：${props.tags.map((t) => t.name).join('、')}`)
+  if (props.status === 'blocked' && props.pendingHint) lines.push(`等你确认：${props.pendingHint}`)
+  return lines.join('\n')
+})
 
 function onContextMenu(e: MouseEvent): void {
   emit('menu', props.session.id, e.clientX, e.clientY)
