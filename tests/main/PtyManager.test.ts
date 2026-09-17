@@ -70,6 +70,18 @@ describe('PtyManager', () => {
     await expect(pm.killAndWait('nope')).resolves.toBeUndefined()
   })
 
+  it('kill 后 exit 还没来时再 kill（含 killAll）一律忽略：node-pty 只被 kill 一次，exit 事件只来一次', async () => {
+    const pm = createManager()
+    pm.spawn('twice', { cwd: process.cwd(), shell: 'cmd.exe', cols: 80, rows: 24 })
+    pm.kill('twice')
+    pm.kill('twice')
+    pm.killAll()
+    await waitFor(() => exits.some((e) => e.sessionId === 'twice'))
+    await new Promise((r) => setTimeout(r, 200))
+    expect(exits.filter((e) => e.sessionId === 'twice')).toHaveLength(1)
+    expect(pm.has('twice')).toBe(false)
+  })
+
   it('重复 spawn 同一会话报错；对不存在的会话 write / resize / kill 忽略不抛', () => {
     const pm = createManager()
     pm.spawn('dup', { cwd: process.cwd(), shell: 'cmd.exe', cols: 80, rows: 24 })

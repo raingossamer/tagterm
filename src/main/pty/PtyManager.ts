@@ -29,6 +29,8 @@ export interface SpawnOptions {
 interface Entry {
   pty: IPty
   batcher: OutputBatcher
+  /** 已经调过 kill、还没收到 exit：这段窗口里再 kill 一律忽略 */
+  isKilled: boolean
 }
 
 /** killAndWait 等待退出的兜底时限：exit 事件迟迟不来时不让调用方卡死 */
@@ -53,7 +55,7 @@ export class PtyManager {
       useConpty: true,
     })
     const batcher = new OutputBatcher((data) => this.deps.onData(sessionId, data))
-    this.entries.set(sessionId, { pty, batcher })
+    this.entries.set(sessionId, { pty, batcher, isKilled: false })
 
     pty.onData((data) => batcher.push(data))
     pty.onExit(({ exitCode, signal }) => {
@@ -89,9 +91,14 @@ export class PtyManager {
     this.entries.get(sessionId)?.pty.resize(cols, rows)
   }
 
+  /**
+   * 结束该会话的 pty；条目在 exit 事件到达时才删除，这段窗口里重复 kill（session:remove 后紧接着 killAll 等）
+   * 一律忽略 —— node-pty 的 ConPTY 对同一句柄二次 kill 会原生崩溃，整个进程一起没（CI 上 vitest worker 就是这么退出的）
+   */
   kill(sessionId: string): void {
     const entry = this.entries.get(sessionId)
-    if (!entry) return
+    if (!entry || entry.isKilled) return
+    entry.isKilled = true
     console.log(`[pty] kill session=${sessionId} pid=${entry.pty.pid}`)
     entry.pty.kill()
   }

@@ -15,6 +15,8 @@ export default defineConfig({
           environment: 'node',
           include: ['tests/main/**/*.test.ts'],
           testTimeout: 20000,
+          // 主进程测试里有真实 ConPTY / 原生进程树：多个 fork 并行 spawn / kill 在 CI 双核上会互相干扰，串行跑
+          fileParallelism: false,
         },
       },
       {
