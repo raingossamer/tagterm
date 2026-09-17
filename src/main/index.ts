@@ -21,6 +21,9 @@ import { PtyManager } from './pty/PtyManager'
 import { AgentDetector } from './agent/AgentDetector'
 import { ProcessTreeProbe } from './agent/ProcessTreeProbe'
 import { listSubtree } from './agent/windowsProcessTree'
+import { HookServer } from './agent/HookServer'
+import { derivePort } from './agent/hookPort'
+import { matchSessionsByCwd } from './agent/hookMatch'
 import { Updater } from './updater/Updater'
 import { detectAvailableShells, findOnPath } from './pathProbe'
 import { IMAGE_EXTENSIONS } from './store/backgroundImage'
@@ -45,6 +48,7 @@ if (!app.requestSingleInstanceLock()) {
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
+let hookServer: HookServer | null = null
 let isQuitting = false
 
 /** 主进程是持久数据与终端输出的来源：向渲染进程广播 */
@@ -213,6 +217,22 @@ app.whenReady().then(async () => {
     return
   }
 
+  // hooks 回环端点：应用就绪即启动（不论 hooks 是否安装），端口由数据目录哈希而来、被占用则顺延；
+  // 载荷按 cwd 映射到会话（多命中优先 agent 已是该工具的会话）后交给状态机
+  hookServer = new HookServer({
+    onHook: (agent, payload) => {
+      const ids = matchSessionsByCwd(payload['cwd'], store.list(), agentDetector.list(), agent)
+      if (ids.length > 0) agentDetector.hookEvent(ids, agent, payload)
+    },
+  })
+  let hookPort = 0
+  try {
+    hookPort = await hookServer.start(derivePort(dataDir))
+    console.log(`[agent] hooks 端点已启动 http://127.0.0.1:${hookPort}/tagterm/hook/`)
+  } catch (err) {
+    console.error('[agent] hooks 端点启动失败，Claude / Codex hooks 不可用', err)
+  }
+
   registerIpc(ipcMain, {
     version: app.getVersion(),
     osBuild: osBuildNumber(),
@@ -238,7 +258,14 @@ app.whenReady().then(async () => {
   })
   tray = createTray({ onShow: showWindow, onOpenSettings: openSettings, onQuit: quitApp })
   if (isSmoke)
-    runSmokeCheck(mainWindow, { store, tags, pty: ptyManager, probe: processProbe, quit: quitApp })
+    runSmokeCheck(mainWindow, {
+      store,
+      tags,
+      pty: ptyManager,
+      probe: processProbe,
+      hookPort,
+      quit: quitApp,
+    })
   // 未打包（开发）时 electron-updater 会直接报错，只在打包版自动检查
   else if (app.isPackaged) updater.scheduleAutoCheck(10_000)
 })
@@ -249,6 +276,8 @@ app.on('second-instance', () => showWindow())
 app.on('before-quit', () => {
   isQuitting = true
   ptyManager.killAll()
+  void hookServer?.stop()
+  hookServer = null
   tray?.destroy()
   tray = null
 })

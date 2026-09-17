@@ -64,6 +64,9 @@ export interface PtyExitEvent {
   pid: number
 }
 
+/** 装了 hooks 的两个工具：本地 HookServer 按 URL 路径 /tagterm/hook/<agent> 区分来源 */
+export type HookAgent = 'claude' | 'codex'
+
 /** 渲染进程的「静默末尾」报告：某会话 silentMs 无输出后屏幕末尾的非空行（≤ 50 行），主进程只做判定不记录 */
 export interface OutputReport {
   tail: string[]
