@@ -45,6 +45,7 @@ const api: TagTermApi = {
     getAutoLaunch: () => invoke('app:get-auto-launch'),
     setAutoLaunch: (enabled) => invoke('app:set-auto-launch', enabled),
     onOpenSettings: (cb) => subscribe('app:open-settings', cb),
+    onSelectSession: (cb) => subscribe('app:select-session', cb),
   },
   session: {
     list: () => invoke('session:list'),

@@ -2,15 +2,17 @@
  * 装配层：创建各服务、注入依赖、绑定 app 生命周期；不含业务逻辑。
  * 会话生命周期 = 应用生命周期：关窗只隐藏到托盘；托盘「退出」与 before-quit 都 killAll。
  */
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, type Tray } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { existsSync } from 'node:fs'
 import { homedir, release, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AutoLaunchStatus, EventArgs, EventChannel } from '@shared/ipc'
-import { DEFAULT_AGENTS } from '@shared/models'
+import { DEFAULT_AGENTS, type AgentStatus, type SessionRuntime } from '@shared/models'
+import overlayIconPath from '../../resources/overlay-blocked.png?asset'
 import { createMainWindow, showMainWindow } from './window'
-import { createTray } from './tray'
+import { createTray, type TrayHandle } from './tray'
+import { decideNotification } from './agent/notificationPolicy'
 import { registerIpc } from './ipc'
 import { runSmokeCheck } from './smoke'
 import { SessionStore } from './store/SessionStore'
@@ -48,7 +50,9 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 let mainWindow: BrowserWindow | null = null
-let tray: Tray | null = null
+let tray: TrayHandle | null = null
+/** 会话名查询：SessionStore 在 whenReady 里才创建，通知文案要用会话名 */
+let sessionNameOf: (sessionId: string) => string = (id) => id
 let hookServer: HookServer | null = null
 let isQuitting = false
 
@@ -144,13 +148,55 @@ function quitApp(): void {
   app.quit()
 }
 
-// 会话运行时状态机：变化即广播；记录删除时广播一条 alive: false 的空闲记录，渲染进程据此删镜像
+// 会话运行时状态机：变化即广播；记录删除时广播一条 alive: false 的空闲记录，渲染进程据此删镜像。
+// 变化同时驱动系统通知（同会话同状态只弹一次）、托盘黄点与任务栏 overlay（等你确认的会话数）
+const lastNotifiedStatus = new Map<string, AgentStatus>()
 const agentDetector = new AgentDetector({
   now: () => Date.now(),
-  onChange: (runtime) => broadcast('agent:status', runtime),
-  onRemove: (sessionId) =>
-    broadcast('agent:status', { sessionId, alive: false, agent: null, status: 'idle' }),
+  onChange: (runtime) => {
+    broadcast('agent:status', runtime)
+    notifyOnChange(runtime)
+    refreshBadge()
+  },
+  onRemove: (sessionId) => {
+    broadcast('agent:status', { sessionId, alive: false, agent: null, status: 'idle' })
+    lastNotifiedStatus.delete(sessionId)
+    refreshBadge()
+  },
 })
+
+/** 进入 blocked（没人看）/ done → 系统通知；点击通知显示窗口并让渲染进程切到该会话。烟测不弹（避免往通知中心堆 toast） */
+function notifyOnChange(runtime: SessionRuntime): void {
+  const prev = lastNotifiedStatus.get(runtime.sessionId) ?? null
+  lastNotifiedStatus.set(runtime.sessionId, runtime.status)
+  const text = decideNotification(
+    prev,
+    runtime,
+    agentDetector.isViewed(runtime.sessionId),
+    sessionNameOf(runtime.sessionId),
+  )
+  if (!text || isSmoke || !Notification.isSupported()) return
+  const notification = new Notification({ title: text.title, body: text.body })
+  notification.on('click', () => {
+    showWindow()
+    broadcast('app:select-session', runtime.sessionId)
+  })
+  notification.show()
+}
+
+let overlayImage: Electron.NativeImage | null = null
+
+/** 等你确认的会话数 → 托盘图标 / tooltip 与任务栏按钮 overlay；归零还原 */
+function refreshBadge(): void {
+  const count = agentDetector.list().filter((r) => r.status === 'blocked').length
+  tray?.setBadge(count)
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setOverlayIcon(
+      count > 0 ? overlayImage : null,
+      count > 0 ? `${count} 个会话等你确认` : '',
+    )
+  }
+}
 
 // 进程树探针：只在有 pty 存活时每 2 s 扫一轮（原生模块一次十几毫秒），快照变化才喂给状态机；也回答 session:update 的空闲核对
 const processProbe = new ProcessTreeProbe({ listSubtree, intervalMs: 2000 })
@@ -186,6 +232,9 @@ const updater = new Updater({
 })
 
 app.whenReady().then(async () => {
+  // 系统通知在 Windows 上要有 AppUserModelId（与 electron-builder.yml 的 appId 一致）才能显示
+  app.setAppUserModelId('com.tagterm.app')
+  overlayImage = nativeImage.createFromPath(overlayIconPath)
   const dataDir = isSmoke ? app.getPath('userData') : resolveDataDir(app.getPath('appData'))
   const pathEnv = process.env['PATH'] ?? ''
   const availableShells = detectAvailableShells(pathEnv, existsSync)
@@ -196,6 +245,13 @@ app.whenReady().then(async () => {
   const store = new SessionStore(dataDir, {
     onChanged: (sessions) => broadcast('session:changed', sessions),
   })
+  sessionNameOf = (id) => {
+    try {
+      return store.get(id).name
+    } catch {
+      return id
+    }
+  }
   // 首次运行时 settings.json 的唤起命令来自 PATH 探测；之后完全以文件为准
   const settings = new SettingsStore(dataDir, {
     seedCommands: availableAgents,
@@ -296,6 +352,8 @@ app.whenReady().then(async () => {
       pty: ptyManager,
       probe: processProbe,
       hookPort,
+      badgeCount: () => tray?.count() ?? -1,
+      agentStatusOf: (id) => agentDetector.list().find((r) => r.sessionId === id)?.status ?? null,
       quit: quitApp,
     })
   // 未打包（开发）时 electron-updater 会直接报错，只在打包版自动检查

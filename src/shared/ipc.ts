@@ -143,6 +143,7 @@ export interface IpcEventMap {
   'update:status': [status: UpdateStatus] // 更新状态机每次变化
   'tag:changed': [result: TagListResult] // 标签或关联变更后全量广播（启动清理不广播）
   'agent:status': [runtime: SessionRuntime] // 某会话运行时记录变化；记录删除时发 alive: false 的空闲记录
+  'app:select-session': [sessionId: string] // 系统通知被点击：显示窗口并切到该会话
 }
 
 export type SendChannel = keyof IpcSendMap
