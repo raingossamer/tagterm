@@ -21,6 +21,8 @@ export interface TerminalInstance {
   onResize(cb: (size: TerminalSize) => void): Disposable
   /** WebGL 渲染只挂在当前可见实例（Chromium 上下文数量有限） */
   setWebgl(enabled: boolean): void
+  /** 活动缓冲区（alt-screen 时就是 TUI 画面）末尾 n 行非空行，自顶向下顺序；主进程据此判定「等你确认」与当前目录 */
+  readTail(lines: number): string[]
   dispose(): void
 }
 

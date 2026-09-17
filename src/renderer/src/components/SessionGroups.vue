@@ -159,6 +159,7 @@ function onDrop(group: SessionGroup, targetId: string): void {
             :peer="s.id === workspace.hoveredId"
             :can-drag="canDrag"
             :status="agent.statusOf(s.id)"
+            :pending-hint="agent.runtimeOf(s.id)?.pendingHint"
             @select="emit('select', $event)"
             @hover="workspace.setHovered($event)"
             @leave="onLeave"

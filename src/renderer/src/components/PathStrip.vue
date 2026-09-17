@@ -1,7 +1,8 @@
 <script setup lang="ts">
-// 路径条：当前会话的固定路径、复制、标签胶囊（× 直接 detach）、「+ 标签」弹出层、
+// 路径条：当前会话的当前目录（终端里 cd 之后追踪到的 cwdNow，没有则是固定目录）、复制、标签胶囊（× 直接 detach）、「+ 标签」弹出层、
 // 唤起区（settings.json 里的命令：pinned 平铺、其余收进「更多 ▾」、「编辑」）、清屏。移除会话的入口在左栏会话行的右键菜单
 import { computed, ref } from 'vue'
+import { useAgentStore } from '../stores/agent'
 import { useSessionsStore } from '../stores/sessions'
 import { useSettingsStore } from '../stores/settings'
 import { useTagsStore } from '../stores/tags'
@@ -16,6 +17,7 @@ const sessions = useSessionsStore()
 const settings = useSettingsStore()
 const tags = useTagsStore()
 const workspace = useWorkspaceStore()
+const agent = useAgentStore()
 const { isCopied, copy } = useCopy()
 const isEditOpen = ref(false)
 // 两个弹出层：点击容器（按钮 + 弹出层）外部即关闭；TagPopover 的 Esc 由它自己 emit close
@@ -26,9 +28,18 @@ const { isOpen: isTagPopOpen, toggle: toggleTagPop, close: closeTagPop } = usePo
 
 const session = computed(() => (workspace.activeId ? sessions.byId(workspace.activeId) : undefined))
 const sessionTags = computed(() => (session.value ? tags.tagsOf(session.value.id) : []))
-// 路径条只显示到第三级，完整路径放 tooltip 与「复制」
-const pathDisplay = computed(() => (session.value ? pathHead(session.value.cwd) : ''))
-const pathTitle = computed(() => (session.value ? `${session.value.cwd}\n会话固定在这个目录` : ''))
+// 显示的是当前目录：主进程从提示符解析到的 cwdNow，缺省回落到会话固定目录
+const currentDir = computed(() =>
+  session.value ? (agent.runtimeOf(session.value.id)?.cwdNow ?? session.value.cwd) : '',
+)
+// 路径条只显示到第三级，完整路径放 tooltip 与「复制」；cd 到别处时 tooltip 第二行仍给出固定目录
+const pathDisplay = computed(() => (currentDir.value ? pathHead(currentDir.value) : ''))
+const pathTitle = computed(() => {
+  if (!session.value) return ''
+  return currentDir.value === session.value.cwd
+    ? `${session.value.cwd}\n会话固定在这个目录`
+    : `${currentDir.value}\n会话固定在：${session.value.cwd}`
+})
 
 /** 唤起按钮本质是向终端写入 `<cmd>\r` */
 function runCommand(cmd: string): void {
@@ -50,7 +61,7 @@ function clearScreen(): void {
 <template>
   <div v-if="session" class="strip">
     <span class="path" :title="pathTitle" data-test="strip-path">{{ pathDisplay }}</span>
-    <button class="btn sm" title="复制路径" data-test="strip-copy" @click="copy(session.cwd)">
+    <button class="btn sm" title="复制路径" data-test="strip-copy" @click="copy(currentDir)">
       {{ isCopied ? '已复制' : '复制' }}
     </button>
     <span

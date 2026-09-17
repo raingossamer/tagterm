@@ -18,6 +18,14 @@ const tabs = computed(() =>
     .filter((s): s is NonNullable<typeof s> => s !== undefined),
 )
 
+/** 等你确认时把那一行提示挂在标签页 tooltip 上 */
+function tabTitle(id: string): string | undefined {
+  const runtime = agent.runtimeOf(id)
+  return runtime?.status === 'blocked' && runtime.pendingHint
+    ? `等你确认：${runtime.pendingHint}`
+    : undefined
+}
+
 function onTabKeydown(e: KeyboardEvent, id: string): void {
   if (e.key === 'Enter' || e.key === ' ') {
     e.preventDefault()
@@ -43,6 +51,7 @@ function onTabKeydown(e: KeyboardEvent, id: string): void {
       :class="{ active: s.id === workspace.activeId }"
       role="button"
       tabindex="0"
+      :title="tabTitle(s.id)"
       data-test="tab"
       @click="emit('select', s.id)"
       @keydown="onTabKeydown($event, s.id)"

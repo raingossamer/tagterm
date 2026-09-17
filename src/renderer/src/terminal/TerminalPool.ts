@@ -79,6 +79,11 @@ export class TerminalPool {
     this.entries.get(sessionId)?.term.write(data)
   }
 
+  /** 某实例屏幕末尾的非空行（OutputWatcher 静默上报用）；无实例为 null */
+  readTail(sessionId: string, lines: number): string[] | null {
+    return this.entries.get(sessionId)?.term.readTail(lines) ?? null
+  }
+
   /** 其余 host 隐藏，目标显示；下一帧 fit + focus；WebGL 挪到该实例 */
   show(sessionId: string): void {
     const target = this.entries.get(sessionId)

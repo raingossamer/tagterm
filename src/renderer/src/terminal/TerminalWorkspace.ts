@@ -6,10 +6,15 @@
  * 观察方式：snapshot() 返回不可变快照，subscribe() 在每个命令结束时收到新快照。
  */
 import type { Session } from '@shared/models'
-import type { PtyExitEvent } from '@shared/ipc'
+import type { OutputReport, PtyExitEvent } from '@shared/ipc'
 import type { TagTermApi, Unsubscribe } from '@shared/api'
 import type { TerminalFactory } from './TerminalInstance'
 import { TerminalPool } from './TerminalPool'
+import { OutputWatcher } from './OutputWatcher'
+
+/** 静默多久算「屏幕停下来了」，以及上报末尾几行（主进程只看末行判提示、往前找提示符取目录） */
+const OUTPUT_SILENCE_MS = 1500
+const OUTPUT_TAIL_LINES = 8
 
 /** 每会话 pty 运行态：无记录 = 没有终端实例（从未打开，或已移除）。与 shared 的 SessionRuntime（M3 agent 状态）是两回事 */
 export type PtyPhase = 'opening' | 'running' | 'exited'
@@ -37,6 +42,8 @@ export interface TerminalWorkspaceDeps {
   createTerminal: TerminalFactory
   /** 下一帧调度：缺省 requestAnimationFrame，测试传同步执行 */
   raf?: (fn: () => void) => void
+  /** 静默末尾上报（生产传 window.tagterm.agent.reportOutput）；不传则不上报 */
+  reportOutput?: (sessionId: string, report: OutputReport) => void
 }
 
 export class TerminalWorkspace {
@@ -51,6 +58,8 @@ export class TerminalWorkspace {
   private readonly stalePids = new Map<string, number>()
   private readonly listeners = new Set<(s: WorkspaceSnapshot) => void>()
   private readonly unsubscribes: Unsubscribe[]
+  /** 屏幕末尾静默上报：pty 数据到达即重置计时，静默后读该实例末尾几行交给主进程 */
+  private readonly watcher: OutputWatcher
 
   /** 构造即订阅 pty.onData / onExit（订阅不随 TerminalPane 挂载摇摆） */
   constructor(private readonly deps: TerminalWorkspaceDeps) {
@@ -60,8 +69,17 @@ export class TerminalWorkspace {
       onInput: (id, data) => this.handleInput(id, data),
       onResize: (id, size) => void deps.pty.resize(id, size),
     })
+    this.watcher = new OutputWatcher({
+      readTail: (id, lines) => this.pool.readTail(id, lines),
+      report: (id, report) => deps.reportOutput?.(id, report),
+      silenceMs: OUTPUT_SILENCE_MS,
+      tailLines: OUTPUT_TAIL_LINES,
+    })
     this.unsubscribes = [
-      deps.pty.onData((id, data) => this.pool.write(id, data)),
+      deps.pty.onData((id, data) => {
+        this.pool.write(id, data)
+        if (deps.reportOutput) this.watcher.touch(id)
+      }),
       deps.pty.onExit((e) => this.handleExit(e)),
     ]
   }
@@ -196,6 +214,7 @@ export class TerminalWorkspace {
   /** App 卸载：退订 pty、销毁全部实例、清空记录 */
   dispose(): void {
     for (const unsubscribe of this.unsubscribes) unsubscribe()
+    this.watcher.dispose()
     for (const id of this.pool.sessionIds()) this.pool.dispose(id)
     this.runtime.clear()
     this.pids.clear()
@@ -213,9 +232,10 @@ export class TerminalWorkspace {
     this.deps.pty.write(id, data)
   }
 
-  /** 会话已不存在：销毁实例、删运行态、关其标签页（邻居规则） */
+  /** 会话已不存在：销毁实例、取消静默计时、删运行态、关其标签页（邻居规则） */
   private evict(id: string): void {
     this.pool.dispose(id)
+    this.watcher.forget(id)
     this.runtime.delete(id)
     this.pids.delete(id)
     this.stalePids.delete(id)

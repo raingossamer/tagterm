@@ -58,13 +58,24 @@ describe('TabBar', () => {
     expect(wrapper.emitted('newSession')).toHaveLength(1)
   })
 
-  it('标签页的状态点取 agent store：无记录为 idle，有记录按状态加类名', async () => {
+  it('标签页的状态点取 agent store：无记录为 idle，有记录按状态加类名；等你确认时 tooltip 为「等你确认：<提示>」', async () => {
     const agent = useAgentStore()
-    agent.runtime = { [b.id]: { sessionId: b.id, alive: true, agent: 'claude', status: 'blocked' } }
+    agent.runtime = {
+      [b.id]: {
+        sessionId: b.id,
+        alive: true,
+        agent: 'claude',
+        status: 'blocked',
+        pendingHint: 'Allow?',
+      },
+    }
     const wrapper = mount(TabBar)
+    const tabs = wrapper.findAll('[data-test=tab]')
     const dots = wrapper.findAll('[data-test=tab] .dot')
 
     expect(dots[0]!.classes()).toContain('idle')
     expect(dots[1]!.classes()).toContain('blocked')
+    expect(tabs[0]!.attributes('title')).toBeUndefined()
+    expect(tabs[1]!.attributes('title')).toBe('等你确认：Allow?')
   })
 })

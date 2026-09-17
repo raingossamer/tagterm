@@ -52,6 +52,7 @@ let osBuild = 0
 const core = new TerminalWorkspace({
   pty: window.tagterm.pty,
   createTerminal: createXtermFactory(() => buildTerminalOptions(osBuild)),
+  reportOutput: (id, report) => window.tagterm.agent.reportOutput(id, report),
 })
 provide(TERMINAL_WORKSPACE_KEY, core)
 const detachCore = workspace.attachCore(core)

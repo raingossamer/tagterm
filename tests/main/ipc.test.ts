@@ -425,6 +425,23 @@ describe('IPC 接口层', () => {
     await expect(ipc.invoke('agent:list')).resolves.toEqual([])
   })
 
+  it('agent:report-output（单向）：合法报告按会话 shell 交给状态机（cwdNow 更新）；非法参数 / 未知会话静默忽略', async () => {
+    const s = (await ipc.invoke('session:create', { cwd: process.cwd() })) as Session
+    await ipc.invoke('pty:open', s.id, { cols: 80, rows: 24 })
+    agentChanges.length = 0
+
+    ipc.send('agent:report-output', s.id, { tail: ['C:\\Windows>'], silentMs: 1500 })
+    expect(agentChanges.at(-1)).toMatchObject({ sessionId: s.id, cwdNow: 'C:\\Windows' })
+
+    const count = agentChanges.length
+    ipc.send('agent:report-output', 'ghost', { tail: ['C:\\x>'], silentMs: 1500 })
+    ipc.send('agent:report-output', s.id, { tail: 'C:\\x>', silentMs: 1500 })
+    ipc.send('agent:report-output', s.id, { tail: ['C:\\x>'], silentMs: -1 })
+    ipc.send('agent:report-output', s.id, { tail: new Array(51).fill('C:\\x>'), silentMs: 0 })
+    ipc.send('agent:report-output', 5, { tail: ['C:\\x>'], silentMs: 0 })
+    expect(agentChanges).toHaveLength(count)
+  })
+
   it('agent:set-viewed 接受 null 与非空字符串，其余拒绝', async () => {
     await expect(ipc.invoke('agent:set-viewed', null)).resolves.toBeUndefined()
     await expect(ipc.invoke('agent:set-viewed', 'abc')).resolves.toBeUndefined()

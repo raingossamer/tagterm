@@ -8,6 +8,7 @@ import type {
   InvokeArgs,
   InvokeChannel,
   InvokeResult,
+  OutputReport,
   PtySize,
   SendArgs,
   SendChannel,
@@ -185,6 +186,17 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   on('pty:write', (id, data) => {
     if (typeof id === 'string' && typeof data === 'string') deps.pty.write(id, data)
   })
+  // 静默末尾报告（单向）：非法参数与未知会话都静默忽略；会话的 shell 决定提示符怎么解析
+  on('agent:report-output', (id, report) => {
+    if (typeof id !== 'string' || !id || !isOutputReport(report)) return
+    let shell: ShellKind
+    try {
+      shell = deps.store.get(id).shell
+    } catch {
+      return
+    }
+    deps.agent.reportOutput(id, report, shell)
+  })
 }
 
 // ---- 参数类型守卫：非法即抛（面向用户可读的中文 message） ----
@@ -192,6 +204,19 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
 function assertId(id: unknown): string {
   if (typeof id !== 'string' || !id) throw new Error('会话 id 不能为空')
   return id
+}
+
+const MAX_REPORT_LINES = 50
+
+function isOutputReport(report: unknown): report is OutputReport {
+  const o = (report ?? {}) as Record<string, unknown>
+  return (
+    Array.isArray(o.tail) &&
+    o.tail.length <= MAX_REPORT_LINES &&
+    o.tail.every((line) => typeof line === 'string') &&
+    Number.isInteger(o.silentMs) &&
+    (o.silentMs as number) >= 0
+  )
 }
 
 function assertViewedId(id: unknown): string | null {

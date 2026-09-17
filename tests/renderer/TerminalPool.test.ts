@@ -117,6 +117,14 @@ describe('TerminalPool（只管 xterm 一侧，不认识 pty）', () => {
     expect(terminals[2]!.host?.parentElement).toBe(container)
   })
 
+  it('readTail 转发到对应实例（自底向上取非空行）；未知会话为 null', () => {
+    pool.open('a')
+    pool.write('a', 'line1\r\nline2\r\n\r\nline3\r\n')
+    expect(pool.readTail('a', 2)).toEqual(['line2', 'line3'])
+    expect(pool.readTail('a', 10)).toEqual(['line1', 'line2', 'line3'])
+    expect(pool.readTail('ghost', 2)).toBeNull()
+  })
+
   it('attach 补挂已建的 host；detach 后再 attach 到新容器同样补挂', () => {
     pool.detach()
     pool.open('a')

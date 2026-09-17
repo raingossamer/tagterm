@@ -5,6 +5,7 @@
 import type {
   AutoLaunchStatus,
   CreateSessionInput,
+  OutputReport,
   PtyExitEvent,
   PtyOpenResult,
   PtySize,
@@ -74,6 +75,8 @@ export interface TagTermApi {
     list(): Promise<SessionRuntime[]>
     /** 正被查看的会话（不可见或失焦发 null） */
     setViewed(sessionId: string | null): Promise<void>
+    /** 某会话静默 1.5 s 后屏幕末尾的几行（单向，不等待） */
+    reportOutput(sessionId: string, report: OutputReport): void
     onStatus(cb: (runtime: SessionRuntime) => void): Unsubscribe
   }
   pty: {

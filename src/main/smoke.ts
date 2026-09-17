@@ -54,6 +54,15 @@ const SMOKE_SCRIPT = `(async () => {
   api.pty.write(s1.id, 'echo 你好，TagTerm\\r')
   const gotEcho = await waitFor(() => (outputs[s1.id] ?? '').includes('你好，TagTerm'))
 
+  // cwd 追踪：在真实 cmd 里 cd 到别的目录 → 静默 1.5 s 后渲染进程上报末尾几行 → 主进程解析提示符 → 路径条跟着变，tooltip 第二行仍是固定目录
+  const stripPathBefore = $('[data-test=strip-path]')?.textContent ?? null
+  api.pty.write(s1.id, 'cd C:\\\\Windows\\r')
+  const cwdTracked = await waitFor(() => $('[data-test=strip-path]')?.textContent === 'C:\\\\Windows')
+  const stripPathAfter = $('[data-test=strip-path]')?.textContent ?? null
+  const stripTitleAfter = $('[data-test=strip-path]')?.getAttribute('title') ?? null
+  const cwdNowInRuntime = (await api.agent.list()).find((r) => r.sessionId === s1.id)?.cwdNow ?? null
+  const cwdTrack = { stripPathBefore, cwdTracked, stripPathAfter, stripTitleAfter, cwdNowInRuntime }
+
   // 右键无选区 → 读剪贴板粘贴并执行
   await navigator.clipboard.writeText('echo 右键粘贴OK\\r')
   $('[data-test=terminal-pane] .xterm')?.dispatchEvent(
@@ -262,6 +271,7 @@ const SMOKE_SCRIPT = `(async () => {
     strip: { launchers, sideHidden },
     scrollbar: { sliderBg, sliderHidden },
     agentRuntime,
+    cwdTrack,
     sessionDrag: { namesBeforeDrag, dragApplied, namesAfterDrag, globalOrderChanged },
     tags: {
       gotTagDot, tagDotColor, groupsTagged, s2Tooltip, chipCounts, groupsAny, groupsAll, rowsAll, groupsCleared,

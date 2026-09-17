@@ -90,6 +90,16 @@ export function createXtermFactory(getOptions: () => ITerminalOptions): Terminal
       },
       onData: (cb) => term.onData(cb),
       onResize: (cb) => term.onResize(cb),
+      // 活动缓冲区自底向上取非空行：普通模式含回滚区末尾，alt-screen（TUI）时就是当前画面底部
+      readTail: (lines) => {
+        const buffer = term.buffer.active
+        const out: string[] = []
+        for (let i = buffer.length - 1; i >= 0 && out.length < lines; i -= 1) {
+          const text = buffer.getLine(i)?.translateToString(true).trimEnd() ?? ''
+          if (text) out.push(text)
+        }
+        return out.reverse()
+      },
       setWebgl: (enabled) => {
         if (enabled && !webgl) {
           try {
