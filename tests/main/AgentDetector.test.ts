@@ -148,4 +148,119 @@ describe('AgentDetector（运行时状态机）', () => {
     detector.setViewed(null)
     expect(changes.at(-1)).toMatchObject({ status: 'idle' })
   })
+
+  it('Claude hooks：UserPromptSubmit → working；Notification 四种类型 → blocked + message（截断 200）；其他类型忽略；Stop → 被查看 idle / 否则 done；SessionStart 记 claude；SessionEnd 清 agent 回 idle', () => {
+    detector.ptySpawned('s1')
+    changes.length = 0
+    const hook = (payload: Record<string, unknown>): void =>
+      detector.hookEvent(['s1'], 'claude', payload)
+
+    hook({ hook_event_name: 'SessionStart' })
+    expect(changes.at(-1)).toEqual({
+      sessionId: 's1',
+      alive: true,
+      agent: 'claude',
+      status: 'idle',
+    })
+    hook({ hook_event_name: 'UserPromptSubmit' })
+    expect(changes.at(-1)).toMatchObject({ status: 'working' })
+
+    for (const type of [
+      'permission_prompt',
+      'elicitation_dialog',
+      'elicitation_url_dialog',
+      'agent_needs_input',
+    ]) {
+      hook({ hook_event_name: 'UserPromptSubmit' })
+      hook({ hook_event_name: 'Notification', notification_type: type, message: `need ${type}` })
+      expect(changes.at(-1)).toMatchObject({ status: 'blocked', pendingHint: `need ${type}` })
+    }
+    const count = changes.length
+    hook({ hook_event_name: 'Notification', notification_type: 'idle_prompt', message: 'x' })
+    hook({ hook_event_name: 'PreToolUse' })
+    expect(changes).toHaveLength(count)
+
+    hook({ hook_event_name: 'UserPromptSubmit' })
+    hook({
+      hook_event_name: 'Notification',
+      notification_type: 'permission_prompt',
+      message: 'm'.repeat(500),
+    })
+    expect((changes.at(-1) as SessionRuntime).pendingHint).toHaveLength(200)
+
+    hook({ hook_event_name: 'Stop' })
+    expect(changes.at(-1)).toMatchObject({ status: 'done' })
+    expect(changes.at(-1)).not.toHaveProperty('pendingHint')
+    detector.setViewed('s1')
+    expect(changes.at(-1)).toMatchObject({ status: 'idle' })
+    hook({ hook_event_name: 'UserPromptSubmit' })
+    hook({ hook_event_name: 'Stop' })
+    expect(changes.at(-1)).toMatchObject({ status: 'idle' })
+
+    hook({ hook_event_name: 'UserPromptSubmit' })
+    hook({ hook_event_name: 'SessionEnd' })
+    expect(changes.at(-1)).toEqual({ sessionId: 's1', alive: true, agent: null, status: 'idle' })
+    hook({ hook_event_name: 'Stop' }) // 没有 agent 了：忽略
+    expect(changes.at(-1)).toMatchObject({ agent: null, status: 'idle' })
+  })
+
+  it('Codex hooks：UserPromptSubmit → working；PermissionRequest → blocked（tool_input.description 优先，其次 tool_name）；Interrupt → idle；Stop / SessionStart / SessionEnd 同 Claude；多会话同时命中各自转移', () => {
+    detector.ptySpawned('s1')
+    detector.ptySpawned('s2')
+    changes.length = 0
+
+    detector.hookEvent(['s1', 's2'], 'codex', { hook_event_name: 'SessionStart' })
+    expect(detector.list().map((r) => r.agent)).toEqual(['codex', 'codex'])
+    detector.hookEvent(['s1'], 'codex', { hook_event_name: 'UserPromptSubmit' })
+    expect(changes.at(-1)).toMatchObject({ sessionId: 's1', status: 'working' })
+    detector.hookEvent(['s1'], 'codex', {
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'shell',
+      tool_input: { description: 'run npm test' },
+    })
+    expect(changes.at(-1)).toMatchObject({ status: 'blocked', pendingHint: 'run npm test' })
+    detector.hookEvent(['s1'], 'codex', {
+      hook_event_name: 'PermissionRequest',
+      tool_name: 'shell',
+    })
+    expect(changes.at(-1)).toMatchObject({ status: 'blocked', pendingHint: 'shell' })
+    detector.hookEvent(['s1'], 'codex', { hook_event_name: 'Interrupt' })
+    expect(changes.at(-1)).toMatchObject({ status: 'idle' })
+    expect(changes.at(-1)).not.toHaveProperty('pendingHint')
+
+    detector.hookEvent(['s1'], 'codex', { hook_event_name: 'UserPromptSubmit' })
+    detector.hookEvent(['s1'], 'codex', { hook_event_name: 'Stop', last_assistant_message: 'ok' })
+    expect(changes.at(-1)).toMatchObject({ sessionId: 's1', status: 'done' })
+    detector.hookEvent(['s2'], 'codex', { hook_event_name: 'SessionEnd' })
+    expect(changes.at(-1)).toEqual({ sessionId: 's2', alive: true, agent: null, status: 'idle' })
+    detector.hookEvent(['ghost'], 'codex', { hook_event_name: 'UserPromptSubmit' })
+    detector.hookEvent([], 'codex', { hook_event_name: 'UserPromptSubmit' })
+    detector.hookEvent(['s1'], 'codex', {})
+    expect(changes.at(-1)).toMatchObject({ sessionId: 's2' })
+  })
+
+  it('hooks 抑制窗：收到 hook 后 30 s 内，pty 数据与静默报告都不改状态（cwdNow 照常）；30 s 后恢复', () => {
+    detector.ptySpawned('s1')
+    detector.hookEvent(['s1'], 'claude', { hook_event_name: 'SessionStart' })
+    detector.hookEvent(['s1'], 'claude', { hook_event_name: 'UserPromptSubmit' })
+    changes.length = 0
+
+    detector.reportOutput('s1', { tail: ['Allow?'], silentMs: 1500 }, 'cmd.exe')
+    expect(changes).toEqual([])
+    detector.reportOutput('s1', { tail: ['C:\\p>'], silentMs: 1500 }, 'cmd.exe')
+    expect(changes.at(-1)).toMatchObject({ status: 'working', cwdNow: 'C:\\p' })
+    detector.hookEvent(['s1'], 'claude', { hook_event_name: 'Stop' })
+    expect(changes.at(-1)).toMatchObject({ status: 'done' })
+    detector.ptyData('s1')
+    expect(changes.at(-1)).toMatchObject({ status: 'done' })
+
+    now += 29_000
+    detector.ptyData('s1')
+    expect(changes.at(-1)).toMatchObject({ status: 'done' })
+    now += 2_000
+    detector.ptyData('s1')
+    expect(changes.at(-1)).toMatchObject({ status: 'working' })
+    detector.reportOutput('s1', { tail: ['Allow?'], silentMs: 1500 }, 'cmd.exe')
+    expect(changes.at(-1)).toMatchObject({ status: 'blocked', pendingHint: 'Allow?' })
+  })
 })

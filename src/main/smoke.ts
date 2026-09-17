@@ -9,6 +9,7 @@
  */
 import { app, type BrowserWindow } from 'electron'
 import { existsSync, writeFileSync } from 'node:fs'
+import { request as httpRequest } from 'node:http'
 import { join } from 'node:path'
 import type { PtyManager } from './pty/PtyManager'
 import type { ProcessTreeProbe } from './agent/ProcessTreeProbe'
@@ -20,6 +21,8 @@ export interface SmokeDeps {
   tags: TagStore
   pty: PtyManager
   probe: ProcessTreeProbe
+  /** HookServer 实际监听的端口（0 = 启动失败） */
+  hookPort: number
   quit: () => void
 }
 
@@ -444,7 +447,7 @@ const RESTORE_PREPARE_SCRIPT = `(async () => {
   const tabNames = () => $$('[data-test=tab-name]').map((t) => t.textContent)
   const activeTab = () => $('[data-test=tab].active [data-test=tab-name]')?.textContent ?? null
   const r3 = await api.session.create({ cwd: 'C:\\\\Windows', name: 'smoke-r3' })
-  const r4 = await api.session.create({ cwd: 'C:\\\\Windows', name: 'smoke-r4' })
+  const r4 = await api.session.create({ cwd: 'C:\\\\Windows\\\\System32', name: 'smoke-r4' }) // 与 r3 目录不同：hooks 按 cwd 映射时不歧义
   await waitFor(() => !!rowOf('smoke-r4'))
   rowOf('smoke-r3')?.click()
   await waitFor(() => activeTab() === 'smoke-r3')
@@ -494,6 +497,34 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
     new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`${label} 超时 ${ms}ms`)), ms)),
   ])
 }
+
+/** 像 hooks 里的 curl 那样把 JSON POST 到本地 HookServer；返回状态码 */
+function postHook(port: number, agent: 'claude' | 'codex', payload: unknown): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest(
+      { host: '127.0.0.1', port, path: `/tagterm/hook/${agent}`, method: 'POST' },
+      (res) => {
+        res.resume()
+        res.on('end', () => resolve(res.statusCode ?? 0))
+      },
+    )
+    req.on('error', reject)
+    req.end(JSON.stringify(payload))
+  })
+}
+
+/** 渲染进程里某会话行的状态点类名与 tooltip、标签页 tooltip、状态栏三项计数 */
+const ROW_STATE = (name: string): string => `(() => {
+  const row = [...document.querySelectorAll('[data-test=session-row]')].find((r) => r.textContent.includes(${JSON.stringify(name)}))
+  const tab = [...document.querySelectorAll('[data-test=tab]')].find((t) => t.textContent.includes(${JSON.stringify(name)}))
+  const dot = row?.querySelector('.dot')
+  return {
+    dot: dot ? [...dot.classList].filter((c) => c !== 'dot')[0] ?? null : null,
+    rowTitle: row?.getAttribute('title') ?? null,
+    tabTitle: tab?.getAttribute('title') ?? null,
+    counts: ['working', 'blocked', 'done'].map((k) => document.querySelector('[data-test=status-' + k + ']')?.textContent.trim()),
+  }
+})()`
 
 export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
   const consoleErrors: string[] = []
@@ -640,6 +671,93 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
       }
       sessionIds.push(...prepare.ids)
 
+      // hooks 转移：此刻标签页 [s1, r3, r4]、当前页 r3（已 spawn）。先点开 r4（spawn 并成为「正被查看」），
+      // 再像 Claude Code 的 hook 那样把 stdin JSON POST 到本地端点：r3（cwd C:\Windows）SessionStart → UserPromptSubmit → working
+      // → Notification(permission_prompt) → blocked（行 / 标签页 tooltip 带提示、状态栏计数）→ Stop（没人看）→ done → 点回 r3 → idle；
+      // 再对 r4（cwd C:\Windows\System32）走 Codex 路径：PermissionRequest → blocked（tooltip 带 tool_input.description）→ Interrupt → idle
+      const rowState = (name: string): Promise<Record<string, unknown>> =>
+        win.webContents.executeJavaScript(ROW_STATE(name)) as Promise<Record<string, unknown>>
+      const waitDot = async (name: string, expected: string): Promise<boolean> => {
+        const start = Date.now()
+        while (Date.now() - start < 5000) {
+          if ((await rowState(name))['dot'] === expected) return true
+          await sleep(100)
+        }
+        return false
+      }
+      const clickTab = async (name: string): Promise<void> => {
+        await win.webContents.executeJavaScript(
+          `[...document.querySelectorAll('[data-test=tab]')].find((t) => t.textContent.includes(${JSON.stringify(name)}))?.click()`,
+        )
+        await sleep(300)
+      }
+      await clickTab('smoke-r4')
+      const claudeCwd = 'C:/Windows'
+      const statuses: number[] = []
+      const send = async (
+        agent: 'claude' | 'codex',
+        payload: Record<string, unknown>,
+      ): Promise<void> => {
+        statuses.push(await postHook(deps.hookPort, agent, payload))
+      }
+      await send('claude', { hook_event_name: 'SessionStart', cwd: claudeCwd, session_id: 'smoke' })
+      await send('claude', { hook_event_name: 'UserPromptSubmit', cwd: claudeCwd })
+      const claudeWorking = await waitDot('smoke-r3', 'working')
+      await send('claude', {
+        hook_event_name: 'Notification',
+        notification_type: 'permission_prompt',
+        message: 'Allow smoke tool?',
+        cwd: claudeCwd,
+      })
+      const claudeBlocked = await waitDot('smoke-r3', 'blocked')
+      const blockedState = await rowState('smoke-r3')
+      await send('claude', { hook_event_name: 'Stop', cwd: claudeCwd })
+      const claudeDone = await waitDot('smoke-r3', 'done')
+      const doneState = await rowState('smoke-r3')
+      await clickTab('smoke-r3')
+      const claudeIdleAfterView = await waitDot('smoke-r3', 'idle')
+
+      const codexCwd = 'C:/Windows/System32'
+      await send('codex', { hook_event_name: 'SessionStart', cwd: codexCwd })
+      await send('codex', { hook_event_name: 'UserPromptSubmit', cwd: codexCwd })
+      await send('codex', {
+        hook_event_name: 'PermissionRequest',
+        tool_name: 'shell',
+        tool_input: { description: 'run dir' },
+        cwd: codexCwd,
+      })
+      const codexBlocked = await waitDot('smoke-r4', 'blocked')
+      const codexBlockedState = await rowState('smoke-r4')
+      await send('codex', { hook_event_name: 'Interrupt', cwd: codexCwd })
+      const codexIdle = await waitDot('smoke-r4', 'idle')
+      const badJson = await new Promise<number>((resolve, reject) => {
+        const req = httpRequest(
+          { host: '127.0.0.1', port: deps.hookPort, path: '/tagterm/hook/claude', method: 'POST' },
+          (res) => {
+            res.resume()
+            res.on('end', () => resolve(res.statusCode ?? 0))
+          },
+        )
+        req.on('error', reject)
+        req.end('{ not json')
+      })
+      const hooks = {
+        port: deps.hookPort,
+        statuses,
+        badJson,
+        claudeWorking,
+        claudeBlocked,
+        blockedRowTitle: blockedState['rowTitle'],
+        blockedTabTitle: blockedState['tabTitle'],
+        blockedCounts: blockedState['counts'],
+        claudeDone,
+        doneCounts: doneState['counts'],
+        claudeIdleAfterView,
+        codexBlocked,
+        codexRowTitle: codexBlockedState['rowTitle'],
+        codexIdle,
+      }
+
       // 清理烟测会话（正常退出路径由 before-quit killAll 结束 pty）；tags.json 应已落盘且只剩空集合
       for (const id of sessionIds) await deps.store.remove(id)
       const remaining = deps.store.list().length
@@ -659,6 +777,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
             lifecycle,
             restore,
             processTree,
+            hooks,
             remaining,
             tagsFile,
             consoleErrors,

@@ -3,9 +3,21 @@
  * 输入全是方法调用（装配层把 PtyManager / ProcessTreeProbe / HookServer / 渲染进程的事件接过来），
  * 输出是每次记录变化回调一条记录、记录删除回调一个 id；时钟注入，不 import electron。
  */
-import type { OutputReport } from '@shared/ipc'
+import type { HookAgent, OutputReport } from '@shared/ipc'
 import type { AgentKind, SessionRuntime, ShellKind } from '@shared/models'
 import { classify, parsePromptCwd } from './OutputHeuristics'
+
+/** 收到 hooks 事件后多久内输出启发式不产生状态转移（最可靠的信号说了算） */
+const HOOK_SUPPRESS_MS = 30_000
+/** pendingHint 上限：通知里的 message 可能很长 */
+const MAX_HINT_LENGTH = 200
+/** Claude 的哪些通知类型算「等你确认」 */
+const CLAUDE_BLOCKING_NOTIFICATIONS = new Set([
+  'permission_prompt',
+  'elicitation_dialog',
+  'elicitation_url_dialog',
+  'agent_needs_input',
+])
 
 export interface AgentDetectorDeps {
   now: () => number
@@ -19,6 +31,8 @@ export class AgentDetector {
   private readonly runtimes = new Map<string, SessionRuntime>()
   /** 正被查看的会话（窗口可见且聚焦时的当前页），渲染进程上报；主进程始终持有这一个值 */
   private viewedId: string | null = null
+  /** 每会话最近一次 hooks 事件的时间：抑制窗以它起算 */
+  private readonly hookSeenAt = new Map<string, number>()
 
   constructor(private readonly deps: AgentDetectorDeps) {}
 
@@ -85,6 +99,67 @@ export class AgentDetector {
     }
   }
 
+  /**
+   * hooks 事件（装配层已按 cwd 映射到会话，可能多个）。按来源映射：
+   * Claude：UserPromptSubmit → working；Notification（四种需要人的类型）→ blocked + message；Stop → 被查看 ? idle : done；
+   *         SessionStart → agent = claude；SessionEnd → 清 agent、idle；其余忽略。
+   * Codex：UserPromptSubmit → working；PermissionRequest → blocked + (tool_input.description ?? tool_name)；Interrupt → idle；
+   *        Stop / SessionStart / SessionEnd 同 Claude（agent = codex）。
+   * 任一事件都刷新该会话的抑制窗。SessionStart 之外的事件要求会话已有 agent（进程树或 SessionStart 给的）。
+   */
+  hookEvent(
+    sessionIds: readonly string[],
+    agent: HookAgent,
+    payload: Record<string, unknown>,
+  ): void {
+    const event = payload['hook_event_name']
+    if (typeof event !== 'string') return
+    for (const sessionId of sessionIds) {
+      const current = this.runtimes.get(sessionId)
+      if (!current) continue
+      this.hookSeenAt.set(sessionId, this.deps.now())
+      const next = this.applyHook(current, agent, event, payload)
+      if (next && !isSameRuntime(current, next)) this.commit(next)
+    }
+  }
+
+  private applyHook(
+    current: SessionRuntime,
+    agent: HookAgent,
+    event: string,
+    payload: Record<string, unknown>,
+  ): SessionRuntime | null {
+    const { pendingHint: _hint, ...bare } = current
+    if (event === 'SessionStart') return { ...current, agent }
+    if (event === 'SessionEnd') return { ...bare, agent: null, status: 'idle' }
+    if (current.agent === null) return null
+    switch (event) {
+      case 'UserPromptSubmit':
+        return { ...bare, status: 'working' }
+      case 'Stop':
+        return { ...bare, status: this.viewedId === current.sessionId ? 'idle' : 'done' }
+      case 'Notification': {
+        if (agent !== 'claude') return null
+        const type = payload['notification_type']
+        if (typeof type !== 'string' || !CLAUDE_BLOCKING_NOTIFICATIONS.has(type)) return null
+        return { ...bare, status: 'blocked', pendingHint: hintOf(payload['message'], type) }
+      }
+      case 'PermissionRequest': {
+        if (agent !== 'codex') return null
+        const input = payload['tool_input'] as Record<string, unknown> | undefined
+        const hint = hintOf(
+          input?.['description'],
+          hintOf(payload['tool_name'], 'PermissionRequest'),
+        )
+        return { ...bare, status: 'blocked', pendingHint: hint }
+      }
+      case 'Interrupt':
+        return agent === 'codex' ? { ...bare, status: 'idle' } : null
+      default:
+        return null
+    }
+  }
+
   /** 渲染进程上报正被查看的会话（不可见 / 失焦为 null）；「已完成未查看」一旦被查看即回空闲 */
   setViewed(sessionId: string | null): void {
     this.viewedId = sessionId
@@ -92,9 +167,10 @@ export class AgentDetector {
     if (current?.status === 'done') this.commit({ ...current, status: 'idle' })
   }
 
-  /** hooks 抑制窗：某会话收到 hooks 事件后一段时间内输出启发式不产生状态转移（Slice 5 接入） */
-  private isSuppressed(_runtime: SessionRuntime): boolean {
-    return false
+  /** hooks 抑制窗：某会话收到 hooks 事件后 30 s 内，输出启发式不产生状态转移（cwdNow 解析不受影响） */
+  private isSuppressed(runtime: SessionRuntime): boolean {
+    const seenAt = this.hookSeenAt.get(runtime.sessionId)
+    return seenAt !== undefined && this.deps.now() - seenAt < HOOK_SUPPRESS_MS
   }
 
   list(): SessionRuntime[] {
@@ -102,6 +178,7 @@ export class AgentDetector {
   }
 
   private remove(sessionId: string): void {
+    this.hookSeenAt.delete(sessionId)
     if (!this.runtimes.delete(sessionId)) return
     this.deps.onRemove(sessionId)
   }
@@ -110,6 +187,12 @@ export class AgentDetector {
     this.runtimes.set(runtime.sessionId, runtime)
     this.deps.onChange({ ...runtime })
   }
+}
+
+/** 载荷里的提示文本：非空字符串才用，截断到上限；否则用 fallback */
+function hintOf(value: unknown, fallback: string): string {
+  const text = typeof value === 'string' ? value.trim() : ''
+  return (text || fallback).slice(0, MAX_HINT_LENGTH)
 }
 
 function isSameRuntime(a: SessionRuntime, b: SessionRuntime): boolean {
