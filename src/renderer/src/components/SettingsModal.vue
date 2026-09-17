@@ -1,22 +1,37 @@
 <script setup lang="ts">
-// 「设置」弹窗：左侧四段导航（外观 / 启动 / 更新 / 关于）。
+// 「设置」弹窗：左侧五段导航（外观 / 启动 / Agent / 更新 / 关于）。
 // 外观段是草稿语义（决策 2）：改动只进本地草稿，经 settings.previewBackground 整窗实时生效但不落盘；
-// 「保存设置」才提交，「取消」/ Esc / 点遮罩丢弃草稿并还原。启动 / 更新 / 关于三段即时生效。
+// 「保存设置」才提交，「取消」/ Esc / 点遮罩丢弃草稿并还原。启动 / Agent / 更新 / 关于四段即时生效。
+// Agent 段：两个开关分别安装 / 移除 Claude Code 与 Codex 的 hooks（改用户配置文件前先备份），各自独立的状态与错误红字
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import type { AutoLaunchStatus } from '@shared/ipc'
+import type { AutoLaunchStatus, HookAgent, HooksStatusMap } from '@shared/ipc'
 import type { AppBackground, BackgroundFit } from '@shared/models'
 import { MAX_BLUR_PX, MIN_PANEL_OPACITY } from '@shared/models'
 import { useSettingsStore } from '../stores/settings'
 import { useUpdateStore } from '../stores/update'
 import { describeUpdateStatus } from '../composables/updateStatus'
 
-type SectionKey = 'appearance' | 'startup' | 'update' | 'about'
+type SectionKey = 'appearance' | 'startup' | 'agent' | 'update' | 'about'
 
 const SECTIONS: Array<{ key: SectionKey; label: string }> = [
   { key: 'appearance', label: '外观' },
   { key: 'startup', label: '启动' },
+  { key: 'agent', label: 'Agent' },
   { key: 'update', label: '更新' },
   { key: 'about', label: '关于' },
+]
+
+const HOOK_AGENTS: Array<{ key: HookAgent; label: string; hint: string }> = [
+  {
+    key: 'claude',
+    label: '安装 Claude Code hooks',
+    hint: '打开后会备份并修改 ~/.claude/settings.json，只追加 TagTerm 自己的条目；关闭即移除',
+  },
+  {
+    key: 'codex',
+    label: '安装 Codex hooks',
+    hint: '打开后会写入 ~/.codex/hooks.json（不存在则新建，存在则先备份），不改 config.toml；关闭即移除',
+  },
 ]
 
 const FITS: Array<{ value: BackgroundFit; label: string; hint: string }> = [
@@ -35,6 +50,9 @@ const dataDir = ref('')
 const error = ref('')
 /** 开机自启：打开弹窗时向主进程取一次，改动后以返回的实际状态回填（不进 store、不落盘） */
 const autoLaunch = ref<AutoLaunchStatus>({ enabled: false, blockedBySystem: false })
+/** hooks 安装状态：打开弹窗时取一次，切换开关后以返回的实际状态回填；两个目标各自的错误红字 */
+const hooks = ref<HooksStatusMap | null>(null)
+const hooksError = ref<Record<HookAgent, string>>({ claude: '', codex: '' })
 /** 外观段草稿：打开时取已保存值，改动只进这里，保存才落盘 */
 const draft = ref<AppBackground>({ ...settings.background })
 const isLivePreview = ref(true)
@@ -69,15 +87,32 @@ async function runUpdateAction(action: () => Promise<void>): Promise<void> {
 onMounted(async () => {
   document.addEventListener('keydown', onKeydown)
   try {
-    ;[version.value, dataDir.value, autoLaunch.value] = await Promise.all([
+    ;[version.value, dataDir.value, autoLaunch.value, hooks.value] = await Promise.all([
       window.tagterm.app.getVersion(),
       window.tagterm.app.getDataDir(),
       window.tagterm.app.getAutoLaunch(),
+      window.tagterm.agent.getHooksStatus(),
     ])
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   }
 })
+
+/** 勾选即安装 / 移除该目标的 hooks；失败红字在该开关下并把复选框还原为实际状态，另一个开关不受影响 */
+async function onHooksChange(agent: HookAgent, e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement
+  hooksError.value = { ...hooksError.value, [agent]: '' }
+  try {
+    const status = await window.tagterm.agent.setHooks(agent, input.checked)
+    if (hooks.value) hooks.value = { ...hooks.value, [agent]: status }
+  } catch (err) {
+    hooksError.value = {
+      ...hooksError.value,
+      [agent]: err instanceof Error ? err.message : String(err),
+    }
+    input.checked = hooks.value?.[agent].installed ?? false
+  }
+}
 onUnmounted(() => document.removeEventListener('keydown', onKeydown))
 
 // 草稿或预览开关变化 → 整窗预览跟着变（关掉预览就还原为已保存值）
@@ -303,6 +338,37 @@ function onKeydown(e: KeyboardEvent): void {
             <p v-if="autoLaunch.blockedBySystem" class="hint" data-test="auto-launch-blocked">
               已在系统「启动应用」中被禁用
             </p>
+          </section>
+
+          <section v-else-if="section === 'agent'" data-test="agent-section">
+            <h4>Agent</h4>
+            <p class="hint" data-test="hooks-instant">即时生效，不受下方「保存设置」影响</p>
+            <div v-for="a in HOOK_AGENTS" :key="a.key" class="hooks-row">
+              <div class="row">
+                <label class="check" :data-test="`hooks-${a.key}-label`">
+                  <input
+                    type="checkbox"
+                    :checked="hooks?.[a.key].installed ?? false"
+                    :data-test="`hooks-${a.key}`"
+                    @change="onHooksChange(a.key, $event)"
+                  />
+                  <span v-text="a.label"></span>
+                </label>
+                <span
+                  class="hooks-status"
+                  :data-test="`hooks-${a.key}-status`"
+                  v-text="hooks?.[a.key].installed ? '已安装' : '未安装'"
+                ></span>
+              </div>
+              <p class="hint" :data-test="`hooks-${a.key}-hint`" v-text="a.hint"></p>
+              <p
+                v-if="hooksError[a.key] || hooks?.[a.key].error"
+                class="error"
+                :data-test="`hooks-${a.key}-error`"
+                v-text="hooksError[a.key] || hooks?.[a.key].error"
+              ></p>
+            </div>
+            <p class="hint mono" data-test="hooks-port">端口 {{ hooks?.claude.port ?? '…' }}</p>
           </section>
 
           <section v-else-if="section === 'update'">
@@ -560,6 +626,17 @@ section h4 {
   margin: 10px 0 0;
   font-size: 12px;
   color: #b42318;
+}
+.hooks-row {
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.hooks-row .row {
+  margin: 0 0 4px;
+}
+.hooks-status {
+  font-size: 12px;
+  color: var(--muted);
 }
 footer {
   display: flex;

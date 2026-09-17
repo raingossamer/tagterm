@@ -31,6 +31,7 @@ describe('SettingsModal', () => {
     expect(wrapper.findAll('.nav-item').map((n) => n.text())).toEqual([
       '外观',
       '启动',
+      'Agent',
       '更新',
       '关于',
     ])
@@ -220,6 +221,66 @@ describe('SettingsModal', () => {
     await wrapper.vm.$nextTick()
     await wrapper.find('[data-test=update-install]').trigger('click')
     expect(api.update.install).toHaveBeenCalled()
+  })
+
+  it('「Agent」段：打开取一次两个目标的状态并显示端口与「即时生效」；切换开关调 setHooks(agent, enabled) 并按返回回填；reject → 该开关下红字 + 复选框还原，另一个开关不受影响', async () => {
+    const api = installFakeApi({
+      agent: {
+        getHooksStatus: vi.fn(async () => ({
+          claude: {
+            installed: true,
+            port: 51233,
+            settingsPath: 'C:/Users/k/.claude/settings.json',
+          },
+          codex: {
+            installed: false,
+            port: 51233,
+            settingsPath: 'C:/Users/k/.codex/hooks.json',
+            error: 'Codex 配置文件不是合法 JSON',
+          },
+        })),
+      },
+    })
+    const wrapper = mount(SettingsModal)
+    await flushPromises()
+    expect(wrapper.findAll('.nav-item').map((n) => n.text())).toContain('Agent')
+    await wrapper.find('[data-test=settings-nav-agent]').trigger('click')
+    await flushPromises()
+    const box = (agent: string) =>
+      wrapper.find(`[data-test=hooks-${agent}]`).element as HTMLInputElement
+
+    expect(api.agent.getHooksStatus).toHaveBeenCalledTimes(1)
+    expect(box('claude').checked).toBe(true)
+    expect(box('codex').checked).toBe(false)
+    expect(wrapper.find('[data-test=hooks-claude-label]').text()).toBe('安装 Claude Code hooks')
+    expect(wrapper.find('[data-test=hooks-codex-label]').text()).toBe('安装 Codex hooks')
+    expect(wrapper.find('[data-test=hooks-claude-status]').text()).toBe('已安装')
+    expect(wrapper.find('[data-test=hooks-codex-status]').text()).toBe('未安装')
+    expect(wrapper.find('[data-test=hooks-codex-error]').text()).toBe('Codex 配置文件不是合法 JSON')
+    expect(wrapper.find('[data-test=hooks-claude-error]').exists()).toBe(false)
+    expect(wrapper.find('[data-test=hooks-port]').text()).toBe('端口 51233')
+    expect(wrapper.find('[data-test=hooks-instant]').text()).toContain('即时生效')
+    expect(wrapper.find('[data-test=hooks-claude-hint]').text()).toContain(
+      '~/.claude/settings.json',
+    )
+    expect(wrapper.find('[data-test=hooks-codex-hint]').text()).toContain('~/.codex/hooks.json')
+
+    await wrapper.find('[data-test=hooks-codex]').setValue(true)
+    await flushPromises()
+    expect(api.agent.setHooks).toHaveBeenCalledWith('codex', true)
+    expect(box('codex').checked).toBe(true)
+    expect(wrapper.find('[data-test=hooks-codex-status]').text()).toBe('已安装')
+    expect(wrapper.find('[data-test=hooks-codex-error]').exists()).toBe(false)
+
+    vi.mocked(api.agent.setHooks).mockRejectedValueOnce(new Error('未找到 Claude Code 配置文件'))
+    await wrapper.find('[data-test=hooks-claude]').setValue(false)
+    await flushPromises()
+    expect(box('claude').checked).toBe(true)
+    expect(wrapper.find('[data-test=hooks-claude-error]').text()).toBe(
+      '未找到 Claude Code 配置文件',
+    )
+    expect(box('codex').checked).toBe(true)
+    expect(wrapper.find('[data-test=hooks-codex-error]').exists()).toBe(false)
   })
 
   it('「关于」显示版本与数据目录', async () => {

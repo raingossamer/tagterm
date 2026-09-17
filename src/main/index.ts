@@ -5,7 +5,7 @@
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, type Tray } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { existsSync } from 'node:fs'
-import { release, tmpdir } from 'node:os'
+import { homedir, release, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AutoLaunchStatus, EventArgs, EventChannel } from '@shared/ipc'
 import { DEFAULT_AGENTS } from '@shared/models'
@@ -22,6 +22,7 @@ import { AgentDetector } from './agent/AgentDetector'
 import { ProcessTreeProbe } from './agent/ProcessTreeProbe'
 import { listSubtree } from './agent/windowsProcessTree'
 import { HookServer } from './agent/HookServer'
+import { HookInstaller } from './agent/HookInstaller'
 import { derivePort } from './agent/hookPort'
 import { matchSessionsByCwd } from './agent/hookMatch'
 import { Updater } from './updater/Updater'
@@ -233,6 +234,35 @@ app.whenReady().then(async () => {
     console.error('[agent] hooks 端点启动失败，Claude / Codex hooks 不可用', err)
   }
 
+  // hooks 安装目标：Claude 的总配置（必须已存在）与 Codex 的专用 hooks 文件（可新建）；启动时端口若顺延了就静默改写命令
+  const hookInstallers = {
+    claude: new HookInstaller(
+      {
+        agent: 'claude',
+        settingsPath: join(homedir(), '.claude', 'settings.json'),
+        createIfMissing: false,
+      },
+      { now: () => Date.now() },
+    ),
+    codex: new HookInstaller(
+      {
+        agent: 'codex',
+        settingsPath: join(homedir(), '.codex', 'hooks.json'),
+        createIfMissing: true,
+      },
+      { now: () => Date.now() },
+    ),
+  }
+  if (hookPort > 0) {
+    for (const [agent, installer] of Object.entries(hookInstallers)) {
+      try {
+        await installer.syncPort(hookPort)
+      } catch (err) {
+        console.warn(`[agent] 同步 ${agent} hooks 端口失败`, err)
+      }
+    }
+  }
+
   registerIpc(ipcMain, {
     version: app.getVersion(),
     osBuild: osBuildNumber(),
@@ -242,6 +272,8 @@ app.whenReady().then(async () => {
     updater,
     pty: ptyManager,
     agent: agentDetector,
+    hooks: hookInstallers,
+    hookPort,
     dataDir,
     pickDirectory,
     pickImage,

@@ -67,6 +67,15 @@ export interface PtyExitEvent {
 /** 装了 hooks 的两个工具：本地 HookServer 按 URL 路径 /tagterm/hook/<agent> 区分来源 */
 export type HookAgent = 'claude' | 'codex'
 
+/** 某目标（Claude / Codex）hooks 的安装状态：installed 以配置文件里有没有我们的条目为准 */
+export interface HooksStatus {
+  installed: boolean
+  port: number // 已安装 = 文件里写的端口；未安装 = HookServer 当前端口
+  settingsPath: string
+  error?: string // 文件不可读 / 不是合法 JSON 等
+}
+export type HooksStatusMap = Record<HookAgent, HooksStatus>
+
 /** 渲染进程的「静默末尾」报告：某会话 silentMs 无输出后屏幕末尾的非空行（≤ 50 行），主进程只做判定不记录 */
 export interface OutputReport {
   tail: string[]
@@ -114,6 +123,8 @@ export interface IpcInvokeMap {
   // ---- agent 状态（M3）----
   'agent:list': { args: []; result: SessionRuntime[] } // 全部会话的运行时记录（启动时镜像）
   'agent:set-viewed': { args: [sessionId: string | null]; result: void } // 正被查看的会话：当前页变化 / 焦点 / 可见性变化时上报，不可见或失焦发 null
+  'agent:get-hooks-status': { args: []; result: HooksStatusMap } // 两个目标的 hooks 安装状态
+  'agent:set-hooks': { args: [agent: HookAgent, enabled: boolean]; result: HooksStatus } // 安装 / 卸载某目标的 hooks，失败 reject 中文 message
 }
 
 // 单向高频：ipcRenderer.send → ipcMain.on（键入不等待响应）
