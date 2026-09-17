@@ -37,6 +37,7 @@ export function createFakeApi(overrides: Overrides = {}): TagTermApi {
       getAutoLaunch: vi.fn(async () => ({ enabled: false, blockedBySystem: false })),
       setAutoLaunch: vi.fn(async (enabled: boolean) => ({ enabled, blockedBySystem: false })),
       onOpenSettings: vi.fn(() => () => {}),
+      onSelectSession: vi.fn(() => () => {}),
       ...overrides.app,
     },
     settings: {

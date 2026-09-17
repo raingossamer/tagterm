@@ -23,6 +23,10 @@ export interface SmokeDeps {
   probe: ProcessTreeProbe
   /** HookServer 实际监听的端口（0 = 启动失败） */
   hookPort: number
+  /** 托盘当前的「等你确认」角标计数 */
+  badgeCount: () => number
+  /** 某会话当前的运行时状态（诊断用） */
+  agentStatusOf: (sessionId: string) => string | null
   quit: () => void
 }
 
@@ -722,11 +726,21 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
       })
       const claudeBlocked = await waitDot('smoke-r3', 'blocked')
       const blockedState = await rowState('smoke-r3')
+      const badgeWhenBlocked = deps.badgeCount()
       await send('claude', { hook_event_name: 'Stop', cwd: claudeCwd })
       const claudeDone = await waitDot('smoke-r3', 'done')
       const doneState = await rowState('smoke-r3')
       await clickTab('smoke-r3')
       const claudeIdleAfterView = await waitDot('smoke-r3', 'idle')
+      // 诊断：done → idle 靠「正被查看」，而它要求窗口有焦点且可见
+      const viewDiag = (await win.webContents.executeJavaScript(
+        `({ hasFocus: document.hasFocus(), hidden: document.hidden, active: document.querySelector('[data-test=tab].active [data-test=tab-name]')?.textContent ?? null })`,
+      )) as Record<string, unknown>
+      Object.assign(viewDiag, {
+        winFocused: win.isFocused(),
+        winVisible: win.isVisible(),
+        r3Status: deps.agentStatusOf(prepare.ids[0]!),
+      })
 
       const codexCwd = 'C:/Windows/System32'
       await send('codex', { hook_event_name: 'SessionStart', cwd: codexCwd })
@@ -741,6 +755,13 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
       const codexBlockedState = await rowState('smoke-r4')
       await send('codex', { hook_event_name: 'Interrupt', cwd: codexCwd })
       const codexIdle = await waitDot('smoke-r4', 'idle')
+      const badgeWhenIdle = deps.badgeCount()
+      // 通知点击的落地路径：主进程广播 app:select-session → 渲染进程切到该会话（toast 本身留人工验收）
+      win.webContents.send('app:select-session', prepare.ids[1]!)
+      await sleep(300)
+      const selectedByBroadcast = (await win.webContents.executeJavaScript(
+        `document.querySelector('[data-test=tab].active [data-test=tab-name]')?.textContent ?? null`,
+      )) as string | null
       const badJson = await new Promise<number>((resolve, reject) => {
         const req = httpRequest(
           { host: '127.0.0.1', port: deps.hookPort, path: '/tagterm/hook/claude', method: 'POST' },
@@ -764,9 +785,13 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         claudeDone,
         doneCounts: doneState['counts'],
         claudeIdleAfterView,
+        viewDiag,
         codexBlocked,
         codexRowTitle: codexBlockedState['rowTitle'],
         codexIdle,
+        badgeWhenBlocked,
+        badgeWhenIdle,
+        selectedByBroadcast,
       }
 
       // 清理烟测会话（正常退出路径由 before-quit killAll 结束 pty）；tags.json 应已落盘且只剩空集合

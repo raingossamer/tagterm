@@ -45,6 +45,7 @@ const editingSession = ref<Session | null>(null)
 const isSettingsOpen = ref(false)
 const isManageTagsOpen = ref(false)
 let unsubscribeOpenSettings: Unsubscribe | null = null
+let unsubscribeSelectSession: Unsubscribe | null = null
 const loadError = ref('')
 
 // 工厂惰性读取：终端只会在会话列表加载之后创建，而列表加载在 getOsBuild 之后
@@ -77,6 +78,10 @@ onMounted(async () => {
   unsubscribeOpenSettings = window.tagterm.app.onOpenSettings(() => {
     isSettingsOpen.value = true
   })
+  // 系统通知被点击 → 主进程已显示窗口 → 切到那个会话
+  unsubscribeSelectSession = window.tagterm.app.onSelectSession((id) => {
+    void workspace.select(id)
+  })
   try {
     osBuild = await window.tagterm.app.getOsBuild()
     await settings.load()
@@ -92,6 +97,7 @@ onMounted(async () => {
 onUnmounted(() => {
   document.removeEventListener('keydown', onKeydown)
   unsubscribeOpenSettings?.()
+  unsubscribeSelectSession?.()
   detachCore()
   core.dispose()
 })

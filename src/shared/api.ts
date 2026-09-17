@@ -39,6 +39,8 @@ export interface TagTermApi {
     getAutoLaunch(): Promise<AutoLaunchStatus>
     setAutoLaunch(enabled: boolean): Promise<AutoLaunchStatus>
     onOpenSettings(cb: () => void): Unsubscribe
+    /** 系统通知被点击 → 切到该会话 */
+    onSelectSession(cb: (sessionId: string) => void): Unsubscribe
   }
   session: {
     list(): Promise<Session[]>

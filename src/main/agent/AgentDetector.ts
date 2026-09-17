@@ -173,6 +173,11 @@ export class AgentDetector {
     return seenAt !== undefined && this.deps.now() - seenAt < HOOK_SUPPRESS_MS
   }
 
+  /** 该会话是否正被查看（通知判定用） */
+  isViewed(sessionId: string): boolean {
+    return this.viewedId === sessionId
+  }
+
   list(): SessionRuntime[] {
     return [...this.runtimes.values()].map((r) => ({ ...r }))
   }
