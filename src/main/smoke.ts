@@ -12,7 +12,7 @@ import { existsSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { join } from 'node:path'
 import type { PtyManager } from './pty/PtyManager'
-import type { AgentSubsystem } from './agent/AgentSubsystem'
+import type { AgentSubsystem, BadgeCounts } from './agent/AgentSubsystem'
 import type { SessionStore } from './store/SessionStore'
 import type { TagStore } from './store/TagStore'
 
@@ -22,8 +22,8 @@ export interface SmokeDeps {
   pty: PtyManager
   /** agent 子系统：hooks 端口、运行时记录、shell 空闲核对（核查与诊断用） */
   agent: AgentSubsystem
-  /** 托盘当前的「等你确认」角标计数 */
-  badgeCount: () => number
+  /** 托盘当前的角标计数（等你确认 / 运行中）；托盘还没建为 null */
+  badgeCounts: () => BadgeCounts | null
   quit: () => void
 }
 
@@ -766,7 +766,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
       })
       const claudeBlocked = await waitDot('smoke-r3', 'blocked')
       const blockedState = await rowState('smoke-r3')
-      const badgeWhenBlocked = deps.badgeCount()
+      const badgeWhenBlocked = deps.badgeCounts()
       await send('claude', { hook_event_name: 'Stop', cwd: claudeCwd })
       const claudeDone = await waitDot('smoke-r3', 'done')
       const doneState = await rowState('smoke-r3')
@@ -795,7 +795,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
       const codexBlockedState = await rowState('smoke-r4')
       await send('codex', { hook_event_name: 'Interrupt', cwd: codexCwd })
       const codexIdle = await waitDot('smoke-r4', 'idle')
-      const badgeWhenIdle = deps.badgeCount()
+      const badgeWhenIdle = deps.badgeCounts()
       // 通知点击的落地路径：主进程广播 app:select-session → 渲染进程切到该会话（toast 本身留人工验收）
       win.webContents.send('app:select-session', prepare.ids[1]!)
       await sleep(300)

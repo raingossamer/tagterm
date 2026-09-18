@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { OutputReport } from '@shared/ipc'
 import {
   TerminalWorkspace,
   type WorkspaceSnapshot,
@@ -354,10 +355,10 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
     expect(terminals).toHaveLength(1)
   })
 
-  it('17 静默上报：pty 数据后静默 1.5 s 经 reportOutput 上报该实例末尾非空行（≤ 8 行）；期间再来数据重新计时；会话移除后不上报', async () => {
+  it('17 屏幕末尾上报：pty 数据到达 1 s 后补报（silentMs 0）、静默 1.5 s 后再报（silentMs 1500），都经 reportOutput 送该实例末尾非空行（≤ 24 行）；会话移除后不上报', async () => {
     vi.useFakeTimers()
     try {
-      const reports: Array<[string, string[]]> = []
+      const reports: Array<[string, OutputReport]> = []
       pty = new FakePty()
       terminals = []
       core = new TerminalWorkspace({
@@ -368,30 +369,38 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
           return t
         },
         raf: (fn) => fn(),
-        reportOutput: (id, report) => reports.push([id, report.tail]),
+        reportOutput: (id, report) => reports.push([id, report]),
       })
       core.syncSessions([a, b])
       await core.select(a.id)
 
       pty.emitData(a.id, 'hello\r\n')
-      vi.advanceTimersByTime(1000)
-      pty.emitData(a.id, 'C:\\x>')
-      vi.advanceTimersByTime(1000)
+      vi.advanceTimersByTime(999)
       expect(reports).toEqual([])
-      vi.advanceTimersByTime(500)
-      expect(reports).toEqual([[a.id, ['hello', 'C:\\x>']]])
-
-      // 只取末尾 8 行
-      pty.emitData(a.id, Array.from({ length: 12 }, (_, i) => `l${i}`).join('\r\n'))
+      vi.advanceTimersByTime(1)
+      expect(reports).toEqual([[a.id, { tail: ['hello'], silentMs: 0 }]])
+      // 1000 ms 又来数据：2000 ms 补报、2500 ms 静默报告
+      pty.emitData(a.id, 'C:\\x>')
       vi.advanceTimersByTime(1500)
-      expect(reports[1]![1]).toHaveLength(8)
-      expect(reports[1]![1][7]).toBe('l11')
+      expect(reports.slice(1)).toEqual([
+        [a.id, { tail: ['hello', 'C:\\x>'], silentMs: 0 }],
+        [a.id, { tail: ['hello', 'C:\\x>'], silentMs: 1500 }],
+      ])
 
-      // 会话被移除：计时取消，不再上报
+      // 只取末尾 24 行
+      pty.emitData(a.id, Array.from({ length: 30 }, (_, i) => `l${i}`).join('\r\n'))
+      vi.advanceTimersByTime(1500)
+      const last = reports.at(-1)![1]
+      expect(last.silentMs).toBe(1500)
+      expect(last.tail).toHaveLength(24)
+      expect(last.tail[23]).toBe('l29')
+
+      // 会话被移除：两种计时都取消，不再上报
+      const count = reports.length
       pty.emitData(a.id, 'bye')
       core.syncSessions([b])
       vi.advanceTimersByTime(1500)
-      expect(reports).toHaveLength(2)
+      expect(reports).toHaveLength(count)
     } finally {
       vi.useRealTimers()
     }

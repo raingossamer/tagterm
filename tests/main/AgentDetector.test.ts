@@ -76,18 +76,34 @@ describe('AgentDetector（运行时状态机）', () => {
     expect(changes[1]).not.toHaveProperty('pendingHint')
   })
 
-  it('pty 数据到达：无 agent 不改状态；有 agent → working（只回调一次）；未知会话忽略', () => {
+  it('屏幕在动的报告（silentMs 0）：无 agent 只更新 cwdNow；有 agent 且末尾有工作中提示 → working（只回调一次）；没有提示不转移；未知会话忽略', () => {
+    const busy = { tail: ['⠋ Thinking... (esc to interrupt)', '> '], silentMs: 0 }
     detector.ptySpawned('s1')
     changes.length = 0
-    detector.ptyData('s1')
-    detector.ptyData('ghost')
+    detector.reportOutput('s1', busy)
+    detector.reportOutput('ghost', busy)
     expect(changes).toEqual([])
+    detector.reportOutput('s1', { tail: ['C:\\Windows>claude'], silentMs: 0 })
+    expect(changes).toEqual([
+      { sessionId: 's1', alive: true, agent: null, status: 'idle', cwdNow: 'C:\\Windows' },
+    ])
 
     detector.processSnapshot(new Map([['s1', 'gemini']]))
     changes.length = 0
-    detector.ptyData('s1')
-    detector.ptyData('s1')
-    expect(changes).toEqual([{ sessionId: 's1', alive: true, agent: 'gemini', status: 'working' }])
+    // 欢迎画面 / 在工具里打字：屏幕在动但没有工作中提示 → 不算运行中
+    detector.reportOutput('s1', { tail: ['Welcome to Gemini CLI', '> 正在打字'], silentMs: 0 })
+    expect(changes).toEqual([])
+    detector.reportOutput('s1', busy)
+    detector.reportOutput('s1', busy)
+    expect(changes).toEqual([
+      {
+        sessionId: 's1',
+        alive: true,
+        agent: 'gemini',
+        status: 'working',
+        cwdNow: 'C:\\Windows',
+      },
+    ])
   })
 
   it('静默末尾报告：无 agent 时只更新 cwdNow、不改状态；解析不到提示符时保留上次的 cwdNow', () => {
@@ -107,7 +123,8 @@ describe('AgentDetector（运行时状态机）', () => {
     expect(detector.list()[0]?.cwdNow).toBe('C:\\Windows')
   })
 
-  it('有 agent：末行命中提示 → blocked + pendingHint；静默无提示时 idle 保持 idle、working / blocked 未被查看 → done（清提示）、正被查看 → idle；done 被查看 → idle', () => {
+  it('有 agent 的静默报告：末行命中提示 → blocked + pendingHint；有工作中提示 → 保持 working（spinner 卡住不算跑完）；无提示时 idle 保持 idle、working / blocked 未被查看 → done（清提示）、正被查看 → idle；done 被查看 → idle', () => {
+    const busy = { tail: ['• Working (5s • esc to interrupt)', '› '], silentMs: 0 }
     detector.ptySpawned('s1')
     detector.processSnapshot(new Map([['s1', 'pi']]))
     changes.length = 0
@@ -116,7 +133,13 @@ describe('AgentDetector（运行时状态机）', () => {
     detector.reportOutput('s1', { tail: ['ready.'], silentMs: 1500 })
     expect(changes).toEqual([])
 
-    detector.ptyData('s1')
+    detector.reportOutput('s1', busy)
+    expect(changes.at(-1)).toMatchObject({ status: 'working' })
+    // 静默了但提示还在：仍是 working，不算跑完
+    detector.reportOutput('s1', { tail: ['• Working (9s • esc to interrupt)'], silentMs: 1500 })
+    expect(changes.at(-1)).toMatchObject({ status: 'working' })
+    expect(changes).toHaveLength(1)
+
     detector.reportOutput('s1', { tail: ['Do you want to proceed? (y/n)'], silentMs: 1500 })
     expect(changes.at(-1)).toEqual({
       sessionId: 's1',
@@ -126,17 +149,18 @@ describe('AgentDetector（运行时状态机）', () => {
       pendingHint: 'Do you want to proceed? (y/n)',
     })
 
-    // 用户回答后输出恢复 → working，提示清掉
-    detector.ptyData('s1')
+    // 用户回答后工具继续干活（屏幕在动 + 工作中提示）→ working，提示清掉
+    detector.reportOutput('s1', busy)
     expect(changes.at(-1)).toEqual({ sessionId: 's1', alive: true, agent: 'pi', status: 'working' })
 
-    // 跑完静默且没人看 → done
+    // 跑完：提示消失且静默、没人看 → done
     detector.reportOutput('s1', { tail: ['Done.'], silentMs: 1500 })
     expect(changes.at(-1)).toMatchObject({ status: 'done' })
     expect(changes.at(-1)).not.toHaveProperty('pendingHint')
-    // 再静默一次不重复回调
+    // 再静默一次不重复回调；屏幕在动但没有提示（用户在打字）也不动
     const count = changes.length
     detector.reportOutput('s1', { tail: ['Done.'], silentMs: 1500 })
+    detector.reportOutput('s1', { tail: ['> 下一个问题'], silentMs: 0 })
     expect(changes).toHaveLength(count)
 
     // 被查看 → idle
@@ -144,11 +168,19 @@ describe('AgentDetector（运行时状态机）', () => {
     expect(changes.at(-1)).toMatchObject({ status: 'idle' })
 
     // 正被查看时跑完 → 直接 idle
-    detector.ptyData('s1')
+    detector.reportOutput('s1', busy)
     detector.reportOutput('s1', { tail: ['Done again.'], silentMs: 1500 })
     expect(changes.at(-1)).toMatchObject({ status: 'idle' })
     detector.setViewed(null)
     expect(changes.at(-1)).toMatchObject({ status: 'idle' })
+
+    // 用户拒绝、工具停下：blocked → 静默无提示 → done
+    detector.reportOutput('s1', busy)
+    detector.reportOutput('s1', { tail: ['Allow?'], silentMs: 1500 })
+    expect(changes.at(-1)).toMatchObject({ status: 'blocked', pendingHint: 'Allow?' })
+    detector.reportOutput('s1', { tail: ['Stopped.'], silentMs: 1500 })
+    expect(changes.at(-1)).toMatchObject({ status: 'done' })
+    expect(changes.at(-1)).not.toHaveProperty('pendingHint')
   })
 
   it('Claude hooks：UserPromptSubmit → working；Notification 契约表里的阻塞类型 → blocked + message（截断 200）；其他类型忽略；Stop → 被查看 idle / 否则 done；SessionStart 记 claude；SessionEnd 清 agent 回 idle', () => {
@@ -236,7 +268,8 @@ describe('AgentDetector（运行时状态机）', () => {
     expect(changes.at(-1)).toMatchObject({ sessionId: 's2' })
   })
 
-  it('hooks 抑制窗：收到 hook 后 30 s 内，pty 数据与静默报告都不改状态（cwdNow 照常）；30 s 后恢复', () => {
+  it('hooks 抑制窗：收到 hook 后 30 s 内，屏幕在动与静默两种报告都不改状态（cwdNow 照常）；30 s 后恢复', () => {
+    const busy = { tail: ['✻ Pondering… (esc to interrupt)', '> '], silentMs: 0 }
     detector.ptySpawned('s1')
     detector.hookEvent(['s1'], 'claude', { hook_event_name: 'SessionStart' })
     detector.hookEvent(['s1'], 'claude', { hook_event_name: 'UserPromptSubmit' })
@@ -248,14 +281,14 @@ describe('AgentDetector（运行时状态机）', () => {
     expect(changes.at(-1)).toMatchObject({ status: 'working', cwdNow: 'C:\\p' })
     detector.hookEvent(['s1'], 'claude', { hook_event_name: 'Stop' })
     expect(changes.at(-1)).toMatchObject({ status: 'done' })
-    detector.ptyData('s1')
+    detector.reportOutput('s1', busy)
     expect(changes.at(-1)).toMatchObject({ status: 'done' })
 
     now += 29_000
-    detector.ptyData('s1')
+    detector.reportOutput('s1', busy)
     expect(changes.at(-1)).toMatchObject({ status: 'done' })
     now += 2_000
-    detector.ptyData('s1')
+    detector.reportOutput('s1', busy)
     expect(changes.at(-1)).toMatchObject({ status: 'working' })
     detector.reportOutput('s1', { tail: ['Allow?'], silentMs: 1500 })
     expect(changes.at(-1)).toMatchObject({ status: 'blocked', pendingHint: 'Allow?' })

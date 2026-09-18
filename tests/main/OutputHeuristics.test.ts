@@ -28,6 +28,36 @@ describe('OutputHeuristics（屏幕末尾启发式，纯函数）', () => {
     expect(classify(['Allow?', '', '   ', ''])).toEqual({ kind: 'blocked', hint: 'Allow?' })
   })
 
+  it('classify：末尾任一行含工具的「工作中」提示（esc to interrupt / esc to cancel，大小写不敏感）→ working；末行命中提示模式优先 blocked；末行是 shell 提示符一律 quiet', () => {
+    // Claude Code：spinner 行在输入框与状态栏之上
+    expect(
+      classify([
+        '✻ Cogitating… (esc to interrupt · 12s)',
+        '> ',
+        '? for shortcuts',
+        '[Opus] | repo',
+      ]),
+    ).toEqual({ kind: 'working' })
+    // Codex
+    expect(classify(['• Working (5s • esc to interrupt)', '› '])).toEqual({ kind: 'working' })
+    // Gemini CLI
+    expect(classify(['⠋ Thinking... (ESC to cancel, 3s)', '> Type your message'])).toEqual({
+      kind: 'working',
+    })
+    // 提示消失（跑完）→ quiet；在工具里打字 / 欢迎画面 → quiet
+    expect(classify(['✻ Cogitated for 42s · done 10:49', '> ', '? for shortcuts'])).toEqual({
+      kind: 'quiet',
+    })
+    expect(classify(['Welcome to Claude Code!', '> 正在打字'])).toEqual({ kind: 'quiet' })
+    // 末行是「等你确认」提示：blocked 优先于工作中提示
+    expect(classify(['• Working (5s • esc to interrupt)', 'Allow command? (y/n)'])).toEqual({
+      kind: 'blocked',
+      hint: 'Allow command? (y/n)',
+    })
+    // 回到 shell 提示符：回滚区里残留的提示不算
+    expect(classify(['✻ Thinking… (esc to interrupt)', 'C:\\repo>'])).toEqual({ kind: 'quiet' })
+  })
+
   it('classify：末行是 cmd / PowerShell 提示符 → quiet（提示符里的 > 不算提示）；普通输出 / 空 → quiet', () => {
     expect(classify(['Allow execution?', 'C:\\Users\\k>'])).toEqual({ kind: 'quiet' })
     expect(classify(['PS D:\\x>'])).toEqual({ kind: 'quiet' })
