@@ -1,12 +1,12 @@
 /**
  * 服务层：只绑 127.0.0.1 的小 HTTP 服务，接收 Claude Code / Codex hooks 经 curl 转发来的 stdin JSON。
- * POST /tagterm/hook/claude 与 /tagterm/hook/codex（路径即来源）→ 204；坏 JSON / 非对象 400；超过体积上限 413；其余 404。
+ * POST /tagterm/hook/<agent>（路径即来源，认哪些 agent 见 hookContract）→ 204；坏 JSON / 非对象 400；超过体积上限 413；其余 404。
  * 载荷原样交给 onHook（cwd → 会话的映射在装配层做，服务层之间不互相引用）。不 import electron。
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { HookAgent } from '@shared/ipc'
+import { HOOK_AGENTS, HOOK_PATH_PREFIX } from './hookContract'
 
-export const HOOK_PATH_PREFIX = '/tagterm/hook/'
 const DEFAULT_MAX_BODY_BYTES = 64 * 1024
 /** 首选端口被占时最多顺延几次 */
 const MAX_PORT_ATTEMPTS = 20
@@ -16,12 +16,11 @@ export interface HookServerDeps {
   maxBodyBytes?: number
 }
 
-const AGENTS: readonly HookAgent[] = ['claude', 'codex']
-
+/** 路径 → 来源：只认契约表里的 agent */
 function agentOfPath(path: string): HookAgent | null {
   if (!path.startsWith(HOOK_PATH_PREFIX)) return null
   const name = path.slice(HOOK_PATH_PREFIX.length).split('?')[0]
-  return AGENTS.find((a) => a === name) ?? null
+  return HOOK_AGENTS.find((a) => a === name) ?? null
 }
 
 export class HookServer {

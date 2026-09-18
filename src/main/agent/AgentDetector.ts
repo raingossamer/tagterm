@@ -5,19 +5,11 @@
  */
 import type { HookAgent, OutputReport } from '@shared/ipc'
 import type { AgentKind, SessionRuntime, ShellKind } from '@shared/models'
+import { HOOK_CONTRACTS } from './hookContract'
 import { classify, parsePromptCwd } from './OutputHeuristics'
 
 /** 收到 hooks 事件后多久内输出启发式不产生状态转移（最可靠的信号说了算） */
 const HOOK_SUPPRESS_MS = 30_000
-/** pendingHint 上限：通知里的 message 可能很长 */
-const MAX_HINT_LENGTH = 200
-/** Claude 的哪些通知类型算「等你确认」 */
-const CLAUDE_BLOCKING_NOTIFICATIONS = new Set([
-  'permission_prompt',
-  'elicitation_dialog',
-  'elicitation_url_dialog',
-  'agent_needs_input',
-])
 
 export interface AgentDetectorDeps {
   now: () => number
@@ -100,12 +92,9 @@ export class AgentDetector {
   }
 
   /**
-   * hooks 事件（装配层已按 cwd 映射到会话，可能多个）。按来源映射：
-   * Claude：UserPromptSubmit → working；Notification（四种需要人的类型）→ blocked + message；Stop → 被查看 ? idle : done；
-   *         SessionStart → agent = claude；SessionEnd → 清 agent、idle；其余忽略。
-   * Codex：UserPromptSubmit → working；PermissionRequest → blocked + (tool_input.description ?? tool_name)；Interrupt → idle；
-   *        Stop / SessionStart / SessionEnd 同 Claude（agent = codex）。
-   * 任一事件都刷新该会话的抑制窗。SessionStart 之外的事件要求会话已有 agent（进程树或 SessionStart 给的）。
+   * hooks 事件（装配层已按 cwd 映射到会话，可能多个）。共通规则在这里：SessionStart → 记 agent；SessionEnd → 清 agent、idle；
+   * 其余事件要求会话已有 agent（进程树或 SessionStart 给的），转移规则见 hookContract 各 agent 的 interpret。
+   * 任一事件都刷新该会话的抑制窗。
    */
   hookEvent(
     sessionIds: readonly string[],
@@ -133,31 +122,9 @@ export class AgentDetector {
     if (event === 'SessionStart') return { ...current, agent }
     if (event === 'SessionEnd') return { ...bare, agent: null, status: 'idle' }
     if (current.agent === null) return null
-    switch (event) {
-      case 'UserPromptSubmit':
-        return { ...bare, status: 'working' }
-      case 'Stop':
-        return { ...bare, status: this.viewedId === current.sessionId ? 'idle' : 'done' }
-      case 'Notification': {
-        if (agent !== 'claude') return null
-        const type = payload['notification_type']
-        if (typeof type !== 'string' || !CLAUDE_BLOCKING_NOTIFICATIONS.has(type)) return null
-        return { ...bare, status: 'blocked', pendingHint: hintOf(payload['message'], type) }
-      }
-      case 'PermissionRequest': {
-        if (agent !== 'codex') return null
-        const input = payload['tool_input'] as Record<string, unknown> | undefined
-        const hint = hintOf(
-          input?.['description'],
-          hintOf(payload['tool_name'], 'PermissionRequest'),
-        )
-        return { ...bare, status: 'blocked', pendingHint: hint }
-      }
-      case 'Interrupt':
-        return agent === 'codex' ? { ...bare, status: 'idle' } : null
-      default:
-        return null
-    }
+    return HOOK_CONTRACTS[agent].interpret(event, payload, current, {
+      isViewed: this.viewedId === current.sessionId,
+    })
   }
 
   /** 渲染进程上报正被查看的会话（不可见 / 失焦为 null）；「已完成未查看」一旦被查看即回空闲 */
@@ -192,12 +159,6 @@ export class AgentDetector {
     this.runtimes.set(runtime.sessionId, runtime)
     this.deps.onChange({ ...runtime })
   }
-}
-
-/** 载荷里的提示文本：非空字符串才用，截断到上限；否则用 fallback */
-function hintOf(value: unknown, fallback: string): string {
-  const text = typeof value === 'string' ? value.trim() : ''
-  return (text || fallback).slice(0, MAX_HINT_LENGTH)
 }
 
 function isSameRuntime(a: SessionRuntime, b: SessionRuntime): boolean {
