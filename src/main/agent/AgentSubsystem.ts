@@ -2,21 +2,34 @@
  * 服务层（深模块）：主进程 agent 运行时子系统的唯一拥有者。从五路输入（pty 事件、进程树、hooks 载荷、屏幕末尾报告、
  * 正被查看）到三路输出（agent:status 广播、系统通知、角标）之间的全部因果都在这里，装配层只造适配器、接线一次。
  * 内部协作者：AgentDetector（状态机）、ProcessTreeProbe（进程树节拍）、HookServer（回环端点）、两个 HookInstaller（hooks 目标文件）。
- * 不 import electron；原生进程树以 listSubtree 注入，hooks 目标路径以 hookTargets 注入（测试指向临时目录）。
+ * 不 import electron：原生进程树以 listSubtree 注入，hooks 目标路径以 hookTargets 注入（测试指向临时目录），
+ * 系统通知与角标以两个命名端口注入（生产 platform/agentPorts.ts 的 Electron 适配器，测试记录数组）。
  */
 import type { HookAgent, HooksStatus, HooksStatusMap, OutputReport } from '@shared/ipc'
-import type { Session, SessionRuntime } from '@shared/models'
+import type { AgentStatus, Session, SessionRuntime } from '@shared/models'
 import type { PtyManagerDeps } from '../pty/PtyManager'
 import { AgentDetector } from './AgentDetector'
 import { HookInstaller, type HookTarget } from './HookInstaller'
 import { matchSessionsByCwd } from './hookMatch'
 import { derivePort } from './hookPort'
 import { HookServer } from './HookServer'
+import { decideNotification, type NotificationText } from './notificationPolicy'
 import type { ProcessNode } from './processMatch'
 import { ProcessTreeProbe } from './ProcessTreeProbe'
 
 /** 进程树探针的缺省节拍：一次原生查询十几毫秒，2 s 一轮足够 */
 const DEFAULT_PROBE_INTERVAL_MS = 2000
+
+/** 系统通知端口：Electron Notification 的最小面；点击后「显示窗口 + 广播 app:select-session」由生产适配器做 */
+export interface NotificationPort {
+  isSupported(): boolean
+  show(sessionId: string, text: NotificationText): void
+}
+
+/** 角标端口：托盘黄点 + 任务栏 overlay 合成一个「等你确认」计数；0 = 还原 */
+export interface BadgePort {
+  setBlockedCount(count: number): void
+}
 
 export interface AgentSubsystemOptions {
   /** 数据目录：hooks 端点的稳定端口由它哈希而来 */
@@ -25,6 +38,8 @@ export interface AgentSubsystemOptions {
   sessions: () => readonly Session[]
   /** 广播 agent:status（记录删除时是一条 alive: false 的墓碑） */
   broadcast: (runtime: SessionRuntime) => void
+  notifications: NotificationPort
+  badge: BadgePort
   /** 两个 hooks 目标文件；测试指向临时目录，永不碰真实 ~/.claude / ~/.codex */
   hookTargets: Record<HookAgent, HookTarget>
   /** 某 pid 的全部后代进程（装配层传 windowsProcessTree.listSubtree，测试传假子树） */
@@ -49,14 +64,25 @@ export class AgentSubsystem {
   private readonly installers: Record<HookAgent, HookInstaller>
   /** HookServer 实际监听的端口；未 start 或启动失败为 0 */
   private hookPort = 0
+  /** 每会话上次记录变化时的状态：同会话同状态只弹一次通知，记录删除时清 */
+  private readonly lastNotifiedStatus = new Map<string, AgentStatus>()
+  /** 上次交给角标端口的「等你确认」计数：没变不重复设置 */
+  private blockedCount = 0
 
   constructor(private readonly opts: AgentSubsystemOptions) {
     const now = opts.now ?? (() => Date.now())
     this.detector = new AgentDetector({
       now,
-      onChange: (runtime) => opts.broadcast(runtime),
-      onRemove: (sessionId) =>
-        opts.broadcast({ sessionId, alive: false, agent: null, status: 'idle' }),
+      onChange: (runtime) => {
+        opts.broadcast(runtime)
+        this.notifyOnChange(runtime)
+        this.refreshBadge()
+      },
+      onRemove: (sessionId) => {
+        opts.broadcast({ sessionId, alive: false, agent: null, status: 'idle' })
+        this.lastNotifiedStatus.delete(sessionId)
+        this.refreshBadge()
+      },
     })
     this.probe = new ProcessTreeProbe({
       listSubtree: opts.listSubtree,
@@ -179,5 +205,32 @@ export class AgentSubsystem {
   async stop(): Promise<void> {
     this.probe.dispose()
     await this.hookServer.stop()
+  }
+
+  /** 进入 blocked（没人看）/ done → 系统通知；同会话同状态只弹一次（离开后再进入再弹）；通知中心不可用不弹 */
+  private notifyOnChange(runtime: SessionRuntime): void {
+    const prev = this.lastNotifiedStatus.get(runtime.sessionId) ?? null
+    this.lastNotifiedStatus.set(runtime.sessionId, runtime.status)
+    const text = decideNotification(
+      prev,
+      runtime,
+      this.detector.isViewed(runtime.sessionId),
+      this.sessionNameOf(runtime.sessionId),
+    )
+    if (!text || !this.opts.notifications.isSupported()) return
+    this.opts.notifications.show(runtime.sessionId, text)
+  }
+
+  /** 角标 = 等你确认的会话数：托盘黄点与任务栏 overlay 由端口合成；计数没变不重复设置 */
+  private refreshBadge(): void {
+    const count = this.detector.list().filter((r) => r.status === 'blocked').length
+    if (count === this.blockedCount) return
+    this.blockedCount = count
+    this.opts.badge.setBlockedCount(count)
+  }
+
+  /** 通知文案用会话名；会话已不在列表里时退回 id */
+  private sessionNameOf(sessionId: string): string {
+    return this.opts.sessions().find((s) => s.id === sessionId)?.name ?? sessionId
   }
 }
