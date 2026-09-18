@@ -30,8 +30,7 @@ import {
   type TagColor,
 } from '@shared/models'
 import type { PtyManager } from './pty/PtyManager'
-import type { AgentDetector } from './agent/AgentDetector'
-import type { HookInstaller } from './agent/HookInstaller'
+import type { AgentSubsystem } from './agent/AgentSubsystem'
 import type { SessionStore } from './store/SessionStore'
 import type { SettingsStore } from './store/SettingsStore'
 import type { TagStore } from './store/TagStore'
@@ -52,11 +51,8 @@ export interface IpcDeps {
   tags: TagStore
   updater: Updater
   pty: PtyManager
-  agent: AgentDetector
-  /** 两个 hooks 安装目标（Claude ~/.claude/settings.json、Codex ~/.codex/hooks.json），路径由装配层注入 */
-  hooks: Record<HookAgent, HookInstaller>
-  /** HookServer 实际监听的端口：安装时写进命令、状态里报给用户 */
-  hookPort: number
+  /** agent 运行时子系统：运行时记录、正被查看、静默报告、hooks 开关与端口、shell 空闲核对 */
+  agent: AgentSubsystem
   /** 数据目录（设置「关于」显示） */
   dataDir: string
   /** 系统目录选择框（平台层注入，服务层不 import electron） */
@@ -65,8 +61,6 @@ export interface IpcDeps {
   pickImage: () => Promise<string | null>
   /** 本机可用 shell（启动时探测） */
   listShells: () => ShellKind[]
-  /** shell 进程有没有子进程（装配层注入 ProcessTreeProbe.hasChildren；测试注入假实现） */
-  hasChildProcesses: (pid: number) => Promise<boolean>
   /** 系统登录项读写（平台层注入，未打包时 get 恒 false、set 抛错） */
   getAutoLaunch: () => AutoLaunchStatus
   setAutoLaunch: (enabled: boolean) => AutoLaunchStatus
@@ -110,7 +104,7 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
       (p.shell !== undefined && p.shell !== current.shell)
     const pid = deps.pty.getPid(sessionId)
     if (isConfigChanged && pid !== null) {
-      if (await deps.hasChildProcesses(pid)) {
+      if (!(await deps.agent.isShellIdle(pid))) {
         throw new Error('终端里有程序正在运行，退出后再修改目录或 Shell')
       }
       await deps.pty.killAndWait(sessionId)
@@ -157,19 +151,10 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
 
   handle('agent:list', () => deps.agent.list())
   handle('agent:set-viewed', (id) => deps.agent.setViewed(assertViewedId(id)))
-  handle('agent:get-hooks-status', async () => {
-    const [claude, codex] = await Promise.all([
-      deps.hooks.claude.status(deps.hookPort),
-      deps.hooks.codex.status(deps.hookPort),
-    ])
-    return { claude, codex }
-  })
-  handle('agent:set-hooks', (agent, enabled) => {
-    const installer = deps.hooks[assertHookAgent(agent)]
-    return assertHooksEnabled(enabled)
-      ? installer.install(deps.hookPort)
-      : installer.uninstall(deps.hookPort)
-  })
+  handle('agent:get-hooks-status', () => deps.agent.hooksStatus())
+  handle('agent:set-hooks', (agent, enabled) =>
+    deps.agent.setHooks(assertHookAgent(agent), assertHooksEnabled(enabled)),
+  )
 
   handle('update:get-status', () => deps.updater.status())
   handle('update:check', () => deps.updater.check())

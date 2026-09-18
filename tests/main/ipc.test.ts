@@ -9,8 +9,7 @@ import { TagStore } from '../../src/main/store/TagStore'
 import { Updater } from '../../src/main/updater/Updater'
 import { FakeAutoUpdater } from './fakeAutoUpdater'
 import { PtyManager } from '../../src/main/pty/PtyManager'
-import { AgentDetector } from '../../src/main/agent/AgentDetector'
-import { HookInstaller } from '../../src/main/agent/HookInstaller'
+import { AgentSubsystem } from '../../src/main/agent/AgentSubsystem'
 import type { AutoLaunchStatus, PtyExitEvent, PtyOpenResult, TagListResult } from '@shared/ipc'
 import type { Session, SessionRuntime, Settings, Tag, UpdateStatus } from '@shared/models'
 import { createFakeIpcMain, type FakeIpcMain } from './fakeIpcMain'
@@ -24,7 +23,7 @@ describe('IPC 接口层', () => {
   let settings: SettingsStore
   let tags: TagStore
   let pty: PtyManager
-  let agent: AgentDetector
+  let agent: AgentSubsystem
   const agentChanges: SessionRuntime[] = []
   const agentRemovals: string[] = []
   let autoUpdater: FakeAutoUpdater
@@ -45,23 +44,44 @@ describe('IPC 接口层', () => {
     await settings.load()
     tags = new TagStore(dir)
     await tags.load()
-    agent = new AgentDetector({
-      now: () => Date.now(),
-      onChange: (r) => agentChanges.push(r),
-      onRemove: (id) => agentRemovals.push(id),
-    })
-    // 与装配层同样的接线：PtyManager 的 spawn / exit 接给 AgentDetector
-    pty = new PtyManager({
-      onData: (id, d) => {
-        output[id] = (output[id] ?? '') + d
+    // 与生产同一条装配：AgentSubsystem 注入假件，PtyManager 的回调经 wrapPty 串上状态机与探针
+    agent = new AgentSubsystem({
+      dataDir: dir,
+      sessions: () => store.list(),
+      // 记录变化与删除（alive: false 墓碑）走同一条广播
+      broadcast: (r) => (r.alive ? agentChanges.push(r) : agentRemovals.push(r.sessionId)),
+      notifications: { isSupported: () => false, show: () => {} },
+      badge: { setBlockedCount: () => {} },
+      hookTargets: {
+        claude: {
+          agent: 'claude',
+          settingsPath: join(dir, 'claude-settings.json'),
+          createIfMissing: false,
+        },
+        codex: {
+          agent: 'codex',
+          settingsPath: join(dir, 'codex-hooks.json'),
+          createIfMissing: true,
+        },
       },
-      onExit: (e) => {
-        exits.push(e)
-        agent.ptyExited(e.sessionId)
+      // 假进程树：hasChildren 为真时报告一个子进程；探针定时器不触发（这里不测探针）
+      listSubtree: async () => {
+        childQueries += 1
+        return hasChildren ? [{ pid: 1, ppid: 0, name: 'ping.exe' }] : []
       },
-      onSpawn: (id) => agent.ptySpawned(id),
-      isFile: existsSync,
+      timers: { setTimer: () => 0, clearTimer: () => {} },
+      preferredPort: 0,
     })
+    await agent.start()
+    pty = new PtyManager(
+      agent.wrapPty({
+        onData: (id, d) => {
+          output[id] = (output[id] ?? '') + d
+        },
+        onExit: (e) => exits.push(e),
+        isFile: existsSync,
+      }),
+    )
     ipc = createFakeIpcMain()
     autoUpdater = new FakeAutoUpdater()
     const updater = new Updater({
@@ -79,29 +99,10 @@ describe('IPC 接口层', () => {
       updater,
       pty,
       agent,
-      hooks: {
-        claude: new HookInstaller(
-          {
-            agent: 'claude',
-            settingsPath: join(dir, 'claude-settings.json'),
-            createIfMissing: false,
-          },
-          { now: () => Date.now() },
-        ),
-        codex: new HookInstaller(
-          { agent: 'codex', settingsPath: join(dir, 'codex-hooks.json'), createIfMissing: true },
-          { now: () => Date.now() },
-        ),
-      },
-      hookPort: 51233,
       dataDir: dir,
       pickImage: async () => join(dir, 'picked.png'),
       pickDirectory: async () => 'D:\\picked',
       listShells: () => ['cmd.exe', 'powershell.exe'],
-      hasChildProcesses: async () => {
-        childQueries += 1
-        return hasChildren
-      },
       getAutoLaunch: () => autoLaunch,
       setAutoLaunch: (enabled) => {
         autoLaunch = { enabled, blockedBySystem: false }
@@ -110,8 +111,9 @@ describe('IPC 接口层', () => {
     }
     registerIpc(ipc, deps)
   })
-  afterEach(() => {
+  afterEach(async () => {
     pty.killAll()
+    await agent.stop()
     hasChildren = false
     childQueries = 0
     autoLaunch = { enabled: false, blockedBySystem: false }
@@ -464,13 +466,13 @@ describe('IPC 接口层', () => {
     const claudeFile = join(dir, 'claude-settings.json')
     writeFileSync(claudeFile, JSON.stringify({ model: 'opus' }))
     await expect(ipc.invoke('agent:get-hooks-status')).resolves.toEqual({
-      claude: { installed: false, port: 51233, settingsPath: claudeFile },
-      codex: { installed: false, port: 51233, settingsPath: join(dir, 'codex-hooks.json') },
+      claude: { installed: false, port: agent.port, settingsPath: claudeFile },
+      codex: { installed: false, port: agent.port, settingsPath: join(dir, 'codex-hooks.json') },
     })
 
     await expect(ipc.invoke('agent:set-hooks', 'codex', true)).resolves.toEqual({
       installed: true,
-      port: 51233,
+      port: agent.port,
       settingsPath: join(dir, 'codex-hooks.json'),
     })
     const status = (await ipc.invoke('agent:get-hooks-status')) as Record<

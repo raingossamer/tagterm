@@ -2,17 +2,16 @@
  * 装配层：创建各服务、注入依赖、绑定 app 生命周期；不含业务逻辑。
  * 会话生命周期 = 应用生命周期：关窗只隐藏到托盘；托盘「退出」与 before-quit 都 killAll。
  */
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, Notification } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeImage } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { existsSync } from 'node:fs'
-import { homedir, release, tmpdir } from 'node:os'
+import { release, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AutoLaunchStatus, EventArgs, EventChannel } from '@shared/ipc'
-import { DEFAULT_AGENTS, type AgentStatus, type SessionRuntime } from '@shared/models'
+import { DEFAULT_AGENTS } from '@shared/models'
 import overlayIconPath from '../../resources/overlay-blocked.png?asset'
 import { createMainWindow, showMainWindow } from './window'
 import { createTray, type TrayHandle } from './tray'
-import { decideNotification } from './agent/notificationPolicy'
 import { registerIpc } from './ipc'
 import { runSmokeCheck } from './smoke'
 import { SessionStore } from './store/SessionStore'
@@ -20,13 +19,9 @@ import { SettingsStore } from './store/SettingsStore'
 import { TagStore } from './store/TagStore'
 import { resolveDataDir } from './store/paths'
 import { PtyManager } from './pty/PtyManager'
-import { AgentDetector } from './agent/AgentDetector'
-import { ProcessTreeProbe } from './agent/ProcessTreeProbe'
-import { listSubtree } from './agent/windowsProcessTree'
-import { HookServer } from './agent/HookServer'
-import { HookInstaller } from './agent/HookInstaller'
-import { derivePort } from './agent/hookPort'
-import { matchSessionsByCwd } from './agent/hookMatch'
+import type { AgentSubsystem } from './agent/AgentSubsystem'
+import { createProductionAgent } from './agent/production'
+import { electronBadge, electronNotifications } from './platform/agentPorts'
 import { Updater } from './updater/Updater'
 import { detectAvailableShells, findOnPath } from './pathProbe'
 import { IMAGE_EXTENSIONS } from './store/backgroundImage'
@@ -51,9 +46,10 @@ if (!app.requestSingleInstanceLock()) {
 
 let mainWindow: BrowserWindow | null = null
 let tray: TrayHandle | null = null
-/** 会话名查询：SessionStore 在 whenReady 里才创建，通知文案要用会话名 */
-let sessionNameOf: (sessionId: string) => string = (id) => id
-let hookServer: HookServer | null = null
+/** 终端与 agent 子系统都在 whenReady 里装配（数据目录与会话列表就位之后） */
+let ptyManager: PtyManager | null = null
+let agent: AgentSubsystem | null = null
+let overlayImage: Electron.NativeImage | null = null
 let isQuitting = false
 
 /** 主进程是持久数据与终端输出的来源：向渲染进程广播 */
@@ -148,78 +144,6 @@ function quitApp(): void {
   app.quit()
 }
 
-// 会话运行时状态机：变化即广播；记录删除时广播一条 alive: false 的空闲记录，渲染进程据此删镜像。
-// 变化同时驱动系统通知（同会话同状态只弹一次）、托盘黄点与任务栏 overlay（等你确认的会话数）
-const lastNotifiedStatus = new Map<string, AgentStatus>()
-const agentDetector = new AgentDetector({
-  now: () => Date.now(),
-  onChange: (runtime) => {
-    broadcast('agent:status', runtime)
-    notifyOnChange(runtime)
-    refreshBadge()
-  },
-  onRemove: (sessionId) => {
-    broadcast('agent:status', { sessionId, alive: false, agent: null, status: 'idle' })
-    lastNotifiedStatus.delete(sessionId)
-    refreshBadge()
-  },
-})
-
-/** 进入 blocked（没人看）/ done → 系统通知；点击通知显示窗口并让渲染进程切到该会话。烟测不弹（避免往通知中心堆 toast） */
-function notifyOnChange(runtime: SessionRuntime): void {
-  const prev = lastNotifiedStatus.get(runtime.sessionId) ?? null
-  lastNotifiedStatus.set(runtime.sessionId, runtime.status)
-  const text = decideNotification(
-    prev,
-    runtime,
-    agentDetector.isViewed(runtime.sessionId),
-    sessionNameOf(runtime.sessionId),
-  )
-  if (!text || isSmoke || !Notification.isSupported()) return
-  const notification = new Notification({ title: text.title, body: text.body })
-  notification.on('click', () => {
-    showWindow()
-    broadcast('app:select-session', runtime.sessionId)
-  })
-  notification.show()
-}
-
-let overlayImage: Electron.NativeImage | null = null
-
-/** 等你确认的会话数 → 托盘图标 / tooltip 与任务栏按钮 overlay；归零还原 */
-function refreshBadge(): void {
-  const count = agentDetector.list().filter((r) => r.status === 'blocked').length
-  tray?.setBadge(count)
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.setOverlayIcon(
-      count > 0 ? overlayImage : null,
-      count > 0 ? `${count} 个会话等你确认` : '',
-    )
-  }
-}
-
-// 进程树探针：只在有 pty 存活时每 2 s 扫一轮（原生模块一次十几毫秒），快照变化才喂给状态机；也回答 session:update 的空闲核对
-const processProbe = new ProcessTreeProbe({ listSubtree, intervalMs: 2000 })
-processProbe.onSnapshot((agents) => agentDetector.processSnapshot(agents))
-
-const ptyManager = new PtyManager({
-  onData: (sessionId, data) => {
-    broadcast('pty:data', sessionId, data)
-    agentDetector.ptyData(sessionId) // 只记「有输出到达」这个事实，不看内容
-  },
-  onExit: (e) => {
-    broadcast('pty:exit', e)
-    processProbe.unwatch(e.sessionId)
-    agentDetector.ptyExited(e.sessionId)
-  },
-  onSpawn: (sessionId, pid) => {
-    agentDetector.ptySpawned(sessionId)
-    processProbe.watch(sessionId, pid)
-  },
-  isFile: existsSync, // spawn 前把 shell 名解析成绝对路径：开机自启时工作目录是 System32，相对名会撞 node-pty 的缺陷
-})
-console.log('[pty] node-pty 已加载')
-
 // 检查更新：更新源见 electron-builder.yml 的 publish；只提示不自动下载，安装前结束全部终端
 const updater = new Updater({
   autoUpdater,
@@ -227,7 +151,7 @@ const updater = new Updater({
   onStatus: (status) => broadcast('update:status', status),
   beforeInstall: () => {
     isQuitting = true
-    ptyManager.killAll()
+    ptyManager?.killAll()
   },
 })
 
@@ -245,13 +169,6 @@ app.whenReady().then(async () => {
   const store = new SessionStore(dataDir, {
     onChanged: (sessions) => broadcast('session:changed', sessions),
   })
-  sessionNameOf = (id) => {
-    try {
-      return store.get(id).name
-    } catch {
-      return id
-    }
-  }
   // 首次运行时 settings.json 的唤起命令来自 PATH 探测；之后完全以文件为准
   const settings = new SettingsStore(dataDir, {
     seedCommands: availableAgents,
@@ -274,50 +191,32 @@ app.whenReady().then(async () => {
     return
   }
 
-  // hooks 回环端点：应用就绪即启动（不论 hooks 是否安装），端口由数据目录哈希而来、被占用则顺延；
-  // 载荷按 cwd 映射到会话（多命中优先 agent 已是该工具的会话）后交给状态机
-  hookServer = new HookServer({
-    onHook: (agent, payload) => {
-      const ids = matchSessionsByCwd(payload['cwd'], store.list(), agentDetector.list(), agent)
-      if (ids.length > 0) agentDetector.hookEvent(ids, agent, payload)
-    },
+  // agent 运行时子系统：状态机 / 进程树 / hooks 端点与安装器 / 通知 / 角标全在里面，这里只造 Electron 适配器并接线一次；
+  // PtyManager 的三个回调经 wrapPty 串上状态机与探针
+  const subsystem = createProductionAgent({
+    dataDir,
+    sessions: () => store.list(),
+    broadcast: (runtime) => broadcast('agent:status', runtime),
+    notifications: electronNotifications({
+      silent: isSmoke, // 烟测不弹（避免往通知中心堆 toast）
+      onClick: (sessionId) => {
+        showWindow()
+        broadcast('app:select-session', sessionId)
+      },
+    }),
+    badge: electronBadge({ tray: () => tray, window: () => mainWindow, overlay: overlayImage! }),
   })
-  let hookPort = 0
-  try {
-    hookPort = await hookServer.start(derivePort(dataDir))
-    console.log(`[agent] hooks 端点已启动 http://127.0.0.1:${hookPort}/tagterm/hook/`)
-  } catch (err) {
-    console.error('[agent] hooks 端点启动失败，Claude / Codex hooks 不可用', err)
-  }
-
-  // hooks 安装目标：Claude 的总配置（必须已存在）与 Codex 的专用 hooks 文件（可新建）；启动时端口若顺延了就静默改写命令
-  const hookInstallers = {
-    claude: new HookInstaller(
-      {
-        agent: 'claude',
-        settingsPath: join(homedir(), '.claude', 'settings.json'),
-        createIfMissing: false,
-      },
-      { now: () => Date.now() },
-    ),
-    codex: new HookInstaller(
-      {
-        agent: 'codex',
-        settingsPath: join(homedir(), '.codex', 'hooks.json'),
-        createIfMissing: true,
-      },
-      { now: () => Date.now() },
-    ),
-  }
-  if (hookPort > 0) {
-    for (const [agent, installer] of Object.entries(hookInstallers)) {
-      try {
-        await installer.syncPort(hookPort)
-      } catch (err) {
-        console.warn(`[agent] 同步 ${agent} hooks 端口失败`, err)
-      }
-    }
-  }
+  agent = subsystem
+  const pty = new PtyManager(
+    subsystem.wrapPty({
+      onData: (sessionId, data) => broadcast('pty:data', sessionId, data),
+      onExit: (e) => broadcast('pty:exit', e),
+      isFile: existsSync, // spawn 前把 shell 名解析成绝对路径：开机自启时工作目录是 System32，相对名会撞 node-pty 的缺陷
+    }),
+  )
+  ptyManager = pty
+  console.log('[pty] node-pty 已加载')
+  await subsystem.start()
 
   registerIpc(ipcMain, {
     version: app.getVersion(),
@@ -326,15 +225,12 @@ app.whenReady().then(async () => {
     settings,
     tags,
     updater,
-    pty: ptyManager,
-    agent: agentDetector,
-    hooks: hookInstallers,
-    hookPort,
+    pty,
+    agent: subsystem,
     dataDir,
     pickDirectory,
     pickImage,
     listShells: () => availableShells,
-    hasChildProcesses: (pid) => processProbe.hasChildren(pid),
     getAutoLaunch,
     setAutoLaunch,
   })
@@ -349,11 +245,9 @@ app.whenReady().then(async () => {
     runSmokeCheck(mainWindow, {
       store,
       tags,
-      pty: ptyManager,
-      probe: processProbe,
-      hookPort,
+      pty,
+      agent: subsystem,
       badgeCount: () => tray?.count() ?? -1,
-      agentStatusOf: (id) => agentDetector.list().find((r) => r.sessionId === id)?.status ?? null,
       quit: quitApp,
     })
   // 未打包（开发）时 electron-updater 会直接报错，只在打包版自动检查
@@ -365,9 +259,9 @@ app.on('second-instance', () => showWindow())
 // 退出前结束全部终端，防孤儿 conhost（托盘「退出」也走这里）
 app.on('before-quit', () => {
   isQuitting = true
-  ptyManager.killAll()
-  void hookServer?.stop()
-  hookServer = null
+  ptyManager?.killAll()
+  void agent?.stop()
+  agent = null
   tray?.destroy()
   tray = null
 })

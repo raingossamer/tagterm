@@ -12,7 +12,7 @@ import { existsSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { join } from 'node:path'
 import type { PtyManager } from './pty/PtyManager'
-import type { ProcessTreeProbe } from './agent/ProcessTreeProbe'
+import type { AgentSubsystem } from './agent/AgentSubsystem'
 import type { SessionStore } from './store/SessionStore'
 import type { TagStore } from './store/TagStore'
 
@@ -20,13 +20,10 @@ export interface SmokeDeps {
   store: SessionStore
   tags: TagStore
   pty: PtyManager
-  probe: ProcessTreeProbe
-  /** HookServer 实际监听的端口（0 = 启动失败） */
-  hookPort: number
+  /** agent 子系统：hooks 端口、运行时记录、shell 空闲核对（核查与诊断用） */
+  agent: AgentSubsystem
   /** 托盘当前的「等你确认」角标计数 */
   badgeCount: () => number
-  /** 某会话当前的运行时状态（诊断用） */
-  agentStatusOf: (sessionId: string) => string | null
   quit: () => void
 }
 
@@ -567,7 +564,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
       const pollChildren = async (expected: boolean, timeoutMs: number): Promise<boolean> => {
         const start = Date.now()
         while (Date.now() - start < timeoutMs) {
-          if ((await deps.probe.hasChildren(shellPid)) === expected) return true
+          if (!(await deps.agent.isShellIdle(shellPid)) === expected) return true
           await sleep(100)
         }
         return false
@@ -721,7 +718,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         agent: 'claude' | 'codex',
         payload: Record<string, unknown>,
       ): Promise<void> => {
-        statuses.push(await postHook(deps.hookPort, agent, payload))
+        statuses.push(await postHook(deps.agent.port, agent, payload))
       }
       await send('claude', { hook_event_name: 'SessionStart', cwd: claudeCwd, session_id: 'smoke' })
       await send('claude', { hook_event_name: 'UserPromptSubmit', cwd: claudeCwd })
@@ -747,7 +744,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
       Object.assign(viewDiag, {
         winFocused: win.isFocused(),
         winVisible: win.isVisible(),
-        r3Status: deps.agentStatusOf(prepare.ids[0]!),
+        r3Status: deps.agent.list().find((r) => r.sessionId === prepare.ids[0])?.status ?? null,
       })
 
       const codexCwd = 'C:/Windows/System32'
@@ -772,7 +769,12 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
       )) as string | null
       const badJson = await new Promise<number>((resolve, reject) => {
         const req = httpRequest(
-          { host: '127.0.0.1', port: deps.hookPort, path: '/tagterm/hook/claude', method: 'POST' },
+          {
+            host: '127.0.0.1',
+            port: deps.agent.port,
+            path: '/tagterm/hook/claude',
+            method: 'POST',
+          },
           (res) => {
             res.resume()
             res.on('end', () => resolve(res.statusCode ?? 0))
@@ -782,7 +784,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         req.end('{ not json')
       })
       const hooks = {
-        port: deps.hookPort,
+        port: deps.agent.port,
         statuses,
         badJson,
         claudeWorking,
