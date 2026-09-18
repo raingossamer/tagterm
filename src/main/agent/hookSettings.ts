@@ -13,8 +13,13 @@ function curlTimeoutSec(event: string): number {
   return event === 'Interrupt' || event === 'SessionEnd' ? 1 : 3
 }
 
+/**
+ * `--noproxy 127.0.0.1` 不能省：curl 读 `http_proxy` / `ALL_PROXY` 环境变量，**回环地址也不例外**
+ * （本机 curl 8.12.1 实测：设了 `http_proxy` 时请求被交给代理、我们的端点一个字也收不到，hooks 静默失效）。
+ * 用 `127.0.0.1` 而不是 `*`：`*` 要引号，不引号在 sh 里会被展开成当前目录的文件名
+ */
 export function buildHookCommand(agent: HookAgent, port: number, event: string): string {
-  return `curl.exe -s -m ${curlTimeoutSec(event)} -X POST -T - http://127.0.0.1:${port}${HOOK_PATH_PREFIX}${agent}`
+  return `curl.exe -s -m ${curlTimeoutSec(event)} --noproxy 127.0.0.1 -X POST -T - http://127.0.0.1:${port}${HOOK_PATH_PREFIX}${agent}`
 }
 
 export function isOurHook(command: unknown): boolean {
@@ -42,11 +47,10 @@ function entriesOf(value: unknown): unknown[] {
 }
 
 /** 某事件的条目数组里是否已有我们的命令 */
-function hasOurEntry(entries: unknown[]): boolean {
-  return entries.some(
-    (entry) =>
-      isObject(entry) &&
-      entriesOf(entry['hooks']).some((h) => isObject(h) && isOurHook(h['command'])),
+/** 这个条目是我们装的吗（条目里任一命令带 `/tagterm/hook/`）：合并时按当前命令串重建它、剥离时删掉它 */
+function isOurEntry(entry: unknown): boolean {
+  return (
+    isObject(entry) && entriesOf(entry['hooks']).some((h) => isObject(h) && isOurHook(h['command']))
   )
 }
 
@@ -63,8 +67,9 @@ export function mergeHooks(agent: HookAgent, settings: unknown, port: number): u
   const hooks = hooksTableOf(settings)
   for (const spec of HOOK_CONTRACTS[agent].events) {
     const entries = entriesOf(hooks[spec.event])
-    if (hasOurEntry(entries)) continue
-    hooks[spec.event] = [...entries, buildEntry(agent, port, spec)]
+    // 我们的条目按当前命令串重建（别人的条目原样保留、顺序不动）：内容没变即幂等，
+    // 而旧版本装下的命令（比如缺 --noproxy 的那版）重新打开开关就能升级
+    hooks[spec.event] = [...entries.filter((e) => !isOurEntry(e)), buildEntry(agent, port, spec)]
   }
   base['hooks'] = hooks
   return base

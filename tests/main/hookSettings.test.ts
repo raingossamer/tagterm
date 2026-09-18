@@ -15,12 +15,16 @@ const CLAUDE_HOOK_EVENTS = HOOK_CONTRACTS.claude.events
 const CODEX_HOOK_EVENTS = HOOK_CONTRACTS.codex.events
 
 describe('hookSettings（hooks 配置的纯函数）', () => {
-  it('buildHookCommand：curl.exe -T - 到本地端点，不含 @ % $ 引号；Interrupt / SessionEnd 超时 1 s，其余 3 s', () => {
+  it('buildHookCommand：curl.exe -T - 到本地端点，带 --noproxy（curl 连回环也走代理环境变量）、不含 @ % $ 引号与 *；Interrupt / SessionEnd 超时 1 s，其余 3 s', () => {
     const cmd = buildHookCommand('claude', PORT, 'Stop')
-    expect(cmd).toBe('curl.exe -s -m 3 -X POST -T - http://127.0.0.1:51233/tagterm/hook/claude')
-    expect(buildHookCommand('codex', PORT, 'Interrupt')).toBe(
-      'curl.exe -s -m 1 -X POST -T - http://127.0.0.1:51233/tagterm/hook/codex',
+    expect(cmd).toBe(
+      'curl.exe -s -m 3 --noproxy 127.0.0.1 -X POST -T - http://127.0.0.1:51233/tagterm/hook/claude',
     )
+    expect(buildHookCommand('codex', PORT, 'Interrupt')).toBe(
+      'curl.exe -s -m 1 --noproxy 127.0.0.1 -X POST -T - http://127.0.0.1:51233/tagterm/hook/codex',
+    )
+    // `*` 不能出现：不加引号时 sh 会把它展开成当前目录的文件名
+    expect(cmd).not.toContain('*')
     expect(buildHookCommand('codex', PORT, 'SessionEnd')).toContain('-m 1 ')
     expect(buildHookCommand('claude', PORT, 'SessionEnd')).toContain('-m 1 ')
     for (const c of [cmd, buildHookCommand('codex', PORT, 'PermissionRequest')]) {
@@ -31,7 +35,7 @@ describe('hookSettings（hooks 配置的纯函数）', () => {
     expect(isOurHook(undefined)).toBe(false)
   })
 
-  it('mergeHooks（Claude）：契约表里的每个事件各追加一条，Notification 带契约表的 matcher；条目 type command / timeout / async true；别人的条目与其他键原样；已有我们的条目跳过（幂等）', () => {
+  it('mergeHooks（Claude）：契约表里的每个事件各追加一条，Notification 带契约表的 matcher；条目 type command / timeout / async true；别人的条目与其他键原样；已有我们的条目按当前命令串重建（内容没变即幂等，旧版本装下的命令重新打开开关即升级）', () => {
     const settings = {
       model: 'opus',
       hooks: {
@@ -68,6 +72,12 @@ describe('hookSettings（hooks 配置的纯函数）', () => {
     expect(merged.hooks['SessionEnd']![0]!.hooks[0]!['timeout']).toBe(1)
 
     expect(mergeHooks('claude', merged, PORT)).toEqual(merged)
+    // 旧版本装下的命令串（这里模拟缺 --noproxy 的那版）：重新合并即按当前命令串重建，位置与别人的条目都不动
+    const stale = JSON.parse(
+      JSON.stringify(merged).replaceAll(' --noproxy 127.0.0.1', ''),
+    ) as typeof merged
+    expect(JSON.stringify(stale)).not.toContain('--noproxy')
+    expect(mergeHooks('claude', stale, PORT)).toEqual(merged)
     // 没有 hooks 键 / 不是对象也能装
     expect((mergeHooks('claude', {}, PORT) as { hooks: object }).hooks).toBeDefined()
     expect(
