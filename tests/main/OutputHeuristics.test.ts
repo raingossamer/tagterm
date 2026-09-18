@@ -48,18 +48,16 @@ describe('OutputHeuristics（屏幕末尾启发式，纯函数）', () => {
   })
 
   it('parsePromptCwd：从末尾往前找第一个提示符行取目录；cmd 与 PowerShell；无提示符 → null；pwsh 同 PowerShell', () => {
-    expect(parsePromptCwd(['C:\\a\\b>'], 'cmd.exe')).toBe('C:\\a\\b')
-    expect(parsePromptCwd(['C:\\a\\b>dir', 'x.txt', 'C:\\a>'], 'cmd.exe')).toBe('C:\\a')
-    expect(parsePromptCwd(['PS D:\\x>'], 'powershell.exe')).toBe('D:\\x')
-    expect(parsePromptCwd(['PS D:\\x\\y> '], 'pwsh.exe')).toBe('D:\\x\\y')
+    expect(parsePromptCwd(['C:\\a\\b>'])).toBe('C:\\a\\b')
+    expect(parsePromptCwd(['C:\\a\\b>dir', 'x.txt', 'C:\\a>'])).toBe('C:\\a')
+    expect(parsePromptCwd(['PS D:\\x>'])).toBe('D:\\x')
+    expect(parsePromptCwd(['PS D:\\x\\y> '])).toBe('D:\\x\\y')
     // 末行不是提示符（程序在跑）时往前找最近的一个
-    expect(parsePromptCwd(['C:\\Windows>ping 1.1.1.1', 'Pinging...'], 'cmd.exe')).toBe(
-      'C:\\Windows',
-    )
-    expect(parsePromptCwd(['hello', 'world'], 'cmd.exe')).toBeNull()
-    expect(parsePromptCwd([], 'cmd.exe')).toBeNull()
+    expect(parsePromptCwd(['C:\\Windows>ping 1.1.1.1', 'Pinging...'])).toBe('C:\\Windows')
+    expect(parsePromptCwd(['hello', 'world'])).toBeNull()
+    expect(parsePromptCwd([])).toBeNull()
     // cmd 会话里的 PowerShell 提示符（用户手动进了 powershell）同样能解析，反之亦然
-    expect(parsePromptCwd(['PS C:\\q>'], 'cmd.exe')).toBe('C:\\q')
-    expect(parsePromptCwd(['C:\\q>'], 'powershell.exe')).toBe('C:\\q')
+    expect(parsePromptCwd(['PS C:\\q>'])).toBe('C:\\q')
+    expect(parsePromptCwd(['C:\\q>'])).toBe('C:\\q')
   })
 })

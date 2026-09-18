@@ -205,16 +205,15 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   on('pty:write', (id, data) => {
     if (typeof id === 'string' && typeof data === 'string') deps.pty.write(id, data)
   })
-  // 静默末尾报告（单向）：非法参数与未知会话都静默忽略；会话的 shell 决定提示符怎么解析
+  // 静默末尾报告（单向）：非法参数与未知会话都静默忽略（提示符两种都认，不按会话 shell 区分）
   on('agent:report-output', (id, report) => {
     if (typeof id !== 'string' || !id || !isOutputReport(report)) return
-    let shell: ShellKind
     try {
-      shell = deps.store.get(id).shell
+      deps.store.get(id)
     } catch {
       return
     }
-    deps.agent.reportOutput(id, report, shell)
+    deps.agent.reportOutput(id, report)
   })
 }
 
