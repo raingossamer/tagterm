@@ -1,39 +1,16 @@
 /**
  * 纯函数：Claude Code（~/.claude/settings.json）与 Codex（~/.codex/hooks.json）hooks 配置的合并 / 剥离 / 识别 / 换端口。
  * 两个文件形态相同：顶层 `hooks` 下按事件名挂条目数组，条目 `{ matcher?, hooks: [{ type: 'command', command, timeout, async }] }`，
- * Codex 的每条多一个 `commandWindows`。我们的条目靠 command 里的 `/tagterm/hook/` 识别；别人的条目与其他键一律不动。
+ * Codex 的每条多一个 `commandWindows`。装哪些事件来自 hookContract 的契约表；我们的条目靠 command 里的 `/tagterm/hook/` 识别；
+ * 别人的条目与其他键一律不动。
  * 命令串对 sh / cmd / PowerShell 都安全：`-T -` 读 stdin，不含 @ % $ 引号（PowerShell 把 `--data-binary @-` 报成语法错误）。
  */
 import type { HookAgent } from '@shared/ipc'
-import { HOOK_PATH_PREFIX } from './HookServer'
+import { HOOK_CONTRACTS, HOOK_PATH_PREFIX, type HookEventSpec } from './hookContract'
 
-export interface HookEventSpec {
-  event: string
-  /** Claude 的 Notification 只挑需要人的四种类型 */
-  matcher?: string
-  /** Codex 给 Interrupt / SessionEnd 的预算只有 1 s */
-  timeoutSec: number
-}
-
-const CLAUDE_BLOCKING_MATCHER =
-  'permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input'
-
-export const CLAUDE_HOOK_EVENTS: readonly HookEventSpec[] = [
-  { event: 'Notification', matcher: CLAUDE_BLOCKING_MATCHER, timeoutSec: 5 },
-  { event: 'UserPromptSubmit', timeoutSec: 5 },
-  { event: 'Stop', timeoutSec: 5 },
-  { event: 'SessionStart', timeoutSec: 5 },
-  { event: 'SessionEnd', timeoutSec: 1 },
-]
-
-export const CODEX_HOOK_EVENTS: readonly HookEventSpec[] = [
-  { event: 'UserPromptSubmit', timeoutSec: 5 },
-  { event: 'PermissionRequest', timeoutSec: 5 },
-  { event: 'Stop', timeoutSec: 5 },
-  { event: 'Interrupt', timeoutSec: 1 },
-  { event: 'SessionStart', timeoutSec: 5 },
-  { event: 'SessionEnd', timeoutSec: 1 },
-]
+/** 两个目标的安装表：契约表的视图，供测试与外部对照 */
+export const CLAUDE_HOOK_EVENTS: readonly HookEventSpec[] = HOOK_CONTRACTS.claude.events
+export const CODEX_HOOK_EVENTS: readonly HookEventSpec[] = HOOK_CONTRACTS.codex.events
 
 /** curl 自身的超时（秒）：与事件预算一致，1 s 预算的事件 curl 也只等 1 s */
 function curlTimeoutSec(event: string): number {
@@ -88,8 +65,7 @@ function buildEntry(agent: HookAgent, port: number, spec: HookEventSpec): HookEn
 export function mergeHooks(agent: HookAgent, settings: unknown, port: number): unknown {
   const base: Json = isObject(settings) ? { ...settings } : {}
   const hooks = hooksTableOf(settings)
-  const specs = agent === 'claude' ? CLAUDE_HOOK_EVENTS : CODEX_HOOK_EVENTS
-  for (const spec of specs) {
+  for (const spec of HOOK_CONTRACTS[agent].events) {
     const entries = entriesOf(hooks[spec.event])
     if (hasOurEntry(entries)) continue
     hooks[spec.event] = [...entries, buildEntry(agent, port, spec)]
