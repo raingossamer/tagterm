@@ -2,12 +2,14 @@
  * 服务层：每个会话的运行时状态机（SessionRuntime），三路信号（hooks / 屏幕末尾启发式 / 进程树）在这里合成。
  * 输入全是方法调用（AgentSubsystem 把 PtyManager 的 spawn / exit、ProcessTreeProbe 的快照、HookServer 的载荷、渲染进程的屏幕末尾报告接过来；
  * hooks 事件按 agent 的转移规则见 hookContract），输出是每次记录变化回调一条记录、记录删除回调一个 id；时钟注入，不 import electron。
- * 「有输出到达」不是信号：启动工具、在工具里打字、界面重绘都有输出，但都不是在干活；运行中只认屏幕上工具自己的「工作中」提示（OutputHeuristics）。
+ * 「有输出到达」不是信号：启动工具、在工具里打字、界面重绘都有输出，但都不是在干活；
+ * 「运行中」只认屏幕上**在走的计时器**（工具状态行括号里的耗时，相邻两次采样比较，见 OutputHeuristics）——
+ * 固定文案匹配换过一版又退掉了：工具改版就漏报，而屏幕上任何提到该文案的文字都会把会话永久钉在运行中（用户 2026-09-18 实测）。
  */
 import type { HookAgent, OutputReport } from '@shared/ipc'
 import type { AgentKind, SessionRuntime } from '@shared/models'
 import { HOOK_CONTRACTS } from './hookContract'
-import { classify, parsePromptCwd } from './OutputHeuristics'
+import { classify, hasTicked, parseElapsedSeconds, parsePromptCwd } from './OutputHeuristics'
 
 /** 收到 hooks 事件后多久内输出启发式不产生状态转移（最可靠的信号说了算） */
 const HOOK_SUPPRESS_MS = 30_000
@@ -26,6 +28,8 @@ export class AgentDetector {
   private viewedId: string | null = null
   /** 每会话最近一次 hooks 事件的时间：抑制窗以它起算 */
   private readonly hookSeenAt = new Map<string, number>()
+  /** 每会话上一份屏幕末尾报告里的计时器读数（秒）：与新报告比较即知工具是否在干活 */
+  private readonly elapsedSeen = new Map<string, number[]>()
 
   constructor(private readonly deps: AgentDetectorDeps) {}
 
@@ -41,11 +45,12 @@ export class AgentDetector {
 
   /**
    * 渲染进程的屏幕末尾报告，两种节奏：屏幕在动时每秒一次（silentMs 0）、静默 1.5 s 后一次（silentMs > 0）。
-   * 先解析提示符更新 cwdNow（不受 agent 有无影响，解析不到则保留上次的）；有 agent 且未被 hooks 抑制时按 classify 转移：
-   *   末尾有工具的「工作中」提示 → working（两种报告都认；从 blocked 也转 = 用户回答提示后工具继续干活，提示清掉）；
+   * 先解析提示符更新 cwdNow（不受 agent 有无影响，解析不到则保留上次的），再记下这一屏的计时器读数（同样不受影响：
+   * agent 被进程树发现时才有上一次的读数可比）。有 agent 且未被 hooks 抑制时：
    *   静默且末行命中提示模式 → blocked（pendingHint = 那一行；屏幕在动时不判，重绘中途的一帧不算等人）；
-   *   静默且什么都没有 → 只有此前是 working / blocked 才算「跑完」（正被查看则 idle，否则 done），空闲的 shell 永远不会变成「已完成」；
-   *   屏幕在动但没有提示（欢迎画面、在工具里打字）→ 不转移，等静默再判
+   *   计时器比上一次采样往前走了 → working（两种报告都认；从 blocked 也转 = 用户回答后工具继续干活，提示清掉）；
+   *   静默且计时器没动 → 只有此前是 working / blocked 才算「跑完」（正被查看则 idle，否则 done），空闲的 shell 永远不会变成「已完成」；
+   *   屏幕在动但计时器没动（欢迎画面、在工具里打字、静态文字）→ 不转移
    */
   reportOutput(sessionId: string, report: OutputReport): void {
     const current = this.runtimes.get(sessionId)
@@ -53,14 +58,18 @@ export class AgentDetector {
     let next: SessionRuntime = { ...current }
     const cwdNow = parsePromptCwd(report.tail)
     if (cwdNow !== null) next.cwdNow = cwdNow
+    const seconds = parseElapsedSeconds(report.tail)
+    const previous = this.elapsedSeen.get(sessionId)
+    this.elapsedSeen.set(sessionId, seconds)
+    const isTicking = previous !== undefined && hasTicked(previous, seconds)
     if (current.agent !== null && !this.isSuppressed(current)) {
       const result = classify(report.tail)
       const isSilent = report.silentMs > 0
       const { pendingHint: _hint, ...bare } = next
-      if (result.kind === 'working') {
-        next = { ...bare, status: 'working' }
-      } else if (isSilent && result.kind === 'blocked') {
+      if (isSilent && result.kind === 'blocked') {
         next = { ...next, status: 'blocked', pendingHint: result.hint }
+      } else if (isTicking) {
+        next = { ...bare, status: 'working' }
       } else if (isSilent && (current.status === 'working' || current.status === 'blocked')) {
         next = { ...bare, status: this.viewedId === sessionId ? 'idle' : 'done' }
       }
@@ -149,6 +158,7 @@ export class AgentDetector {
 
   private remove(sessionId: string): void {
     this.hookSeenAt.delete(sessionId)
+    this.elapsedSeen.delete(sessionId)
     if (!this.runtimes.delete(sessionId)) return
     this.deps.onRemove(sessionId)
   }

@@ -8,6 +8,12 @@ const CLAUDE_BLOCKING_TYPES = HOOK_CONTRACTS.claude.events
   .find((e) => e.event === 'Notification')!
   .matcher!.split('|')
 
+/** 工具正在干活的一屏：状态行括号里带计时器（Claude Code 2.1.258 实测形态）；s 递增即「计时器在走」 */
+const busy = (s: number, silentMs = 0): { tail: string[]; silentMs: number } => ({
+  tail: [`✻ Cogitating… (${s}s · ↓ 1.2k tokens)`, '> ', '? for shortcuts'],
+  silentMs,
+})
+
 describe('AgentDetector（运行时状态机）', () => {
   let changes: SessionRuntime[]
   let removed: string[]
@@ -76,13 +82,13 @@ describe('AgentDetector（运行时状态机）', () => {
     expect(changes[1]).not.toHaveProperty('pendingHint')
   })
 
-  it('屏幕在动的报告（silentMs 0）：无 agent 只更新 cwdNow；有 agent 且末尾有工作中提示 → working（只回调一次）；没有提示不转移；未知会话忽略', () => {
-    const busy = { tail: ['⠋ Thinking... (esc to interrupt)', '> '], silentMs: 0 }
+  it('屏幕在动的报告（silentMs 0）：无 agent 只更新 cwdNow；有 agent 时第一份采样只作基线、计时器往前走才 → working（同状态只回调一次）；读数不动（欢迎画面 / 打字 / 静态文字）不转移；未知会话忽略', () => {
     detector.ptySpawned('s1')
     changes.length = 0
-    detector.reportOutput('s1', busy)
-    detector.reportOutput('ghost', busy)
-    expect(changes).toEqual([])
+    detector.reportOutput('s1', busy(1))
+    detector.reportOutput('s1', busy(2))
+    detector.reportOutput('ghost', busy(3))
+    expect(changes).toEqual([]) // 没有 agent：计时器走着也不算
     detector.reportOutput('s1', { tail: ['C:\\Windows>claude'], silentMs: 0 })
     expect(changes).toEqual([
       { sessionId: 's1', alive: true, agent: null, status: 'idle', cwdNow: 'C:\\Windows' },
@@ -90,11 +96,13 @@ describe('AgentDetector（运行时状态机）', () => {
 
     detector.processSnapshot(new Map([['s1', 'gemini']]))
     changes.length = 0
-    // 欢迎画面 / 在工具里打字：屏幕在动但没有工作中提示 → 不算运行中
+    // 欢迎画面 / 在工具里打字：屏幕在动但没有计时器 → 不算运行中
     detector.reportOutput('s1', { tail: ['Welcome to Gemini CLI', '> 正在打字'], silentMs: 0 })
     expect(changes).toEqual([])
-    detector.reportOutput('s1', busy)
-    detector.reportOutput('s1', busy)
+    detector.reportOutput('s1', busy(10)) // 第一份带计时器的采样只作基线
+    expect(changes).toEqual([])
+    detector.reportOutput('s1', busy(11))
+    detector.reportOutput('s1', busy(12))
     expect(changes).toEqual([
       {
         sessionId: 's1',
@@ -104,6 +112,9 @@ describe('AgentDetector（运行时状态机）', () => {
         cwdNow: 'C:\\Windows',
       },
     ])
+    // 读数一动不动：屏幕上只是静态地印着一行带 (12s) 的文字
+    detector.reportOutput('s1', busy(12))
+    expect(changes).toHaveLength(1)
   })
 
   it('静默末尾报告：无 agent 时只更新 cwdNow、不改状态；解析不到提示符时保留上次的 cwdNow', () => {
@@ -123,8 +134,7 @@ describe('AgentDetector（运行时状态机）', () => {
     expect(detector.list()[0]?.cwdNow).toBe('C:\\Windows')
   })
 
-  it('有 agent 的静默报告：末行命中提示 → blocked + pendingHint；有工作中提示 → 保持 working（spinner 卡住不算跑完）；无提示时 idle 保持 idle、working / blocked 未被查看 → done（清提示）、正被查看 → idle；done 被查看 → idle', () => {
-    const busy = { tail: ['• Working (5s • esc to interrupt)', '› '], silentMs: 0 }
+  it('有 agent 的静默报告：末行命中提示 → blocked + pendingHint（屏幕在动时不判，重绘中途的一帧不算等人）；计时器还在走 → 仍 working（不算跑完）；计时器停了且此前 working / blocked → 未被查看 done（清提示）、正被查看 idle；idle 永不变 done；done 被查看 → idle', () => {
     detector.ptySpawned('s1')
     detector.processSnapshot(new Map([['s1', 'pi']]))
     changes.length = 0
@@ -133,13 +143,18 @@ describe('AgentDetector（运行时状态机）', () => {
     detector.reportOutput('s1', { tail: ['ready.'], silentMs: 1500 })
     expect(changes).toEqual([])
 
-    detector.reportOutput('s1', busy)
-    expect(changes.at(-1)).toMatchObject({ status: 'working' })
-    // 静默了但提示还在：仍是 working，不算跑完
-    detector.reportOutput('s1', { tail: ['• Working (9s • esc to interrupt)'], silentMs: 1500 })
+    detector.reportOutput('s1', busy(5))
+    detector.reportOutput('s1', busy(6))
     expect(changes.at(-1)).toMatchObject({ status: 'working' })
     expect(changes).toHaveLength(1)
+    // 静默了但计时器还在往前走（工具在想，屏幕一时没动静）：仍是 working，不算跑完
+    detector.reportOutput('s1', busy(8, 1500))
+    expect(detector.list()[0]).toMatchObject({ status: 'working' })
+    expect(changes).toHaveLength(1)
 
+    // 屏幕在动时末行有提示模式：先不判（重绘中途的一帧）；静默下来才算「等你确认」
+    detector.reportOutput('s1', { tail: ['Do you want to proceed? (y/n)'], silentMs: 0 })
+    expect(changes).toHaveLength(1)
     detector.reportOutput('s1', { tail: ['Do you want to proceed? (y/n)'], silentMs: 1500 })
     expect(changes.at(-1)).toEqual({
       sessionId: 's1',
@@ -149,17 +164,19 @@ describe('AgentDetector（运行时状态机）', () => {
       pendingHint: 'Do you want to proceed? (y/n)',
     })
 
-    // 用户回答后工具继续干活（屏幕在动 + 工作中提示）→ working，提示清掉
-    detector.reportOutput('s1', busy)
+    // 用户回答后工具继续干活（计时器又走起来）→ working，提示清掉
+    detector.reportOutput('s1', busy(20))
+    detector.reportOutput('s1', busy(21))
     expect(changes.at(-1)).toEqual({ sessionId: 's1', alive: true, agent: 'pi', status: 'working' })
 
-    // 跑完：提示消失且静默、没人看 → done
-    detector.reportOutput('s1', { tail: ['Done.'], silentMs: 1500 })
+    // 跑完：状态行换成「Cooked for 21s · done」（耗时不在括号里 → 计时器读数消失）且静默、没人看 → done
+    const finished = { tail: ['✻ Cooked for 21s · done 13:57', '> '], silentMs: 1500 }
+    detector.reportOutput('s1', finished)
     expect(changes.at(-1)).toMatchObject({ status: 'done' })
     expect(changes.at(-1)).not.toHaveProperty('pendingHint')
-    // 再静默一次不重复回调；屏幕在动但没有提示（用户在打字）也不动
+    // 再静默一次不重复回调；屏幕在动但计时器没动（用户在打字）也不动
     const count = changes.length
-    detector.reportOutput('s1', { tail: ['Done.'], silentMs: 1500 })
+    detector.reportOutput('s1', finished)
     detector.reportOutput('s1', { tail: ['> 下一个问题'], silentMs: 0 })
     expect(changes).toHaveLength(count)
 
@@ -168,14 +185,17 @@ describe('AgentDetector（运行时状态机）', () => {
     expect(changes.at(-1)).toMatchObject({ status: 'idle' })
 
     // 正被查看时跑完 → 直接 idle
-    detector.reportOutput('s1', busy)
+    detector.reportOutput('s1', busy(30))
+    detector.reportOutput('s1', busy(31))
+    expect(changes.at(-1)).toMatchObject({ status: 'working' })
     detector.reportOutput('s1', { tail: ['Done again.'], silentMs: 1500 })
     expect(changes.at(-1)).toMatchObject({ status: 'idle' })
     detector.setViewed(null)
     expect(changes.at(-1)).toMatchObject({ status: 'idle' })
 
-    // 用户拒绝、工具停下：blocked → 静默无提示 → done
-    detector.reportOutput('s1', busy)
+    // 用户拒绝、工具停下：blocked → 静默且计时器不动 → done
+    detector.reportOutput('s1', busy(40))
+    detector.reportOutput('s1', busy(41))
     detector.reportOutput('s1', { tail: ['Allow?'], silentMs: 1500 })
     expect(changes.at(-1)).toMatchObject({ status: 'blocked', pendingHint: 'Allow?' })
     detector.reportOutput('s1', { tail: ['Stopped.'], silentMs: 1500 })
@@ -269,7 +289,6 @@ describe('AgentDetector（运行时状态机）', () => {
   })
 
   it('hooks 抑制窗：收到 hook 后 30 s 内，屏幕在动与静默两种报告都不改状态（cwdNow 照常）；30 s 后恢复', () => {
-    const busy = { tail: ['✻ Pondering… (esc to interrupt)', '> '], silentMs: 0 }
     detector.ptySpawned('s1')
     detector.hookEvent(['s1'], 'claude', { hook_event_name: 'SessionStart' })
     detector.hookEvent(['s1'], 'claude', { hook_event_name: 'UserPromptSubmit' })
@@ -281,14 +300,15 @@ describe('AgentDetector（运行时状态机）', () => {
     expect(changes.at(-1)).toMatchObject({ status: 'working', cwdNow: 'C:\\p' })
     detector.hookEvent(['s1'], 'claude', { hook_event_name: 'Stop' })
     expect(changes.at(-1)).toMatchObject({ status: 'done' })
-    detector.reportOutput('s1', busy)
+    detector.reportOutput('s1', busy(1))
+    detector.reportOutput('s1', busy(2))
     expect(changes.at(-1)).toMatchObject({ status: 'done' })
 
     now += 29_000
-    detector.reportOutput('s1', busy)
+    detector.reportOutput('s1', busy(3))
     expect(changes.at(-1)).toMatchObject({ status: 'done' })
     now += 2_000
-    detector.reportOutput('s1', busy)
+    detector.reportOutput('s1', busy(4))
     expect(changes.at(-1)).toMatchObject({ status: 'working' })
     detector.reportOutput('s1', { tail: ['Allow?'], silentMs: 1500 })
     expect(changes.at(-1)).toMatchObject({ status: 'blocked', pendingHint: 'Allow?' })

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { classify, isShellPrompt, parsePromptCwd } from '../../src/main/agent/OutputHeuristics'
+import {
+  classify,
+  hasTicked,
+  isShellPrompt,
+  parseElapsedSeconds,
+  parsePromptCwd,
+} from '../../src/main/agent/OutputHeuristics'
 
 describe('OutputHeuristics（屏幕末尾启发式，纯函数）', () => {
   it('classify：清单里的每种提示模式各一例命中，hint 是那一行；大小写不敏感；末尾空行跳过', () => {
@@ -28,34 +34,33 @@ describe('OutputHeuristics（屏幕末尾启发式，纯函数）', () => {
     expect(classify(['Allow?', '', '   ', ''])).toEqual({ kind: 'blocked', hint: 'Allow?' })
   })
 
-  it('classify：末尾任一行含工具的「工作中」提示（esc to interrupt / esc to cancel，大小写不敏感）→ working；末行命中提示模式优先 blocked；末行是 shell 提示符一律 quiet', () => {
-    // Claude Code：spinner 行在输入框与状态栏之上
+  it('parseElapsedSeconds：只认括号里的耗时（工具状态行的计时器），h / m / s 折成秒；跑完那行的「for 8m 39s」不在括号里不算；屏幕上提到的文案不算', () => {
+    // Claude Code 工作中的状态行（截图实测形态，2.1.258 不带 esc to interrupt）
+    expect(parseElapsedSeconds(['✻ Bloviating… (3m 12s · ↓ 3.6k tokens)', '> '])).toEqual([192])
     expect(
-      classify([
-        '✻ Cogitating… (esc to interrupt · 12s)',
-        '> ',
-        '? for shortcuts',
-        '[Opus] | repo',
-      ]),
-    ).toEqual({ kind: 'working' })
-    // Codex
-    expect(classify(['• Working (5s • esc to interrupt)', '› '])).toEqual({ kind: 'working' })
-    // Gemini CLI
-    expect(classify(['⠋ Thinking... (ESC to cancel, 3s)', '> Type your message'])).toEqual({
-      kind: 'working',
-    })
-    // 提示消失（跑完）→ quiet；在工具里打字 / 欢迎画面 → quiet
-    expect(classify(['✻ Cogitated for 42s · done 10:49', '> ', '? for shortcuts'])).toEqual({
-      kind: 'quiet',
-    })
-    expect(classify(['Welcome to Claude Code!', '> 正在打字'])).toEqual({ kind: 'quiet' })
-    // 末行是「等你确认」提示：blocked 优先于工作中提示
-    expect(classify(['• Working (5s • esc to interrupt)', 'Allow command? (y/n)'])).toEqual({
-      kind: 'blocked',
-      hint: 'Allow command? (y/n)',
-    })
-    // 回到 shell 提示符：回滚区里残留的提示不算
-    expect(classify(['✻ Thinking… (esc to interrupt)', 'C:\\repo>'])).toEqual({ kind: 'quiet' })
+      parseElapsedSeconds(['✻ Envisioning… (19s · still thinking with xhigh effort)']),
+    ).toEqual([19])
+    // Gemini CLI：括号里先有文字再有秒数
+    expect(parseElapsedSeconds(['⠋ Thinking... (ESC to cancel, 3s)'])).toEqual([3])
+    // 小时 / 分钟 / 秒都折成秒；一行里多个括号按出现顺序
+    expect(parseElapsedSeconds(['(1h 2m 3s)', 'x (4s) y (2m)'])).toEqual([3723, 4])
+    // 跑完那行：耗时不在括号里 → 不算计时器（否则永远「在走」）
+    expect(parseElapsedSeconds(['✻ Cooked for 8m 39s · done 13:57', '> '])).toEqual([])
+    // 屏幕上正好写着提示文案（我自己解释这件事、看代码、写文档）→ 不是计时器
+    expect(parseElapsedSeconds(['末尾任一行含 esc to interrupt 就算运行中', '> '])).toEqual([])
+    expect(parseElapsedSeconds([])).toEqual([])
+  })
+
+  it('hasTicked：新采样里出现比上次某个值大 1–4 秒的耗时 → 计时器在走；值没变（静态文字）、值变少（滚出屏幕）、跳得太远都不算', () => {
+    expect(hasTicked([19], [20])).toBe(true) // 正常一秒一跳
+    expect(hasTicked([191, 38], [192, 38])).toBe(true) // 活的计时器 + 静态的 (38s) 并存
+    expect(hasTicked([19], [23])).toBe(true) // 采样抖动（≤ 4 s）
+    expect(hasTicked([19], [19])).toBe(false) // 静态：一个字都没动
+    expect(hasTicked([191, 38], [191])).toBe(false) // 静态行滚出屏幕
+    expect(hasTicked([19], [99])).toBe(false) // 跳太远：不是同一个计时器
+    expect(hasTicked([19], [18])).toBe(false) // 倒退
+    expect(hasTicked([], [19])).toBe(false) // 没有上次的值可比
+    expect(hasTicked([19], [])).toBe(false)
   })
 
   it('classify：末行是 cmd / PowerShell 提示符 → quiet（提示符里的 > 不算提示）；普通输出 / 空 → quiet', () => {
