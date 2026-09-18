@@ -8,7 +8,7 @@
  * 以 JSON 打印到 stdout。生产运行不触发。
  */
 import { app, type BrowserWindow } from 'electron'
-import { existsSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, rmSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { join } from 'node:path'
 import type { PtyManager } from './pty/PtyManager'
@@ -575,6 +575,10 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
     if (event.level === 'error') consoleErrors.push(event.message)
   })
   win.webContents.once('did-finish-load', async () => {
+    // 先把窗口抢到前台：渲染脚本一开头就用 navigator.clipboard，而它要求文档有焦点 ——
+    // 启动瞬间焦点还在别的窗口上时会抛一个非 Error 对象，整轮烟测只剩 error: [object Object]
+    win.show()
+    win.focus()
     // 等待 Vue 挂载与 IPC 往返
     await sleep(800)
     let result: Record<string, unknown> = {}
@@ -839,6 +843,76 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         selectedByBroadcast,
       }
 
+      // 没装 hooks 时的「运行中」判定走真实链路核查（0.3.1 的回归就出在这里，单测的合成屏幕守不住装配）：
+      //   把 ping.exe 复制成 claude.exe 在 s1 里跑起来 → 进程树认出 agent（s1 从未收到 hook，不在抑制窗里）
+      //   → 经真实 IPC 送两份计时器递增的屏幕 → 运行中；送一份只是「提到提示文案」的屏幕 → 不得转移；
+      //   送跑完的屏幕（耗时不在括号里）→ 离开运行中；Ctrl+C 停掉假 agent → 回空闲
+      const fakeAgentExe = join(app.getPath('userData'), 'claude.exe')
+      let heuristic: Record<string, unknown> = {}
+      try {
+        copyFileSync(
+          join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32', 'ping.exe'),
+          fakeAgentExe,
+        )
+        const s1 = sessionIds[0]!
+        const statusOf = (): string | null =>
+          deps.agent.list().find((r) => r.sessionId === s1)?.status ?? null
+        const agentOf = (): string | null =>
+          deps.agent.list().find((r) => r.sessionId === s1)?.agent ?? null
+        const report = (tail: string[], silentMs: number): Promise<unknown> =>
+          win.webContents.executeJavaScript(
+            `window.tagterm.agent.reportOutput(${JSON.stringify(s1)}, { tail: ${JSON.stringify(tail)}, silentMs: ${silentMs} })`,
+          )
+        const waitUntil = async (cond: () => boolean, timeoutMs: number): Promise<boolean> => {
+          const start = Date.now()
+          while (Date.now() - start < timeoutMs) {
+            if (cond()) return true
+            await sleep(100)
+          }
+          return false
+        }
+        // s1 的 pty 在恢复段被结束过：先点回它的标签页重开一条（它的 cwd 与 hooks 用的两个目录都不同，没收到过 hook 事件，不在抑制窗里）
+        await clickTab('smoke-已改名')
+        const recordSeen = await waitUntil(() => statusOf() !== null, 8000)
+        deps.pty.write(s1, `"${fakeAgentExe}" -n 30 127.0.0.1 >nul\r`)
+        const agentSeen = await waitUntil(() => agentOf() === 'claude', 8000)
+        const idleWithAgent = statusOf()
+        // 屏幕上只是「写着」提示文案：静态的两份采样不得变成运行中（用户 2026-09-18 撞到的误报）
+        const mention = ['末尾任一行含 esc to interrupt 就算运行中', '> ']
+        await report(mention, 0)
+        await report(mention, 0)
+        await sleep(200)
+        const afterMention = statusOf()
+        // 计时器真的在走：两份采样读数从 7s 到 8s
+        await report(['✻ Cogitating… (7s · ↓ 1.2k tokens)', '> '], 0)
+        await report(['✻ Cogitating… (8s · ↓ 1.3k tokens)', '> '], 0)
+        const working = await waitUntil(() => statusOf() === 'working', 3000)
+        const badgeWhenWorking = deps.badgeCounts()
+        // 跑完：状态行换成「Cooked for …」，耗时不在括号里 → 计时器读数消失 → 离开运行中
+        await report(['✻ Cooked for 8s · done 13:57', '> '], 1500)
+        const leftWorking = await waitUntil(() => statusOf() !== 'working', 3000)
+        const statusAfterDone = statusOf()
+        deps.pty.write(s1, '\x03') // Ctrl+C 停掉假 agent
+        const agentGone = await waitUntil(() => agentOf() === null, 8000)
+        heuristic = {
+          recordSeen,
+          agentSeen,
+          idleWithAgent,
+          afterMention,
+          mentionKeptIdle: afterMention === idleWithAgent,
+          working,
+          badgeWhenWorking,
+          leftWorking,
+          statusAfterDone,
+          agentGone,
+          badgeAfterAll: deps.badgeCounts(),
+        }
+      } catch (err) {
+        heuristic = { error: String(err) }
+      } finally {
+        rmSync(fakeAgentExe, { force: true })
+      }
+
       // 清理烟测会话（正常退出路径由 before-quit killAll 结束 pty）；tags.json 应已落盘且只剩空集合
       for (const id of sessionIds) await deps.store.remove(id)
       const remaining = deps.store.list().length
@@ -858,6 +932,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
             termOverflow,
             lifecycle,
             restore,
+            heuristic,
             processTree,
             hooks,
             remaining,

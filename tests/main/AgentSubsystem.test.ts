@@ -61,8 +61,17 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
   let isNotificationSupported: boolean
   /** 假角标：记录每次收到的「等你确认 / 运行中」计数 */
   let badges: BadgeCounts[]
-  /** 屏幕在动且带工具的「工作中」提示（没装 hooks 时「运行中」的唯一依据） */
-  const busy = { tail: ['✻ Cogitating… (esc to interrupt · 3s)', '> '], silentMs: 0 }
+  /** 计时器在走的一屏（没装 hooks 时「运行中」的唯一依据）：每次调用读数 +1 s */
+  let elapsed = 0
+  const busy = (): { tail: string[]; silentMs: number } => {
+    elapsed += 1
+    return { tail: [`✻ Cogitating… (${elapsed}s · ↓ 1.2k tokens)`, '> '], silentMs: 0 }
+  }
+  /** 让某会话进入「运行中」：连着两份采样，计时器往前走一秒 */
+  const reportWorking = (id: string): void => {
+    agent.reportOutput(id, busy())
+    agent.reportOutput(id, busy())
+  }
   /** 再造一个子系统时复用同一套假件（端口测试要多个实例） */
   let baseOptions: AgentSubsystemOptions
 
@@ -165,7 +174,7 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
     expect(queried).toEqual([pid]) // 探针已停：没有下一轮
   })
 
-  it('进程树发现 claude → 只记 agent，仍是 idle；pty 有输出到达不改状态（启动画面 / 打字 / 重绘）；屏幕上出现工作中提示 → working；工具退出（子树清空）→ idle 且不留提示', async () => {
+  it('进程树发现 claude → 只记 agent，仍是 idle；pty 有输出到达不改状态（启动画面 / 打字 / 重绘）；屏幕上的计时器往前走 → working；工具退出（子树清空）→ idle 且不留提示', async () => {
     const dataSeen: string[] = []
     const wrapped = agent.wrapPty({
       onData: (id, data) => dataSeen.push(`${id}:${data}`),
@@ -183,7 +192,7 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
     expect(runtimeOf('s1')).toMatchObject({ agent: 'claude', status: 'idle' })
     expect(changes).toHaveLength(count)
 
-    agent.reportOutput('s1', busy)
+    reportWorking('s1')
     expect(runtimeOf('s1')).toMatchObject({ agent: 'claude', status: 'working' })
     expect(changes.at(-1)).toMatchObject({ sessionId: 's1', status: 'working' })
 
@@ -212,7 +221,7 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
       pendingHint: 'Do you want to proceed? (y/n)',
     })
 
-    agent.reportOutput('s1', busy) // 回答后继续干活
+    reportWorking('s1') // 回答后继续干活
     expect(runtimeOf('s1')).toMatchObject({ status: 'working' })
     expect(runtimeOf('s1')).not.toHaveProperty('pendingHint')
     agent.reportOutput('s1', { tail: ['Done.'], silentMs: 1500 })
@@ -375,7 +384,7 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
     wrapped.onSpawn?.('s1', 100)
     subtrees.set(100, [{ pid: 101, ppid: 100, name: 'claude.exe' }])
     await tick()
-    agent.reportOutput('s1', busy)
+    reportWorking('s1')
     expect(shown).toEqual([]) // 运行中不弹
 
     const ask = { tail: ['Do you want to proceed? (y/n)'], silentMs: 1500 }
@@ -387,7 +396,7 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
     expect(shown).toHaveLength(1)
 
     // 正被查看时进入 blocked：不弹
-    agent.reportOutput('s1', busy)
+    reportWorking('s1')
     agent.setViewed('s1')
     agent.reportOutput('s1', ask)
     expect(runtimeOf('s1')).toMatchObject({ status: 'blocked' })
@@ -402,7 +411,7 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
     expect(shown).toHaveLength(2)
 
     // 正被查看时跑完 → idle，不弹
-    agent.reportOutput('s1', busy)
+    reportWorking('s1')
     agent.reportOutput('s1', { tail: ['Done.'], silentMs: 1500 })
     expect(runtimeOf('s1')).toMatchObject({ status: 'idle' })
     expect(shown).toHaveLength(2)
@@ -410,7 +419,7 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
     // 通知中心不可用：进入 blocked 也不弹；找不到会话名时用 id
     isNotificationSupported = false
     agent.setViewed(null)
-    agent.reportOutput('s1', busy)
+    reportWorking('s1')
     agent.reportOutput('s1', ask)
     expect(runtimeOf('s1')).toMatchObject({ status: 'blocked' })
     expect(shown).toHaveLength(2)
@@ -425,13 +434,13 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
     await tick()
     expect(badges).toEqual([]) // 都空闲：不设置
 
-    agent.reportOutput('s1', busy)
-    agent.reportOutput('s2', busy)
+    reportWorking('s1')
+    reportWorking('s2')
     expect(badges).toEqual([
       { blocked: 0, working: 1 },
       { blocked: 0, working: 2 },
     ])
-    agent.reportOutput('s2', busy) // 同状态再报：计数没变
+    reportWorking('s2') // 同状态再报：计数没变
     expect(badges).toHaveLength(2)
 
     const ask = { tail: ['Allow?'], silentMs: 1500 }

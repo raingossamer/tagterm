@@ -14,7 +14,7 @@ import { OutputWatcher } from './OutputWatcher'
 
 /**
  * 静默多久算「屏幕停下来了」、屏幕在动时多久补报一次，以及上报末尾几行。
- * 24 行：工具的「工作中」提示（esc to interrupt）在页脚上方，Claude Code 的状态栏 + 输入框 + 快捷键提示可占 6–10 行，8 行看不到它；
+ * 24 行：工具带计时器的状态行（`✻ Bloviating… (3m 12s · ↓ 3.6k tokens)`）在页脚上方，Claude Code 的状态栏 + 输入框 + 快捷键提示可占 6–10 行，8 行看不到它；
  * 主进程判「等你确认」仍只看末行、找目录仍从末尾往前找第一个提示符，行数变多不改变二者语义
  */
 const OUTPUT_SILENCE_MS = 1500

@@ -1,19 +1,25 @@
 /**
  * 纯函数：屏幕末尾启发式（给没有 hooks 的工具兜底）。
- * classify：末行是 shell 提示符 → quiet（回到 shell 了，回滚区里残留的提示不算）；末行命中提示模式 → blocked（hint = 那一行）；
- *   否则末尾任一行含工具自己的「工作中」提示 → working；都不是 → quiet。
- *   「运行中」只认这条提示，不认「有输出到达」：启动工具的欢迎画面、在工具里打字、界面重绘都会有输出，但都不是在干活（用户 2026-09-18）。
+ * classify：末行是 shell 提示符 → quiet（回到 shell 了，回滚区里残留的提示不算）；末行命中提示模式 → blocked（hint = 那一行）；否则 quiet。
+ * parseElapsedSeconds + hasTicked：「运行中」的信号 —— 屏幕上有个**在走的计时器**（工具状态行括号里的耗时），
+ *   由 AgentDetector 拿相邻两次采样比较。不认「有输出到达」（启动画面 / 打字 / 重绘都有输出但不是在干活），
+ *   也不认任何固定文案 —— 2026-09-18 实测：claude-code 2.1.258 工作时的状态行是 `✻ Bloviating… (3m 12s · ↓ 3.6k tokens)`，
+ *   根本不显示 `esc to interrupt`（该串只在它的「重试等待」横幅里），而按文案匹配又会被屏幕上任何提到该文案的文字
+ *   （解释这件事的聊天、源码、文档）永久钉在运行中。计时器必须真的在走，二者都不会误判。
  * parsePromptCwd：从末尾往前找第一个 cmd / PowerShell 提示符行，取目录（路径条显示「当前目录」用）。
  * 输入是渲染进程从 xterm 活动缓冲区读来的末尾几行，主进程从不记录它们（规范：不记录终端内容）。
  */
-export type OutputClass =
-  { kind: 'blocked'; hint: string } | { kind: 'working' } | { kind: 'quiet' }
+export type OutputClass = { kind: 'blocked'; hint: string } | { kind: 'quiet' }
 
 /**
- * 工具工作全程显示在屏幕上的「工作中」提示（大小写不敏感，子串匹配）：
- * Claude Code / Codex 的 spinner 行带 `esc to interrupt`，Gemini CLI 带 `esc to cancel`。pi 的文案未核实
+ * 工具状态行的计时器：**括号里**的耗时，秒数必给（`(19s …`、`(3m 12s …`、Gemini 的 `(ESC to cancel, 3s)`）。
+ * 括号是关键的降噪条件：跑完那行的「Cooked for 8m 39s · done 13:57」不在括号里，不会被当成计时器。
+ * 括号内允许秒数前有一小段不含数字的文字（Gemini 那种）
  */
-const WORKING_PATTERNS: readonly RegExp[] = [/esc to interrupt/i, /esc to cancel/i]
+const ELAPSED_IN_PARENS = /\((?:[^()\d]{0,24})?(?:(\d+)\s*h\s*)?(?:(\d+)\s*m\s*)?(\d+)\s*s\b/g
+
+/** 相邻两次采样间计时器最多认几秒的前进：正常一秒一跳，留点抖动余量；跳太远说明不是同一个计时器 */
+const MAX_TICK_STEP = 4
 
 /** 「等你确认」的提示模式（大小写不敏感，子串匹配）；`>` 不在清单里 —— 它和 shell 提示符重叠 */
 const PROMPT_PATTERNS: readonly RegExp[] = [
@@ -49,9 +55,31 @@ function lastNonEmpty(tail: readonly string[]): string | null {
 export function classify(tail: readonly string[]): OutputClass {
   const line = lastNonEmpty(tail)
   if (line === null || isShellPrompt(line)) return { kind: 'quiet' }
-  if (PROMPT_PATTERNS.some((p) => p.test(line))) return { kind: 'blocked', hint: line }
-  if (tail.some((l) => WORKING_PATTERNS.some((p) => p.test(l)))) return { kind: 'working' }
-  return { kind: 'quiet' }
+  return PROMPT_PATTERNS.some((p) => p.test(line))
+    ? { kind: 'blocked', hint: line }
+    : { kind: 'quiet' }
+}
+
+/** 这一屏里所有计时器读数（秒），按出现顺序；没有返回空数组 */
+export function parseElapsedSeconds(tail: readonly string[]): number[] {
+  const out: number[] = []
+  for (const line of tail) {
+    for (const m of line.matchAll(ELAPSED_IN_PARENS)) {
+      const [, h, min, s] = m
+      out.push(Number(h ?? 0) * 3600 + Number(min ?? 0) * 60 + Number(s))
+    }
+  }
+  return out
+}
+
+/**
+ * 计时器是否在走：新采样里出现了「比上次某个读数大 1…MAX_TICK_STEP 秒、且上次没有过」的读数。
+ * 静态文字每次读数一模一样 → 不算；行滚出屏幕只会让读数变少 → 不算；工具停下来后状态行换成「跑完」文案 → 读数消失 → 不算
+ */
+export function hasTicked(prev: readonly number[], next: readonly number[]): boolean {
+  if (prev.length === 0 || next.length === 0) return false
+  const before = new Set(prev)
+  return next.some((v) => !before.has(v) && prev.some((u) => v - u >= 1 && v - u <= MAX_TICK_STEP))
 }
 
 /**
