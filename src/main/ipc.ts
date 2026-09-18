@@ -1,5 +1,5 @@
 /**
- * 接口层：ipcMain.handle / on 的薄层 —— 校验参数 → 调服务层 → 返回，不写业务逻辑。
+ * 接口层：ipcMain.handle / on 的薄层 —— 校验参数 → 调服务层 → 返回；不写业务逻辑，但跨 store 的级联与运行时前置条件在此顺序编排。
  * ipcMain 以参数注入（IpcMainLike），测试时可传假对象脱离 Electron 运行。
  */
 import type {

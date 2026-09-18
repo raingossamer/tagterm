@@ -4,21 +4,28 @@
  * 内部协作者：AgentDetector（状态机）、ProcessTreeProbe（进程树节拍）、HookServer（回环端点）、两个 HookInstaller（hooks 目标文件）。
  * 不 import electron：原生进程树以 listSubtree 注入，hooks 目标路径以 hookTargets 注入（测试指向临时目录），
  * 系统通知与角标以两个命名端口注入（生产 platform/agentPorts.ts 的 Electron 适配器，测试记录数组）。
+ * 文件末尾是本模块的内部纯函数：端口派生、cwd 匹配、通知判定。
  */
 import type { HookAgent, HooksStatus, HooksStatusMap, OutputReport } from '@shared/ipc'
-import type { AgentStatus, Session, SessionRuntime } from '@shared/models'
+import type { AgentKind, AgentStatus, Session, SessionRuntime } from '@shared/models'
 import type { PtyManagerDeps } from '../pty/PtyManager'
 import { AgentDetector } from './AgentDetector'
 import { HookInstaller, type HookTarget } from './HookInstaller'
-import { matchSessionsByCwd } from './hookMatch'
-import { derivePort } from './hookPort'
 import { HookServer } from './HookServer'
-import { decideNotification, type NotificationText } from './notificationPolicy'
 import type { ProcessNode } from './processMatch'
 import { ProcessTreeProbe } from './ProcessTreeProbe'
 
 /** 进程树探针的缺省节拍：一次原生查询十几毫秒，2 s 一轮足够 */
 const DEFAULT_PROBE_INTERVAL_MS = 2000
+/** hooks 端点的稳定端口范围（IANA 动态端口段） */
+const HOOK_PORT_MIN = 49152
+const HOOK_PORT_MAX = 65535
+
+/** 系统通知的文案 */
+export interface NotificationText {
+  title: string
+  body: string
+}
 
 /** 系统通知端口：Electron Notification 的最小面；点击后「显示窗口 + 广播 app:select-session」由生产适配器做 */
 export interface NotificationPort {
@@ -233,4 +240,68 @@ export class AgentSubsystem {
   private sessionNameOf(sessionId: string): string {
     return this.opts.sessions().find((s) => s.id === sessionId)?.name ?? sessionId
   }
+}
+
+// ---- 内部纯函数 ----
+
+/**
+ * 数据目录路径 → 稳定端口（FNV-1a 32 位，落在 49152–65535）：端口稳定，hooks 配置文件里写死的 URL 才不用每次启动都改；
+ * 输入按小写、统一正斜杠归一，同一目录的两种写法得到同一端口。被占用时 HookServer 自己 +1 顺延。导出只为直接断言派生规则
+ */
+export function derivePort(dataDir: string): number {
+  const key = dataDir.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  let hash = 0x811c9dc5
+  for (let i = 0; i < key.length; i += 1) {
+    hash ^= key.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return HOOK_PORT_MIN + (hash % (HOOK_PORT_MAX - HOOK_PORT_MIN + 1))
+}
+
+/** hook 载荷里的 cwd 归一化：小写、统一反斜杠、去掉尾分隔符 */
+function normalizeCwd(cwd: string): string {
+  return cwd.replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase()
+}
+
+/**
+ * hook 载荷的 cwd → 会话：归一化后与 session.cwd 或运行时 cwdNow 比较；
+ * 多个命中时优先 agent 已是目标工具的会话，仍歧义则全部返回（启动后进程树首轮前可能标两个会话，可接受），零命中空数组
+ */
+function matchSessionsByCwd(
+  cwd: unknown,
+  sessions: readonly Session[],
+  runtimes: readonly SessionRuntime[],
+  preferAgent?: AgentKind,
+): string[] {
+  if (typeof cwd !== 'string' || !cwd) return []
+  const target = normalizeCwd(cwd)
+  const runtimeOf = new Map(runtimes.map((r) => [r.sessionId, r]))
+  const hits = sessions.filter((s) => {
+    if (normalizeCwd(s.cwd) === target) return true
+    const cwdNow = runtimeOf.get(s.id)?.cwdNow
+    return cwdNow !== undefined && normalizeCwd(cwdNow) === target
+  })
+  if (hits.length > 1 && preferAgent) {
+    const preferred = hits.filter((s) => runtimeOf.get(s.id)?.agent === preferAgent)
+    if (preferred.length > 0) return preferred.map((s) => s.id)
+  }
+  return hits.map((s) => s.id)
+}
+
+/**
+ * 某会话状态变化要不要弹通知、弹什么：进入 blocked 且不是正被查看 → 「<会话名> 等你确认」（正文 = 那一行提示）；
+ * 进入 done → 「<会话名> 完成」（done 定义上就是没人看）；同一状态重复变化不重复弹（prev 相同即跳过），离开后再进入再弹
+ */
+function decideNotification(
+  prevStatus: AgentStatus | null,
+  next: SessionRuntime,
+  isViewed: boolean,
+  sessionName: string,
+): NotificationText | null {
+  if (prevStatus === next.status) return null
+  if (next.status === 'blocked') {
+    return isViewed ? null : { title: `${sessionName} 等你确认`, body: next.pendingHint ?? '' }
+  }
+  if (next.status === 'done') return { title: `${sessionName} 完成`, body: '' }
+  return null
 }

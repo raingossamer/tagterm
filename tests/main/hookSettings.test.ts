@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { HOOK_CONTRACTS } from '../../src/main/agent/hookContract'
 import {
   buildHookCommand,
-  CLAUDE_HOOK_EVENTS,
-  CODEX_HOOK_EVENTS,
   hasOurHooks,
   isOurHook,
   mergeHooks,
@@ -11,6 +10,9 @@ import {
 } from '../../src/main/agent/hookSettings'
 
 const PORT = 51233
+/** 装哪些事件以契约表为准：这里只断言 mergeHooks 把契约表原样落到文件里 */
+const CLAUDE_HOOK_EVENTS = HOOK_CONTRACTS.claude.events
+const CODEX_HOOK_EVENTS = HOOK_CONTRACTS.codex.events
 
 describe('hookSettings（hooks 配置的纯函数）', () => {
   it('buildHookCommand：curl.exe -T - 到本地端点，不含 @ % $ 引号；Interrupt / SessionEnd 超时 1 s，其余 3 s', () => {
@@ -29,7 +31,7 @@ describe('hookSettings（hooks 配置的纯函数）', () => {
     expect(isOurHook(undefined)).toBe(false)
   })
 
-  it('mergeHooks（Claude）：五个事件各追加一条，Notification 带四种类型的 matcher；条目 type command / timeout 5 / async true；别人的条目与其他键原样；已有我们的条目跳过（幂等）', () => {
+  it('mergeHooks（Claude）：契约表里的每个事件各追加一条，Notification 带契约表的 matcher；条目 type command / timeout / async true；别人的条目与其他键原样；已有我们的条目跳过（幂等）', () => {
     const settings = {
       model: 'opus',
       hooks: {
@@ -60,7 +62,7 @@ describe('hookSettings（hooks 配置的纯函数）', () => {
       ],
     })
     expect(merged.hooks['Notification']![0]!.matcher).toBe(
-      'permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input',
+      CLAUDE_HOOK_EVENTS.find((e) => e.event === 'Notification')!.matcher,
     )
     expect(merged.hooks['UserPromptSubmit']![0]!.matcher).toBeUndefined()
     expect(merged.hooks['SessionEnd']![0]!.hooks[0]!['timeout']).toBe(1)
@@ -70,10 +72,10 @@ describe('hookSettings（hooks 配置的纯函数）', () => {
     expect((mergeHooks('claude', {}, PORT) as { hooks: object }).hooks).toBeDefined()
     expect(
       Object.keys((mergeHooks('claude', { hooks: 'x' }, PORT) as { hooks: object }).hooks),
-    ).toHaveLength(5)
+    ).toHaveLength(CLAUDE_HOOK_EVENTS.length)
   })
 
-  it('mergeHooks（Codex）：六个事件各一条、不设 matcher、每条带 commandWindows（与 command 同串）、Interrupt / SessionEnd 超时 1', () => {
+  it('mergeHooks（Codex）：契约表里的每个事件各一条、不设 matcher、每条带 commandWindows（与 command 同串）、超时取契约表', () => {
     const merged = mergeHooks('codex', { hooks: {} }, PORT) as {
       hooks: Record<string, Array<{ matcher?: string; hooks: Array<Record<string, unknown>> }>>
     }
@@ -85,7 +87,7 @@ describe('hookSettings（hooks 配置的纯函数）', () => {
       expect(hook['command']).toBe(buildHookCommand('codex', PORT, event))
       expect(hook['commandWindows']).toBe(hook['command'])
       expect(hook['async']).toBe(true)
-      expect(hook['timeout']).toBe(event === 'Interrupt' || event === 'SessionEnd' ? 1 : 5)
+      expect(hook['timeout']).toBe(CODEX_HOOK_EVENTS.find((e) => e.event === event)!.timeoutSec)
     }
   })
 

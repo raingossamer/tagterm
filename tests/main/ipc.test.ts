@@ -423,29 +423,21 @@ describe('IPC 接口层', () => {
     )
   })
 
-  it('agent:list 返回全部运行时记录：pty:open 后出现空闲记录，pty 退出后消失；session:remove 同样清掉（未开终端的会话也一样）', async () => {
+  it('agent:list 经同一条装配拿到运行时记录：pty:open 后出现空闲记录，session:remove 清掉', async () => {
     await expect(ipc.invoke('agent:list')).resolves.toEqual([])
     const s = (await ipc.invoke('session:create', { cwd: process.cwd() })) as Session
     await ipc.invoke('pty:open', s.id, { cols: 80, rows: 24 })
     await expect(ipc.invoke('agent:list')).resolves.toEqual([
       { sessionId: s.id, alive: true, agent: null, status: 'idle' },
     ])
-    expect(agentChanges).toHaveLength(1)
-
-    await ipc.invoke('pty:kill', s.id)
-    await waitFor(() => exits.some((e) => e.sessionId === s.id))
-    await expect(ipc.invoke('agent:list')).resolves.toEqual([])
-    expect(agentRemovals).toEqual([s.id])
-
-    await ipc.invoke('pty:open', s.id, { cols: 80, rows: 24 })
     await ipc.invoke('session:remove', s.id)
-    await waitFor(() => agentRemovals.length === 2)
+    await waitFor(() => agentRemovals.includes(s.id))
     await expect(ipc.invoke('agent:list')).resolves.toEqual([])
     // 等这条 pty 真的退出再结束用例，别让 afterEach 的 killAll 撞上正在退出的 pty
-    await waitFor(() => exits.filter((e) => e.sessionId === s.id).length === 2)
+    await waitFor(() => exits.some((e) => e.sessionId === s.id))
   })
 
-  it('agent:report-output（单向）：合法报告按会话 shell 交给状态机（cwdNow 更新）；非法参数 / 未知会话静默忽略', async () => {
+  it('agent:report-output（单向）：合法报告交给子系统（cwdNow 更新）；非法参数 / 未知会话静默忽略', async () => {
     const s = (await ipc.invoke('session:create', { cwd: process.cwd() })) as Session
     await ipc.invoke('pty:open', s.id, { cols: 80, rows: 24 })
     agentChanges.length = 0
@@ -462,30 +454,16 @@ describe('IPC 接口层', () => {
     expect(agentChanges).toHaveLength(count)
   })
 
-  it('agent:get-hooks-status 返回两个目标；agent:set-hooks 安装 / 卸载后返回该目标状态；agent 非 claude / codex 或 enabled 非布尔拒绝', async () => {
+  it('agent:get-hooks-status / agent:set-hooks 转调子系统（安装 / 卸载往返见 AgentSubsystem 测试）；agent 非 claude / codex 或 enabled 非布尔拒绝', async () => {
     const claudeFile = join(dir, 'claude-settings.json')
     writeFileSync(claudeFile, JSON.stringify({ model: 'opus' }))
     await expect(ipc.invoke('agent:get-hooks-status')).resolves.toEqual({
       claude: { installed: false, port: agent.port, settingsPath: claudeFile },
       codex: { installed: false, port: agent.port, settingsPath: join(dir, 'codex-hooks.json') },
     })
-
-    await expect(ipc.invoke('agent:set-hooks', 'codex', true)).resolves.toEqual({
+    await expect(ipc.invoke('agent:set-hooks', 'codex', true)).resolves.toMatchObject({
       installed: true,
       port: agent.port,
-      settingsPath: join(dir, 'codex-hooks.json'),
-    })
-    const status = (await ipc.invoke('agent:get-hooks-status')) as Record<
-      string,
-      { installed: boolean }
-    >
-    expect(status['codex']!.installed).toBe(true)
-    expect(status['claude']!.installed).toBe(false)
-    await expect(ipc.invoke('agent:set-hooks', 'codex', false)).resolves.toMatchObject({
-      installed: false,
-    })
-    await expect(ipc.invoke('agent:set-hooks', 'claude', true)).resolves.toMatchObject({
-      installed: true,
     })
 
     await expect(ipc.invoke('agent:set-hooks', 'gemini', true)).rejects.toThrow(

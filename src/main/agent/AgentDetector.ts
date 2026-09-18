@@ -1,6 +1,6 @@
 /**
  * 服务层：每个会话的运行时状态机（SessionRuntime），三路信号（hooks / 屏幕末尾启发式 / 进程树）在这里合成。
- * 输入全是方法调用（装配层把 PtyManager / ProcessTreeProbe / HookServer / 渲染进程的事件接过来），
+ * 输入全是方法调用（AgentSubsystem 把 PtyManager / ProcessTreeProbe / HookServer / 渲染进程的事件接过来；hooks 事件按 agent 的转移规则见 hookContract），
  * 输出是每次记录变化回调一条记录、记录删除回调一个 id；时钟注入，不 import electron。
  */
 import type { HookAgent, OutputReport } from '@shared/ipc'

@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { SessionRuntime } from '@shared/models'
 import { AgentDetector } from '../../src/main/agent/AgentDetector'
+import { HOOK_CONTRACTS } from '../../src/main/agent/hookContract'
+
+/** Claude 哪些通知类型算「等你确认」以契约表为准（一致性由 hookContract.test 守） */
+const CLAUDE_BLOCKING_TYPES = HOOK_CONTRACTS.claude.events
+  .find((e) => e.event === 'Notification')!
+  .matcher!.split('|')
 
 describe('AgentDetector（运行时状态机）', () => {
   let changes: SessionRuntime[]
@@ -145,7 +151,7 @@ describe('AgentDetector（运行时状态机）', () => {
     expect(changes.at(-1)).toMatchObject({ status: 'idle' })
   })
 
-  it('Claude hooks：UserPromptSubmit → working；Notification 四种类型 → blocked + message（截断 200）；其他类型忽略；Stop → 被查看 idle / 否则 done；SessionStart 记 claude；SessionEnd 清 agent 回 idle', () => {
+  it('Claude hooks：UserPromptSubmit → working；Notification 契约表里的阻塞类型 → blocked + message（截断 200）；其他类型忽略；Stop → 被查看 idle / 否则 done；SessionStart 记 claude；SessionEnd 清 agent 回 idle', () => {
     detector.ptySpawned('s1')
     changes.length = 0
     const hook = (payload: Record<string, unknown>): void =>
@@ -161,12 +167,7 @@ describe('AgentDetector（运行时状态机）', () => {
     hook({ hook_event_name: 'UserPromptSubmit' })
     expect(changes.at(-1)).toMatchObject({ status: 'working' })
 
-    for (const type of [
-      'permission_prompt',
-      'elicitation_dialog',
-      'elicitation_url_dialog',
-      'agent_needs_input',
-    ]) {
+    for (const type of CLAUDE_BLOCKING_TYPES) {
       hook({ hook_event_name: 'UserPromptSubmit' })
       hook({ hook_event_name: 'Notification', notification_type: type, message: `need ${type}` })
       expect(changes.at(-1)).toMatchObject({ status: 'blocked', pendingHint: `need ${type}` })

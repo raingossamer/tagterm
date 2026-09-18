@@ -5,8 +5,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { HookAgent } from '@shared/ipc'
 import type { Session, SessionRuntime } from '@shared/models'
-import { AgentSubsystem, type AgentSubsystemOptions } from '../../src/main/agent/AgentSubsystem'
-import type { NotificationText } from '../../src/main/agent/notificationPolicy'
+import {
+  AgentSubsystem,
+  derivePort,
+  type AgentSubsystemOptions,
+  type NotificationText,
+} from '../../src/main/agent/AgentSubsystem'
 import type { ProcessNode } from '../../src/main/agent/processMatch'
 import { PtyManager } from '../../src/main/pty/PtyManager'
 import { waitFor } from './helpers'
@@ -422,5 +426,39 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
 
     wrapped.onExit({ sessionId: 's2', exitCode: 0, pid: 200 })
     expect(badges).toEqual([1, 2, 1, 0])
+  })
+
+  it('同一目录多个会话都命中时：优先 agent 已是该工具的会话；没有可区分的就全部转移', async () => {
+    const cwd = 'D:/same'
+    sessions.push(sessionOf('s1', cwd), sessionOf('s2', cwd), sessionOf('s3', cwd))
+    const wrapped = agent.wrapPty({ onData: () => {}, onExit: () => {}, isFile: existsSync })
+    for (const [id, pid] of [
+      ['s1', 100],
+      ['s2', 200],
+      ['s3', 300],
+    ] as const) {
+      wrapped.onSpawn?.(id, pid)
+    }
+    subtrees.set(200, [{ pid: 201, ppid: 200, name: 'claude.exe' }])
+    await tick()
+    await agent.start()
+
+    await postHook(agent.port, 'claude', { hook_event_name: 'UserPromptSubmit', cwd })
+    await waitFor(() => runtimeOf('s2')?.status === 'working')
+    expect(runtimeOf('s1')).toMatchObject({ status: 'idle' })
+    expect(runtimeOf('s3')).toMatchObject({ status: 'idle' })
+
+    // 没有会话在 codex 里：SessionStart 落到全部命中的会话上
+    await postHook(agent.port, 'codex', { hook_event_name: 'SessionStart', cwd })
+    await waitFor(() => runtimeOf('s3')?.agent === 'codex')
+    expect(runtimeOf('s1')).toMatchObject({ agent: 'codex' })
+  })
+
+  it('端点首选端口由数据目录派生：同一目录的两种写法得到同一端口，落在 49152–65535', () => {
+    const a = derivePort('C:/Users/k/AppData/Roaming/TagTerm')
+    expect(derivePort('c:\\users\\k\\appdata\\roaming\\tagterm\\')).toBe(a)
+    expect(a).toBeGreaterThanOrEqual(49152)
+    expect(a).toBeLessThanOrEqual(65535)
+    expect(derivePort('D:/elsewhere')).not.toBe(a)
   })
 })

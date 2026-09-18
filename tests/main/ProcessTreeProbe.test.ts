@@ -8,11 +8,11 @@ import { listSubtree } from '../../src/main/agent/windowsProcessTree'
 import { PtyManager } from '../../src/main/pty/PtyManager'
 import { waitFor } from './helpers'
 
-describe('ProcessTreeProbe（定时扫描 pty 子树）', () => {
+// 定时排程与快照去重经 AgentSubsystem 的边界测试覆盖；这里只留空闲核对与真实原生模块的集成用例
+describe('ProcessTreeProbe（pty 子树查询）', () => {
   /** 假子树：pid → 子进程列表；假定时器：手动触发 */
   let subtrees: Map<number, ProcessNode[]>
   let pending: Array<() => void>
-  let cleared: number
   let snapshots: Array<Map<string, AgentKind | null>>
   let probe: ProcessTreeProbe
 
@@ -26,7 +26,6 @@ describe('ProcessTreeProbe（定时扫描 pty 子树）', () => {
   beforeEach(() => {
     subtrees = new Map()
     pending = []
-    cleared = 0
     snapshots = []
     probe = new ProcessTreeProbe({
       listSubtree: async (pid) => subtrees.get(pid) ?? [],
@@ -36,54 +35,11 @@ describe('ProcessTreeProbe（定时扫描 pty 子树）', () => {
         return fn
       },
       clearTimer: (handle) => {
-        cleared += 1
         const i = pending.indexOf(handle as () => void)
         if (i >= 0) pending.splice(i, 1)
       },
     })
     probe.onSnapshot((s) => snapshots.push(s))
-  })
-
-  it('没有被 watch 的 pty 时不存在定时器；watch 后每轮扫描，快照变化才回调，相同不回调', async () => {
-    expect(pending).toHaveLength(0)
-
-    probe.watch('s1', 100)
-    expect(pending).toHaveLength(1)
-    subtrees.set(100, [{ pid: 101, ppid: 100, name: 'claude.exe' }])
-    await tick()
-    expect(snapshots).toEqual([new Map([['s1', 'claude']])])
-    expect(pending).toHaveLength(1) // 下一轮已排好
-
-    await tick()
-    expect(snapshots).toHaveLength(1)
-
-    subtrees.set(100, [])
-    await tick()
-    expect(snapshots).toHaveLength(2)
-    expect(snapshots[1]).toEqual(new Map([['s1', null]]))
-  })
-
-  it('unwatch 后快照不再包含该会话；全部 unwatch 后定时器被清掉、不再排下一轮', async () => {
-    probe.watch('s1', 100)
-    probe.watch('s2', 200)
-    subtrees.set(200, [{ pid: 201, ppid: 200, name: 'codex.exe' }])
-    await tick()
-    expect(snapshots[0]).toEqual(
-      new Map<string, AgentKind | null>([
-        ['s1', null],
-        ['s2', 'codex'],
-      ]),
-    )
-
-    probe.unwatch('s1')
-    await tick()
-    expect(snapshots[1]).toEqual(new Map([['s2', 'codex']]))
-
-    probe.unwatch('s2')
-    expect(cleared).toBe(1)
-    expect(pending).toHaveLength(0)
-    probe.unwatch('ghost')
-    expect(cleared).toBe(1)
   })
 
   it('hasChildren：子树非空为真、空为假；listSubtree 抛错时该会话按无 agent 处理、其他会话不受影响', async () => {
