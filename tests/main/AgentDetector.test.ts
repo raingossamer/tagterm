@@ -87,16 +87,16 @@ describe('AgentDetector（运行时状态机）', () => {
   it('静默末尾报告：无 agent 时只更新 cwdNow、不改状态；解析不到提示符时保留上次的 cwdNow', () => {
     detector.ptySpawned('s1')
     changes.length = 0
-    detector.reportOutput('s1', { tail: ['Allow execution?'], silentMs: 1500 }, 'cmd.exe')
+    detector.reportOutput('s1', { tail: ['Allow execution?'], silentMs: 1500 })
     expect(changes).toEqual([])
 
-    detector.reportOutput('s1', { tail: ['C:\\Windows>'], silentMs: 1500 }, 'cmd.exe')
+    detector.reportOutput('s1', { tail: ['C:\\Windows>'], silentMs: 1500 })
     expect(changes).toEqual([
       { sessionId: 's1', alive: true, agent: null, status: 'idle', cwdNow: 'C:\\Windows' },
     ])
-    detector.reportOutput('s1', { tail: ['C:\\Windows>'], silentMs: 1500 }, 'cmd.exe')
+    detector.reportOutput('s1', { tail: ['C:\\Windows>'], silentMs: 1500 })
     expect(changes).toHaveLength(1)
-    detector.reportOutput('s1', { tail: ['no prompt here'], silentMs: 1500 }, 'cmd.exe')
+    detector.reportOutput('s1', { tail: ['no prompt here'], silentMs: 1500 })
     expect(changes).toHaveLength(1)
     expect(detector.list()[0]?.cwdNow).toBe('C:\\Windows')
   })
@@ -107,15 +107,11 @@ describe('AgentDetector（运行时状态机）', () => {
     changes.length = 0
 
     // 空闲的 agent 静默不会变成「已完成」
-    detector.reportOutput('s1', { tail: ['ready.'], silentMs: 1500 }, 'cmd.exe')
+    detector.reportOutput('s1', { tail: ['ready.'], silentMs: 1500 })
     expect(changes).toEqual([])
 
     detector.ptyData('s1')
-    detector.reportOutput(
-      's1',
-      { tail: ['Do you want to proceed? (y/n)'], silentMs: 1500 },
-      'cmd.exe',
-    )
+    detector.reportOutput('s1', { tail: ['Do you want to proceed? (y/n)'], silentMs: 1500 })
     expect(changes.at(-1)).toEqual({
       sessionId: 's1',
       alive: true,
@@ -129,12 +125,12 @@ describe('AgentDetector（运行时状态机）', () => {
     expect(changes.at(-1)).toEqual({ sessionId: 's1', alive: true, agent: 'pi', status: 'working' })
 
     // 跑完静默且没人看 → done
-    detector.reportOutput('s1', { tail: ['Done.'], silentMs: 1500 }, 'cmd.exe')
+    detector.reportOutput('s1', { tail: ['Done.'], silentMs: 1500 })
     expect(changes.at(-1)).toMatchObject({ status: 'done' })
     expect(changes.at(-1)).not.toHaveProperty('pendingHint')
     // 再静默一次不重复回调
     const count = changes.length
-    detector.reportOutput('s1', { tail: ['Done.'], silentMs: 1500 }, 'cmd.exe')
+    detector.reportOutput('s1', { tail: ['Done.'], silentMs: 1500 })
     expect(changes).toHaveLength(count)
 
     // 被查看 → idle
@@ -143,7 +139,7 @@ describe('AgentDetector（运行时状态机）', () => {
 
     // 正被查看时跑完 → 直接 idle
     detector.ptyData('s1')
-    detector.reportOutput('s1', { tail: ['Done again.'], silentMs: 1500 }, 'cmd.exe')
+    detector.reportOutput('s1', { tail: ['Done again.'], silentMs: 1500 })
     expect(changes.at(-1)).toMatchObject({ status: 'idle' })
     detector.setViewed(null)
     expect(changes.at(-1)).toMatchObject({ status: 'idle' })
@@ -245,9 +241,9 @@ describe('AgentDetector（运行时状态机）', () => {
     detector.hookEvent(['s1'], 'claude', { hook_event_name: 'UserPromptSubmit' })
     changes.length = 0
 
-    detector.reportOutput('s1', { tail: ['Allow?'], silentMs: 1500 }, 'cmd.exe')
+    detector.reportOutput('s1', { tail: ['Allow?'], silentMs: 1500 })
     expect(changes).toEqual([])
-    detector.reportOutput('s1', { tail: ['C:\\p>'], silentMs: 1500 }, 'cmd.exe')
+    detector.reportOutput('s1', { tail: ['C:\\p>'], silentMs: 1500 })
     expect(changes.at(-1)).toMatchObject({ status: 'working', cwdNow: 'C:\\p' })
     detector.hookEvent(['s1'], 'claude', { hook_event_name: 'Stop' })
     expect(changes.at(-1)).toMatchObject({ status: 'done' })
@@ -260,7 +256,7 @@ describe('AgentDetector（运行时状态机）', () => {
     now += 2_000
     detector.ptyData('s1')
     expect(changes.at(-1)).toMatchObject({ status: 'working' })
-    detector.reportOutput('s1', { tail: ['Allow?'], silentMs: 1500 }, 'cmd.exe')
+    detector.reportOutput('s1', { tail: ['Allow?'], silentMs: 1500 })
     expect(changes.at(-1)).toMatchObject({ status: 'blocked', pendingHint: 'Allow?' })
   })
 })

@@ -4,7 +4,7 @@
  * 输出是每次记录变化回调一条记录、记录删除回调一个 id；时钟注入，不 import electron。
  */
 import type { HookAgent, OutputReport } from '@shared/ipc'
-import type { AgentKind, SessionRuntime, ShellKind } from '@shared/models'
+import type { AgentKind, SessionRuntime } from '@shared/models'
 import { HOOK_CONTRACTS } from './hookContract'
 import { classify, parsePromptCwd } from './OutputHeuristics'
 
@@ -52,11 +52,11 @@ export class AgentDetector {
    * 有 agent 且未被抑制时：末行命中提示 → blocked（pendingHint = 那一行）；静默无提示 → 只有此前是 working / blocked
    * 才算「跑完」（正被查看则 idle，否则 done），空闲的 shell 永远不会变成「已完成」
    */
-  reportOutput(sessionId: string, report: OutputReport, shell: ShellKind): void {
+  reportOutput(sessionId: string, report: OutputReport): void {
     const current = this.runtimes.get(sessionId)
     if (!current) return
     let next: SessionRuntime = { ...current }
-    const cwdNow = parsePromptCwd(report.tail, shell)
+    const cwdNow = parsePromptCwd(report.tail)
     if (cwdNow !== null) next.cwdNow = cwdNow
     if (current.agent !== null && !this.isSuppressed(current)) {
       const result = classify(report.tail)
