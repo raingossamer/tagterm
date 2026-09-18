@@ -201,6 +201,7 @@ app.whenReady().then(async () => {
   // PtyManager 的三个回调经 wrapPty 串上状态机与探针
   const subsystem = createProductionAgent({
     dataDir,
+    isSmoke, // hooks 目标隔离到数据目录下的假主目录：烟测的端口同步绝不能碰用户真实的 ~/.claude / ~/.codex
     sessions: () => store.list(),
     broadcast: (runtime) => broadcast('agent:status', runtime),
     notifications: electronNotifications({
