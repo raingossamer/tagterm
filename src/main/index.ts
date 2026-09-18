@@ -1,5 +1,6 @@
 /**
- * 装配层：创建各服务、注入依赖、绑定 app 生命周期；不含业务逻辑。
+ * 装配层：创建各服务、造 Electron 适配器、把依赖注入进去、绑定 app 生命周期；业务规则都在服务层
+ *（agent 子系统含状态机、hooks、通知去重与角标计数），这里只接线一次。
  * 会话生命周期 = 应用生命周期：关窗只隐藏到托盘；托盘「退出」与 before-quit 都 killAll。
  */
 import { app, BrowserWindow, dialog, ipcMain, nativeImage } from 'electron'

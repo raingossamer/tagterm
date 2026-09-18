@@ -8,10 +8,6 @@
 import type { HookAgent } from '@shared/ipc'
 import { HOOK_CONTRACTS, HOOK_PATH_PREFIX, type HookEventSpec } from './hookContract'
 
-/** 两个目标的安装表：契约表的视图，供测试与外部对照 */
-export const CLAUDE_HOOK_EVENTS: readonly HookEventSpec[] = HOOK_CONTRACTS.claude.events
-export const CODEX_HOOK_EVENTS: readonly HookEventSpec[] = HOOK_CONTRACTS.codex.events
-
 /** curl 自身的超时（秒）：与事件预算一致，1 s 预算的事件 curl 也只等 1 s */
 function curlTimeoutSec(event: string): number {
   return event === 'Interrupt' || event === 'SessionEnd' ? 1 : 3
