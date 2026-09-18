@@ -14,6 +14,8 @@ const MAX_PORT_ATTEMPTS = 20
 export interface HookServerDeps {
   onHook: (agent: HookAgent, payload: Record<string, unknown>) => void
   maxBodyBytes?: number
+  /** 首选端口被占时最多试几个（缺省 MAX_PORT_ATTEMPTS；测试用 1 构造「全部失败」） */
+  maxPortAttempts?: number
 }
 
 /** 路径 → 来源：只认契约表里的 agent */
@@ -27,15 +29,17 @@ export class HookServer {
   private server: Server | null = null
   private port = 0
   private readonly maxBodyBytes: number
+  private readonly maxPortAttempts: number
 
   constructor(private readonly deps: HookServerDeps) {
     this.maxBodyBytes = deps.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES
+    this.maxPortAttempts = deps.maxPortAttempts ?? MAX_PORT_ATTEMPTS
   }
 
   /** 从 preferredPort 起最多试 MAX_PORT_ATTEMPTS 个端口（0 = 随机）；返回实际端口 */
   async start(preferredPort: number): Promise<number> {
     if (this.server) return this.port
-    const attempts = preferredPort === 0 ? 1 : MAX_PORT_ATTEMPTS
+    const attempts = preferredPort === 0 ? 1 : this.maxPortAttempts
     let lastError: unknown = null
     for (let i = 0; i < attempts; i += 1) {
       const port = preferredPort === 0 ? 0 : preferredPort + i
