@@ -1,10 +1,19 @@
 /**
  * 纯函数：屏幕末尾启发式（给没有 hooks 的工具兜底）。
- * classify：末尾非空行命中提示模式 → blocked（hint = 那一行），末行是 shell 提示符或不命中 → quiet；
+ * classify：末行是 shell 提示符 → quiet（回到 shell 了，回滚区里残留的提示不算）；末行命中提示模式 → blocked（hint = 那一行）；
+ *   否则末尾任一行含工具自己的「工作中」提示 → working；都不是 → quiet。
+ *   「运行中」只认这条提示，不认「有输出到达」：启动工具的欢迎画面、在工具里打字、界面重绘都会有输出，但都不是在干活（用户 2026-09-18）。
  * parsePromptCwd：从末尾往前找第一个 cmd / PowerShell 提示符行，取目录（路径条显示「当前目录」用）。
  * 输入是渲染进程从 xterm 活动缓冲区读来的末尾几行，主进程从不记录它们（规范：不记录终端内容）。
  */
-export type OutputClass = { kind: 'blocked'; hint: string } | { kind: 'quiet' }
+export type OutputClass =
+  { kind: 'blocked'; hint: string } | { kind: 'working' } | { kind: 'quiet' }
+
+/**
+ * 工具工作全程显示在屏幕上的「工作中」提示（大小写不敏感，子串匹配）：
+ * Claude Code / Codex 的 spinner 行带 `esc to interrupt`，Gemini CLI 带 `esc to cancel`。pi 的文案未核实
+ */
+const WORKING_PATTERNS: readonly RegExp[] = [/esc to interrupt/i, /esc to cancel/i]
 
 /** 「等你确认」的提示模式（大小写不敏感，子串匹配）；`>` 不在清单里 —— 它和 shell 提示符重叠 */
 const PROMPT_PATTERNS: readonly RegExp[] = [
@@ -40,9 +49,9 @@ function lastNonEmpty(tail: readonly string[]): string | null {
 export function classify(tail: readonly string[]): OutputClass {
   const line = lastNonEmpty(tail)
   if (line === null || isShellPrompt(line)) return { kind: 'quiet' }
-  return PROMPT_PATTERNS.some((p) => p.test(line))
-    ? { kind: 'blocked', hint: line }
-    : { kind: 'quiet' }
+  if (PROMPT_PATTERNS.some((p) => p.test(line))) return { kind: 'blocked', hint: line }
+  if (tail.some((l) => WORKING_PATTERNS.some((p) => p.test(l)))) return { kind: 'working' }
+  return { kind: 'quiet' }
 }
 
 /**

@@ -13,9 +13,12 @@ function pngSize(file: string): { width: number; height: number } {
 describe('托盘 / 任务栏角标图标资源', () => {
   const resources = join(process.cwd(), 'resources')
 
-  it('tray.png 与 tray-blocked.png 都是 32×32，overlay-blocked.png 是 16×16', () => {
-    expect(pngSize(join(resources, 'tray.png'))).toEqual({ width: 32, height: 32 })
-    expect(pngSize(join(resources, 'tray-blocked.png'))).toEqual({ width: 32, height: 32 })
-    expect(pngSize(join(resources, 'overlay-blocked.png'))).toEqual({ width: 16, height: 16 })
+  it('tray.png / tray-blocked.png / tray-working.png 都是 32×32，overlay-blocked.png / overlay-working.png 是 16×16', () => {
+    for (const name of ['tray.png', 'tray-blocked.png', 'tray-working.png']) {
+      expect(pngSize(join(resources, name))).toEqual({ width: 32, height: 32 })
+    }
+    for (const name of ['overlay-blocked.png', 'overlay-working.png']) {
+      expect(pngSize(join(resources, name))).toEqual({ width: 16, height: 16 })
+    }
   })
 })

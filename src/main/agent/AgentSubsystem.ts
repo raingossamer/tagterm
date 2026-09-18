@@ -33,9 +33,15 @@ export interface NotificationPort {
   show(sessionId: string, text: NotificationText): void
 }
 
-/** 角标端口：托盘黄点 + 任务栏 overlay 合成一个「等你确认」计数；0 = 还原 */
+/** 角标要表达的两个会话计数 */
+export interface BadgeCounts {
+  blocked: number
+  working: number
+}
+
+/** 角标端口：托盘图标 + 任务栏 overlay 合成「等你确认 / 运行中」两个计数；适配器按 等你确认 > 运行中 > 原图标 选图，都为 0 还原 */
 export interface BadgePort {
-  setBlockedCount(count: number): void
+  setCounts(counts: BadgeCounts): void
 }
 
 export interface AgentSubsystemOptions {
@@ -73,8 +79,8 @@ export class AgentSubsystem {
   private hookPort = 0
   /** 每会话上次记录变化时的状态：同会话同状态只弹一次通知，记录删除时清 */
   private readonly lastNotifiedStatus = new Map<string, AgentStatus>()
-  /** 上次交给角标端口的「等你确认」计数：没变不重复设置 */
-  private blockedCount = 0
+  /** 上次交给角标端口的两个计数：都没变不重复设置 */
+  private lastCounts: BadgeCounts = { blocked: 0, working: 0 }
 
   constructor(private readonly opts: AgentSubsystemOptions) {
     const now = opts.now ?? (() => Date.now())
@@ -112,16 +118,13 @@ export class AgentSubsystem {
   }
 
   /**
-   * 把 PtyManager 的三个回调串上状态机与探针，调用方只写自己那份（广播 pty:data / pty:exit、isFile）。
-   * 顺序固定：onData 先调用方再状态机；onExit 先调用方、再停探测、再删记录；onSpawn 先建记录、再开始探测、最后调用方
+   * 把 PtyManager 的 spawn / exit 回调串上状态机与探针，调用方只写自己那份（广播 pty:data / pty:exit、isFile）。
+   * onData 原样透传：「有输出到达」不是状态信号（启动画面 / 打字 / 重绘都有输出，见 AgentDetector）。
+   * 顺序固定：onExit 先调用方、再停探测、再删记录；onSpawn 先建记录、再开始探测、最后调用方
    */
   wrapPty(deps: PtyManagerDeps): PtyManagerDeps {
     return {
       ...deps,
-      onData: (sessionId, data) => {
-        deps.onData(sessionId, data)
-        this.detector.ptyData(sessionId)
-      },
       onExit: (e) => {
         deps.onExit(e)
         this.probe.unwatch(e.sessionId)
@@ -144,7 +147,7 @@ export class AgentSubsystem {
     this.detector.setViewed(sessionId)
   }
 
-  /** 渲染进程的静默末尾报告（≤ 8 行）：更新 cwdNow，有 agent 时判「等你确认」/「已完成」；未知会话忽略 */
+  /** 渲染进程的屏幕末尾报告（屏幕在动时每秒一次 silentMs 0、静默 1.5 s 后一次，≤ 24 行）：更新 cwdNow，有 agent 时判「运行中」/「等你确认」/「已完成」；未知会话忽略 */
   reportOutput(sessionId: string, report: OutputReport): void {
     this.detector.reportOutput(sessionId, report)
   }
@@ -228,12 +231,18 @@ export class AgentSubsystem {
     this.opts.notifications.show(runtime.sessionId, text)
   }
 
-  /** 角标 = 等你确认的会话数：托盘黄点与任务栏 overlay 由端口合成；计数没变不重复设置 */
+  /** 角标 = { 等你确认, 运行中 } 两个会话计数：托盘图标与任务栏 overlay 由端口合成；两个都没变不重复设置 */
   private refreshBadge(): void {
-    const count = this.detector.list().filter((r) => r.status === 'blocked').length
-    if (count === this.blockedCount) return
-    this.blockedCount = count
-    this.opts.badge.setBlockedCount(count)
+    const runtimes = this.detector.list()
+    const counts: BadgeCounts = {
+      blocked: runtimes.filter((r) => r.status === 'blocked').length,
+      working: runtimes.filter((r) => r.status === 'working').length,
+    }
+    if (counts.blocked === this.lastCounts.blocked && counts.working === this.lastCounts.working) {
+      return
+    }
+    this.lastCounts = counts
+    this.opts.badge.setCounts(counts)
   }
 
   /** 通知文案用会话名；会话已不在列表里时退回 id */

@@ -76,7 +76,10 @@ export interface HooksStatus {
 }
 export type HooksStatusMap = Record<HookAgent, HooksStatus>
 
-/** 渲染进程的「静默末尾」报告：某会话 silentMs 无输出后屏幕末尾的非空行（≤ 50 行），主进程只做判定不记录 */
+/**
+ * 渲染进程的屏幕末尾报告：某会话屏幕末尾的非空行（≤ 50 行），主进程只做判定不记录。
+ * silentMs > 0 = 静默了这么久后的一报（判「等你确认」/「已完成」）；0 = 屏幕还在动时的定期补报（只找工具的「工作中」提示判「运行中」）
+ */
 export interface OutputReport {
   tail: string[]
   silentMs: number

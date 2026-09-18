@@ -51,7 +51,7 @@ describe('IPC 接口层', () => {
       // 记录变化与删除（alive: false 墓碑）走同一条广播
       broadcast: (r) => (r.alive ? agentChanges.push(r) : agentRemovals.push(r.sessionId)),
       notifications: { isSupported: () => false, show: () => {} },
-      badge: { setBlockedCount: () => {} },
+      badge: { setCounts: () => {} },
       hookTargets: {
         claude: {
           agent: 'claude',

@@ -10,7 +10,8 @@ import { release, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AutoLaunchStatus, EventArgs, EventChannel } from '@shared/ipc'
 import { DEFAULT_AGENTS } from '@shared/models'
-import overlayIconPath from '../../resources/overlay-blocked.png?asset'
+import overlayBlockedIconPath from '../../resources/overlay-blocked.png?asset'
+import overlayWorkingIconPath from '../../resources/overlay-working.png?asset'
 import { createMainWindow, showMainWindow } from './window'
 import { createTray, type TrayHandle } from './tray'
 import { registerIpc } from './ipc'
@@ -50,7 +51,8 @@ let tray: TrayHandle | null = null
 /** 终端与 agent 子系统都在 whenReady 里装配（数据目录与会话列表就位之后） */
 let ptyManager: PtyManager | null = null
 let agent: AgentSubsystem | null = null
-let overlayImage: Electron.NativeImage | null = null
+/** 任务栏 overlay 的黄点 / 绿点图，whenReady 里加载 */
+let overlayImages: { blocked: Electron.NativeImage; working: Electron.NativeImage } | null = null
 let isQuitting = false
 
 /** 主进程是持久数据与终端输出的来源：向渲染进程广播 */
@@ -159,7 +161,10 @@ const updater = new Updater({
 app.whenReady().then(async () => {
   // 系统通知在 Windows 上要有 AppUserModelId（与 electron-builder.yml 的 appId 一致）才能显示
   app.setAppUserModelId('com.tagterm.app')
-  overlayImage = nativeImage.createFromPath(overlayIconPath)
+  overlayImages = {
+    blocked: nativeImage.createFromPath(overlayBlockedIconPath),
+    working: nativeImage.createFromPath(overlayWorkingIconPath),
+  }
   const dataDir = isSmoke ? app.getPath('userData') : resolveDataDir(app.getPath('appData'))
   const pathEnv = process.env['PATH'] ?? ''
   const availableShells = detectAvailableShells(pathEnv, existsSync)
@@ -205,7 +210,11 @@ app.whenReady().then(async () => {
         broadcast('app:select-session', sessionId)
       },
     }),
-    badge: electronBadge({ tray: () => tray, window: () => mainWindow, overlay: overlayImage! }),
+    badge: electronBadge({
+      tray: () => tray,
+      window: () => mainWindow,
+      overlays: overlayImages!,
+    }),
   })
   agent = subsystem
   const pty = new PtyManager(
@@ -248,7 +257,7 @@ app.whenReady().then(async () => {
       tags,
       pty,
       agent: subsystem,
-      badgeCount: () => tray?.count() ?? -1,
+      badgeCounts: () => tray?.counts() ?? null,
       quit: quitApp,
     })
   // 未打包（开发）时 electron-updater 会直接报错，只在打包版自动检查

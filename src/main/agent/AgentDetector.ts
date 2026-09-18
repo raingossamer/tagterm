@@ -1,7 +1,8 @@
 /**
  * 服务层：每个会话的运行时状态机（SessionRuntime），三路信号（hooks / 屏幕末尾启发式 / 进程树）在这里合成。
- * 输入全是方法调用（AgentSubsystem 把 PtyManager / ProcessTreeProbe / HookServer / 渲染进程的事件接过来；hooks 事件按 agent 的转移规则见 hookContract），
- * 输出是每次记录变化回调一条记录、记录删除回调一个 id；时钟注入，不 import electron。
+ * 输入全是方法调用（AgentSubsystem 把 PtyManager 的 spawn / exit、ProcessTreeProbe 的快照、HookServer 的载荷、渲染进程的屏幕末尾报告接过来；
+ * hooks 事件按 agent 的转移规则见 hookContract），输出是每次记录变化回调一条记录、记录删除回调一个 id；时钟注入，不 import electron。
+ * 「有输出到达」不是信号：启动工具、在工具里打字、界面重绘都有输出，但都不是在干活；运行中只认屏幕上工具自己的「工作中」提示（OutputHeuristics）。
  */
 import type { HookAgent, OutputReport } from '@shared/ipc'
 import type { AgentKind, SessionRuntime } from '@shared/models'
@@ -38,19 +39,13 @@ export class AgentDetector {
     this.remove(sessionId)
   }
 
-  /** pty 有输出到达（只记事实，不看内容）：有 agent 且未被 hooks 抑制 → working */
-  ptyData(sessionId: string): void {
-    const current = this.runtimes.get(sessionId)
-    if (!current || current.agent === null || current.status === 'working') return
-    if (this.isSuppressed(current)) return
-    const { pendingHint: _hint, ...rest } = current
-    this.commit({ ...rest, status: 'working' })
-  }
-
   /**
-   * 渲染进程的静默末尾报告：先解析提示符更新 cwdNow（不受 agent 有无影响，解析不到则保留上次的）；
-   * 有 agent 且未被抑制时：末行命中提示 → blocked（pendingHint = 那一行）；静默无提示 → 只有此前是 working / blocked
-   * 才算「跑完」（正被查看则 idle，否则 done），空闲的 shell 永远不会变成「已完成」
+   * 渲染进程的屏幕末尾报告，两种节奏：屏幕在动时每秒一次（silentMs 0）、静默 1.5 s 后一次（silentMs > 0）。
+   * 先解析提示符更新 cwdNow（不受 agent 有无影响，解析不到则保留上次的）；有 agent 且未被 hooks 抑制时按 classify 转移：
+   *   末尾有工具的「工作中」提示 → working（两种报告都认；从 blocked 也转 = 用户回答提示后工具继续干活，提示清掉）；
+   *   静默且末行命中提示模式 → blocked（pendingHint = 那一行；屏幕在动时不判，重绘中途的一帧不算等人）；
+   *   静默且什么都没有 → 只有此前是 working / blocked 才算「跑完」（正被查看则 idle，否则 done），空闲的 shell 永远不会变成「已完成」；
+   *   屏幕在动但没有提示（欢迎画面、在工具里打字）→ 不转移，等静默再判
    */
   reportOutput(sessionId: string, report: OutputReport): void {
     const current = this.runtimes.get(sessionId)
@@ -60,11 +55,14 @@ export class AgentDetector {
     if (cwdNow !== null) next.cwdNow = cwdNow
     if (current.agent !== null && !this.isSuppressed(current)) {
       const result = classify(report.tail)
-      if (result.kind === 'blocked') {
+      const isSilent = report.silentMs > 0
+      const { pendingHint: _hint, ...bare } = next
+      if (result.kind === 'working') {
+        next = { ...bare, status: 'working' }
+      } else if (isSilent && result.kind === 'blocked') {
         next = { ...next, status: 'blocked', pendingHint: result.hint }
-      } else if (current.status === 'working' || current.status === 'blocked') {
-        const { pendingHint: _hint, ...rest } = next
-        next = { ...rest, status: this.viewedId === sessionId ? 'idle' : 'done' }
+      } else if (isSilent && (current.status === 'working' || current.status === 'blocked')) {
+        next = { ...bare, status: this.viewedId === sessionId ? 'idle' : 'done' }
       }
     }
     if (!isSameRuntime(current, next)) this.commit(next)
@@ -134,7 +132,7 @@ export class AgentDetector {
     if (current?.status === 'done') this.commit({ ...current, status: 'idle' })
   }
 
-  /** hooks 抑制窗：某会话收到 hooks 事件后 30 s 内，输出启发式不产生状态转移（cwdNow 解析不受影响） */
+  /** hooks 抑制窗：某会话收到 hooks 事件后 30 s 内，屏幕末尾启发式不产生状态转移（cwdNow 解析不受影响） */
   private isSuppressed(runtime: SessionRuntime): boolean {
     const seenAt = this.hookSeenAt.get(runtime.sessionId)
     return seenAt !== undefined && this.deps.now() - seenAt < HOOK_SUPPRESS_MS

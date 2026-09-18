@@ -12,9 +12,14 @@ import type { TerminalFactory } from './TerminalInstance'
 import { TerminalPool } from './TerminalPool'
 import { OutputWatcher } from './OutputWatcher'
 
-/** 静默多久算「屏幕停下来了」，以及上报末尾几行（主进程只看末行判提示、往前找提示符取目录） */
+/**
+ * 静默多久算「屏幕停下来了」、屏幕在动时多久补报一次，以及上报末尾几行。
+ * 24 行：工具的「工作中」提示（esc to interrupt）在页脚上方，Claude Code 的状态栏 + 输入框 + 快捷键提示可占 6–10 行，8 行看不到它；
+ * 主进程判「等你确认」仍只看末行、找目录仍从末尾往前找第一个提示符，行数变多不改变二者语义
+ */
 const OUTPUT_SILENCE_MS = 1500
-const OUTPUT_TAIL_LINES = 8
+const OUTPUT_ACTIVE_MS = 1000
+const OUTPUT_TAIL_LINES = 24
 
 /** 每会话 pty 运行态：无记录 = 没有终端实例（从未打开，或已移除）。与 shared 的 SessionRuntime（M3 agent 状态）是两回事 */
 export type PtyPhase = 'opening' | 'running' | 'exited'
@@ -42,7 +47,7 @@ export interface TerminalWorkspaceDeps {
   createTerminal: TerminalFactory
   /** 下一帧调度：缺省 requestAnimationFrame，测试传同步执行 */
   raf?: (fn: () => void) => void
-  /** 静默末尾上报（生产传 window.tagterm.agent.reportOutput）；不传则不上报 */
+  /** 屏幕末尾上报（生产传 window.tagterm.agent.reportOutput）；不传则不上报 */
   reportOutput?: (sessionId: string, report: OutputReport) => void
 }
 
@@ -58,7 +63,7 @@ export class TerminalWorkspace {
   private readonly stalePids = new Map<string, number>()
   private readonly listeners = new Set<(s: WorkspaceSnapshot) => void>()
   private readonly unsubscribes: Unsubscribe[]
-  /** 屏幕末尾静默上报：pty 数据到达即重置计时，静默后读该实例末尾几行交给主进程 */
+  /** 屏幕末尾上报：pty 数据到达即重置静默计时并排一次补报，读该实例末尾几行交给主进程 */
   private readonly watcher: OutputWatcher
 
   /** 构造即订阅 pty.onData / onExit（订阅不随 TerminalPane 挂载摇摆） */
@@ -73,6 +78,7 @@ export class TerminalWorkspace {
       readTail: (id, lines) => this.pool.readTail(id, lines),
       report: (id, report) => deps.reportOutput?.(id, report),
       silenceMs: OUTPUT_SILENCE_MS,
+      activeMs: OUTPUT_ACTIVE_MS,
       tailLines: OUTPUT_TAIL_LINES,
     })
     this.unsubscribes = [
