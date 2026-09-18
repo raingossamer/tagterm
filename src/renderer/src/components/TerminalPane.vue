@@ -37,6 +37,10 @@ onUnmounted(() => {
   flex: 1;
   min-height: 0;
   background: var(--t-bg-soft);
+  /* 输入法组合串在光标处显示，光标靠近右缘时 xterm 的 composition-view 与隐藏 textarea 会伸出终端区；
+     浏览器为了让聚焦的 textarea 露出来会去滚最近的滚动容器 —— body 的 overflow: hidden 也算滚动容器，
+     结果整个窗口内容（含左栏）被往左挤。clip 只裁不滚、也不把溢出算进祖先的可滚范围，窗口就再也挤不动 */
+  overflow: clip;
 }
 .term {
   position: absolute;

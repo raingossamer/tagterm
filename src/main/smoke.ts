@@ -339,6 +339,34 @@ const SIDEBAR_SCRIPT = `(async () => {
   return result
 })()`
 
+/**
+ * 终端区里的东西伸出右缘（输入法组合串靠近右缘时 xterm 的 composition-view / textarea 就是这样）：整窗不得被挤走。
+ * 先把 .term-wrap 的 overflow 临时改成 visible 证明探针确实能把视口滚走（对照组），再按样式表原样量一次：视口不动
+ */
+const TERMINAL_OVERFLOW_SCRIPT = `(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  const pane = document.querySelector('[data-test=terminal-pane]')
+  const wrap = document.querySelector('.term-wrap')
+  if (!pane || !wrap) return { pane: !!pane, wrap: !!wrap }
+  const probe = document.createElement('textarea')
+  probe.style.cssText = 'position:absolute;left:' + (innerWidth + 200) + 'px;top:10px;width:300px;height:20px'
+  pane.appendChild(probe)
+  const measure = async () => {
+    probe.focus()
+    probe.scrollIntoView({ inline: 'end', block: 'nearest' })
+    await sleep(100)
+    const shift = Math.max(Math.round(scrollX), Math.round(document.scrollingElement?.scrollLeft ?? 0), -Math.round(document.querySelector('.app').getBoundingClientRect().left))
+    scrollTo(0, 0)
+    return shift
+  }
+  wrap.style.overflow = 'visible'
+  const shiftWithoutClip = await measure()
+  wrap.style.overflow = ''
+  const shiftWithClip = await measure()
+  probe.remove()
+  return { overflow: getComputedStyle(wrap).overflow, shiftWithoutClip, shiftWithClip, probeWorks: shiftWithoutClip > 0, stayedPut: shiftWithClip === 0 }
+})()`
+
 /** 聚焦当前可见终端的输入框（Ctrl+K 真实按键测试前） */
 const FOCUS_TERMINAL = `(() => {
   const host = [...document.querySelectorAll('[data-test=terminal-pane] > div')].find((h) => h.style.display === 'block')
@@ -649,6 +677,13 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         '左栏溢出烟测',
       )
 
+      // 终端区溢出：伸出右缘的元素被聚焦 / scrollIntoView 时整窗不得被挤走（带对照组）
+      const termOverflow = await withTimeout(
+        win.webContents.executeJavaScript(TERMINAL_OVERFLOW_SCRIPT),
+        10000,
+        '终端区溢出烟测',
+      )
+
       // 关窗 → 只隐藏；pty 存活；托盘「显示窗口」恢复
       win.close()
       await sleep(300)
@@ -820,6 +855,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
             rightClick,
             settings,
             sidebar,
+            termOverflow,
             lifecycle,
             restore,
             processTree,
