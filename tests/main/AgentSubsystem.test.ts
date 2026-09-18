@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import type { HookAgent } from '@shared/ipc'
 import type { Session, SessionRuntime } from '@shared/models'
 import { AgentSubsystem, type AgentSubsystemOptions } from '../../src/main/agent/AgentSubsystem'
+import type { NotificationText } from '../../src/main/agent/notificationPolicy'
 import type { ProcessNode } from '../../src/main/agent/processMatch'
 import { PtyManager } from '../../src/main/pty/PtyManager'
 import { waitFor } from './helpers'
@@ -26,7 +27,14 @@ function postHook(port: number, agent: HookAgent, payload: unknown): Promise<num
 }
 
 function sessionOf(id: string, cwd: string): Session {
-  return { id, name: id, cwd, shell: 'cmd.exe', sortOrder: 1, createdAt: '2026-09-18T00:00:00Z' }
+  return {
+    id,
+    name: `${id}-name`,
+    cwd,
+    shell: 'cmd.exe',
+    sortOrder: 1,
+    createdAt: '2026-09-18T00:00:00Z',
+  }
 }
 
 /**
@@ -43,6 +51,11 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
   let dir: string
   let agent: AgentSubsystem
   let pty: PtyManager | null
+  /** 假通知中心：记录弹过的通知；isSupported 可切换 */
+  let shown: Array<[sessionId: string, text: NotificationText]>
+  let isNotificationSupported: boolean
+  /** 假角标：记录每次收到的「等你确认」计数 */
+  let badges: number[]
   /** 再造一个子系统时复用同一套假件（端口测试要多个实例） */
   let baseOptions: AgentSubsystemOptions
 
@@ -64,11 +77,19 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
     pending = []
     now = 1_000_000
     pty = null
+    shown = []
+    isNotificationSupported = true
+    badges = []
     dir = mkdtempSync(join(tmpdir(), 'tagterm-agent-'))
     baseOptions = {
       dataDir: dir,
       sessions: () => sessions,
       broadcast: (r) => changes.push(r),
+      notifications: {
+        isSupported: () => isNotificationSupported,
+        show: (sessionId, text) => shown.push([sessionId, text]),
+      },
+      badge: { setBlockedCount: (count) => badges.push(count) },
       hookTargets: {
         claude: {
           agent: 'claude',
@@ -327,5 +348,79 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
       error: expect.stringContaining('未找到'),
     })
     expect(status.codex).toEqual({ installed: false, port: agent.port, settingsPath: codexFile })
+  })
+
+  it('系统通知：未查看进入 blocked → 「<名> 等你确认」一次，同状态不重复、正被查看不弹；未查看跑完 → 「<名> 完成」，被查看跑完不弹；通知中心不可用一律不弹', async () => {
+    sessions.push(sessionOf('s1', 'D:/a'))
+    const wrapped = agent.wrapPty({ onData: () => {}, onExit: () => {}, isFile: existsSync })
+    wrapped.onSpawn?.('s1', 100)
+    subtrees.set(100, [{ pid: 101, ppid: 100, name: 'claude.exe' }])
+    await tick()
+    wrapped.onData('s1', 'x')
+    expect(shown).toEqual([])
+
+    const ask = { tail: ['Do you want to proceed? (y/n)'], silentMs: 1500 }
+    agent.reportOutput('s1', ask)
+    expect(shown).toEqual([
+      ['s1', { title: 's1-name 等你确认', body: 'Do you want to proceed? (y/n)' }],
+    ])
+    agent.reportOutput('s1', ask) // 同状态再报：不重复弹
+    expect(shown).toHaveLength(1)
+
+    // 正被查看时进入 blocked：不弹
+    wrapped.onData('s1', 'y')
+    agent.setViewed('s1')
+    agent.reportOutput('s1', ask)
+    expect(runtimeOf('s1')).toMatchObject({ status: 'blocked' })
+    expect(shown).toHaveLength(1)
+
+    // 没人看着跑完 → 「完成」；被查看后回空闲不弹
+    agent.setViewed(null)
+    agent.reportOutput('s1', { tail: ['Done.'], silentMs: 1500 })
+    expect(runtimeOf('s1')).toMatchObject({ status: 'done' })
+    expect(shown.at(-1)).toEqual(['s1', { title: 's1-name 完成', body: '' }])
+    agent.setViewed('s1')
+    expect(shown).toHaveLength(2)
+
+    // 正被查看时跑完 → idle，不弹
+    wrapped.onData('s1', 'x')
+    agent.reportOutput('s1', { tail: ['Done.'], silentMs: 1500 })
+    expect(runtimeOf('s1')).toMatchObject({ status: 'idle' })
+    expect(shown).toHaveLength(2)
+
+    // 通知中心不可用：进入 blocked 也不弹；找不到会话名时用 id
+    isNotificationSupported = false
+    agent.setViewed(null)
+    wrapped.onData('s1', 'x')
+    agent.reportOutput('s1', ask)
+    expect(runtimeOf('s1')).toMatchObject({ status: 'blocked' })
+    expect(shown).toHaveLength(2)
+  })
+
+  it('角标 = 等你确认的会话数：两个会话先后 blocked → 1、2；一个被查看回空闲 → 1；记录删除 → 0；计数没变不重复设置', async () => {
+    const wrapped = agent.wrapPty({ onData: () => {}, onExit: () => {}, isFile: existsSync })
+    wrapped.onSpawn?.('s1', 100)
+    wrapped.onSpawn?.('s2', 200)
+    subtrees.set(100, [{ pid: 101, ppid: 100, name: 'claude.exe' }])
+    subtrees.set(200, [{ pid: 201, ppid: 200, name: 'codex.exe' }])
+    await tick()
+    wrapped.onData('s1', 'x')
+    wrapped.onData('s2', 'x')
+    expect(badges).toEqual([]) // 还没有人等确认：不设置
+
+    const ask = { tail: ['Allow?'], silentMs: 1500 }
+    agent.reportOutput('s1', ask)
+    agent.reportOutput('s2', ask)
+    expect(badges).toEqual([1, 2])
+    agent.reportOutput('s2', ask) // 同状态再报：计数没变
+    expect(badges).toEqual([1, 2])
+
+    agent.setViewed('s1')
+    agent.reportOutput('s1', { tail: ['Done.'], silentMs: 1500 })
+    expect(runtimeOf('s1')).toMatchObject({ status: 'idle' })
+    expect(badges).toEqual([1, 2, 1])
+
+    wrapped.onExit({ sessionId: 's2', exitCode: 0, pid: 200 })
+    expect(badges).toEqual([1, 2, 1, 0])
   })
 })
