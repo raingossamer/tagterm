@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 路径条：当前会话的当前目录（终端里 cd 之后追踪到的 cwdNow，没有则是固定目录）、复制 + ▾（「打开」= 在资源管理器打开当前目录）、
+// 路径条：当前会话的当前目录（终端里 cd 之后追踪到的 cwdNow，没有则是固定目录）、复制（悬停其上即露出「打开」= 在资源管理器打开当前目录）、
 // 标签胶囊（× 直接 detach）、「+ 标签」弹出层、唤起区（settings.json 里的命令：pinned 平铺、其余收进「更多 ▾」、「编辑」）、清屏。
 // 移除会话的入口在左栏会话行的右键菜单
 import { computed, onUnmounted, ref } from 'vue'
@@ -21,17 +21,29 @@ const workspace = useWorkspaceStore()
 const agent = useAgentStore()
 const { isCopied, copy } = useCopy()
 const isEditOpen = ref(false)
-// 三个弹出层：点击容器（按钮 + 弹出层）外部即关闭；TagPopover 的 Esc 由它自己 emit close
-const copyMoreEl = ref<HTMLElement | null>(null)
+// 两个点击式弹出层：点击容器（按钮 + 弹出层）外部即关闭；TagPopover 的 Esc 由它自己 emit close
 const moreEl = ref<HTMLElement | null>(null)
 const tagPopEl = ref<HTMLElement | null>(null)
-const {
-  isOpen: isCopyMoreOpen,
-  toggle: toggleCopyMore,
-  close: closeCopyMore,
-} = usePopover(copyMoreEl)
 const { isOpen: isMoreOpen, toggle: toggleMore, close: closeMore } = usePopover(moreEl)
 const { isOpen: isTagPopOpen, toggle: toggleTagPop, close: closeTagPop } = usePopover(tagPopEl)
+
+// 「打开」是悬停式的：鼠标停在「复制」上即在它正下方露出，移开就收起，不占路径条的常驻宽度。
+// 不走 usePopover（那套是给点击式弹出层管「点外面关闭」的）：这里鼠标离开容器就收起，不必监听 document。
+// 弹出层是容器的子元素，鼠标从按钮滑到它身上不会触发容器的 mouseleave；键盘用户 Tab 到「复制」同样露出（focusin / focusout）
+const copyWrapEl = ref<HTMLElement | null>(null)
+const isOpenShown = ref(false)
+
+function showOpen(): void {
+  isOpenShown.value = true
+}
+function hideOpen(): void {
+  isOpenShown.value = false
+}
+/** 焦点仍在容器内（从「复制」Tab 到「打开」）时不收起 */
+function onCopyFocusOut(e: FocusEvent): void {
+  const next = e.relatedTarget as Node | null
+  if (!next || !copyWrapEl.value?.contains(next)) hideOpen()
+}
 
 // 路径条内的失败提示（打不开目录等）：红字 1.2 s（规范：失败必须出现在用户看得见的地方）
 const ERROR_FLASH_MS = 1200
@@ -76,7 +88,7 @@ function runFromMore(cmd: string): void {
 
 /** 「打开」= 在资源管理器打开当前目录（与「复制」同一个路径）；路径由主进程从真相源解析，这里只传会话 id */
 function openDirectory(): void {
-  closeCopyMore()
+  hideOpen()
   if (!session.value) return
   window.tagterm.session
     .openDirectory(session.value.id)
@@ -92,18 +104,19 @@ function clearScreen(): void {
 <template>
   <div v-if="session" class="strip">
     <span class="path" :title="pathTitle" data-test="strip-path">{{ pathDisplay }}</span>
-    <button class="btn sm" title="复制路径" data-test="strip-copy" @click="copy(currentDir)">
-      {{ isCopied ? '已复制' : '复制' }}
-    </button>
-    <span ref="copyMoreEl" class="copymore">
-      <button
-        class="btn sm caret"
-        title="更多操作"
-        data-test="strip-copy-more"
-        @click="toggleCopyMore"
-        v-text="'▾'"
-      ></button>
-      <div v-if="isCopyMoreOpen" class="pop" data-test="strip-copy-pop">
+    <span
+      ref="copyWrapEl"
+      class="copywrap"
+      data-test="strip-copy-wrap"
+      @mouseenter="showOpen"
+      @mouseleave="hideOpen"
+      @focusin="showOpen"
+      @focusout="onCopyFocusOut"
+    >
+      <button class="btn sm" title="复制路径" data-test="strip-copy" @click="copy(currentDir)">
+        {{ isCopied ? '已复制' : '复制' }}
+      </button>
+      <div v-if="isOpenShown" class="pop" data-test="strip-copy-pop">
         <button
           class="item"
           title="在资源管理器中打开当前目录"
@@ -213,14 +226,10 @@ function clearScreen(): void {
 .stag button:hover {
   opacity: 1;
 }
-/* 「复制」右侧的分段按钮：紧贴复制按钮，弹出层只有「打开」 */
-.copymore {
+/* 悬停「复制」时在它正下方露出「打开」：定位基准是容器，弹出层与按钮之间不留空隙（留了鼠标滑过去就会先离开容器） */
+.copywrap {
   position: relative;
-  margin-left: -5px;
-}
-.copymore .caret {
-  padding-left: 5px;
-  padding-right: 5px;
+  display: inline-flex;
 }
 .err {
   font-size: 12px;

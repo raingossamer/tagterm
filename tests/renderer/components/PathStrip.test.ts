@@ -66,16 +66,22 @@ describe('PathStrip', () => {
     expect(writeText).toHaveBeenCalledWith('C:\\Users\\21477\\Desktop\\Self-Project\\aly-Inform')
   })
 
-  it('「复制」右侧的 ▾ 打开只有一项「打开」的弹出层：点「打开」调 session.openDirectory（当前会话 id）并收起；打不开时路径条红字 1.2 s', async () => {
+  it('鼠标悬停在「复制」上即在其正下方露出「打开」：点它调 session.openDirectory（当前会话 id）并收起，移开鼠标也收起；打不开时路径条红字 1.2 s', async () => {
     vi.useFakeTimers()
     const api = installFakeApi()
     const wrapper = mount(PathStrip)
 
+    const hover = wrapper.find('[data-test=strip-copy-wrap]')
     expect(wrapper.find('[data-test=strip-open]').exists()).toBe(false)
-    await wrapper.find('[data-test=strip-copy-more]').trigger('click')
+    await hover.trigger('mouseenter')
     const open = wrapper.find('[data-test=strip-open]')
     expect(open.text()).toBe('打开')
-    await open.trigger('click')
+    // 移开鼠标即收起（不点也不残留）
+    await hover.trigger('mouseleave')
+    expect(wrapper.find('[data-test=strip-open]').exists()).toBe(false)
+
+    await hover.trigger('mouseenter')
+    await wrapper.find('[data-test=strip-open]').trigger('click')
     await flushPromises()
     expect(api.session.openDirectory).toHaveBeenCalledWith(session.id)
     expect(wrapper.find('[data-test=strip-open]').exists()).toBe(false)
@@ -85,7 +91,7 @@ describe('PathStrip', () => {
     vi.mocked(api.session.openDirectory).mockRejectedValueOnce(
       new Error('打不开目录：Failed to open path'),
     )
-    await wrapper.find('[data-test=strip-copy-more]').trigger('click')
+    await hover.trigger('mouseenter')
     await wrapper.find('[data-test=strip-open]').trigger('click')
     await flushPromises()
     expect(wrapper.find('[data-test=strip-error]').text()).toBe('打不开目录：Failed to open path')
