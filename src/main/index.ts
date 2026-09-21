@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import type { AutoLaunchStatus, EventArgs, EventChannel } from '@shared/ipc'
 import { DEFAULT_AGENTS } from '@shared/models'
 import overlayBlockedIconPath from '../../resources/overlay-blocked.png?asset'
+import overlayDoneIconPath from '../../resources/overlay-done.png?asset'
 import overlayWorkingIconPath from '../../resources/overlay-working.png?asset'
 import { createMainWindow, showMainWindow } from './window'
 import { createTray, type TrayHandle } from './tray'
@@ -51,8 +52,12 @@ let tray: TrayHandle | null = null
 /** 终端与 agent 子系统都在 whenReady 里装配（数据目录与会话列表就位之后） */
 let ptyManager: PtyManager | null = null
 let agent: AgentSubsystem | null = null
-/** 任务栏 overlay 的黄点 / 绿点图，whenReady 里加载 */
-let overlayImages: { blocked: Electron.NativeImage; working: Electron.NativeImage } | null = null
+/** 任务栏 overlay 的黄点 / 蓝点 / 绿点图，whenReady 里加载 */
+let overlayImages: {
+  blocked: Electron.NativeImage
+  done: Electron.NativeImage
+  working: Electron.NativeImage
+} | null = null
 let isQuitting = false
 
 /** 主进程是持久数据与终端输出的来源：向渲染进程广播 */
@@ -163,6 +168,7 @@ app.whenReady().then(async () => {
   app.setAppUserModelId('com.tagterm.app')
   overlayImages = {
     blocked: nativeImage.createFromPath(overlayBlockedIconPath),
+    done: nativeImage.createFromPath(overlayDoneIconPath),
     working: nativeImage.createFromPath(overlayWorkingIconPath),
   }
   const dataDir = isSmoke ? app.getPath('userData') : resolveDataDir(app.getPath('appData'))
