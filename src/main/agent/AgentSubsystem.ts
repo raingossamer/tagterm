@@ -33,13 +33,17 @@ export interface NotificationPort {
   show(sessionId: string, text: NotificationText): void
 }
 
-/** 角标要表达的两个会话计数 */
+/** 角标要表达的三个会话计数 */
 export interface BadgeCounts {
   blocked: number
   working: number
+  done: number
 }
 
-/** 角标端口：托盘图标 + 任务栏 overlay 合成「等你确认 / 运行中」两个计数；适配器按 等你确认 > 运行中 > 原图标 选图，都为 0 还原 */
+/**
+ * 角标端口：托盘图标 + 任务栏 overlay 合成「等你确认 / 已完成 / 运行中」三个计数；
+ * 适配器按 等你确认（黄）> 已完成（蓝）> 运行中（绿）> 原图标 选图，都为 0 还原 —— 蓝优先于绿是提醒人去给跑完的终端发下一轮任务
+ */
 export interface BadgePort {
   setCounts(counts: BadgeCounts): void
 }
@@ -79,8 +83,8 @@ export class AgentSubsystem {
   private hookPort = 0
   /** 每会话上次记录变化时的状态：同会话同状态只弹一次通知，记录删除时清 */
   private readonly lastNotifiedStatus = new Map<string, AgentStatus>()
-  /** 上次交给角标端口的两个计数：都没变不重复设置 */
-  private lastCounts: BadgeCounts = { blocked: 0, working: 0 }
+  /** 上次交给角标端口的三个计数：都没变不重复设置 */
+  private lastCounts: BadgeCounts = { blocked: 0, working: 0, done: 0 }
 
   constructor(private readonly opts: AgentSubsystemOptions) {
     const now = opts.now ?? (() => Date.now())
@@ -231,14 +235,22 @@ export class AgentSubsystem {
     this.opts.notifications.show(runtime.sessionId, text)
   }
 
-  /** 角标 = { 等你确认, 运行中 } 两个会话计数：托盘图标与任务栏 overlay 由端口合成；两个都没变不重复设置 */
+  /** 角标 = { 等你确认, 运行中, 已完成 } 三个会话计数：托盘图标与任务栏 overlay 由端口合成；三个都没变不重复设置 */
   private refreshBadge(): void {
     const runtimes = this.detector.list()
+    const countOf = (status: AgentStatus): number =>
+      runtimes.filter((r) => r.status === status).length
     const counts: BadgeCounts = {
-      blocked: runtimes.filter((r) => r.status === 'blocked').length,
-      working: runtimes.filter((r) => r.status === 'working').length,
+      blocked: countOf('blocked'),
+      working: countOf('working'),
+      done: countOf('done'),
     }
-    if (counts.blocked === this.lastCounts.blocked && counts.working === this.lastCounts.working) {
+    const last = this.lastCounts
+    if (
+      counts.blocked === last.blocked &&
+      counts.working === last.working &&
+      counts.done === last.done
+    ) {
       return
     }
     this.lastCounts = counts

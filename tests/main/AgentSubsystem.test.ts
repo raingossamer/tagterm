@@ -425,7 +425,7 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
     expect(shown).toHaveLength(2)
   })
 
-  it('角标 = { 等你确认, 运行中 } 两个计数：两个会话先后 working → 运行中 1、2；先后 blocked → 等你确认 1、2 且运行中相应减少；一个被查看回空闲 → 1；记录删除 → 全 0；两个计数都没变不重复设置', async () => {
+  it('角标 = { 等你确认, 运行中, 已完成 } 三个计数：两个会话先后 working → 运行中 1、2；先后 blocked → 等你确认 1、2 且运行中相应减少；一个没人看时跑完 → 已完成 1；被查看回空闲 → 已完成 0；记录删除 → 全 0；三个计数都没变不重复设置', async () => {
     const wrapped = agent.wrapPty({ onData: () => {}, onExit: () => {}, isFile: existsSync })
     wrapped.onSpawn?.('s1', 100)
     wrapped.onSpawn?.('s2', 200)
@@ -437,8 +437,8 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
     reportWorking('s1')
     reportWorking('s2')
     expect(badges).toEqual([
-      { blocked: 0, working: 1 },
-      { blocked: 0, working: 2 },
+      { blocked: 0, working: 1, done: 0 },
+      { blocked: 0, working: 2, done: 0 },
     ])
     reportWorking('s2') // 同状态再报：计数没变
     expect(badges).toHaveLength(2)
@@ -447,20 +447,23 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
     agent.reportOutput('s1', ask)
     agent.reportOutput('s2', ask)
     expect(badges.slice(2)).toEqual([
-      { blocked: 1, working: 1 },
-      { blocked: 2, working: 0 },
+      { blocked: 1, working: 1, done: 0 },
+      { blocked: 2, working: 0, done: 0 },
     ])
     agent.reportOutput('s2', ask)
     expect(badges).toHaveLength(4)
 
-    agent.setViewed('s1')
+    // s1 没人看时跑完 → 已完成 1（等你确认剩 s2）；被查看 → 回空闲，已完成 0
     agent.reportOutput('s1', { tail: ['Done.'], silentMs: 1500 })
+    expect(runtimeOf('s1')).toMatchObject({ status: 'done' })
+    expect(badges.at(-1)).toEqual({ blocked: 1, working: 0, done: 1 })
+    agent.setViewed('s1')
     expect(runtimeOf('s1')).toMatchObject({ status: 'idle' })
-    expect(badges.at(-1)).toEqual({ blocked: 1, working: 0 })
+    expect(badges.at(-1)).toEqual({ blocked: 1, working: 0, done: 0 })
 
     wrapped.onExit({ sessionId: 's2', exitCode: 0, pid: 200 })
-    expect(badges.at(-1)).toEqual({ blocked: 0, working: 0 })
-    expect(badges).toHaveLength(6)
+    expect(badges.at(-1)).toEqual({ blocked: 0, working: 0, done: 0 })
+    expect(badges).toHaveLength(7)
   })
 
   it('同一目录多个会话都命中时：优先 agent 已是该工具的会话；没有可区分的就全部转移', async () => {
