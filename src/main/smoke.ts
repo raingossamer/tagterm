@@ -134,6 +134,15 @@ const SMOKE_SCRIPT = `(async () => {
   await api.tag.attach(s2.id, tagB.id)
   const gotTagged = await waitFor(() => groupsOf('smoke-临时').includes('smoke-标签A') && rowsOf('smoke-2').length === 2)
   const s1Groups = groupsOf('smoke-临时')
+  // 会话名与所在分组头的标签名左缘对齐（2026-09-21 用户选定「文字对文字」，色点那一列留空）：有色点的组与「未打标签」组都要对上
+  const nameAligned = (name) => {
+    const row = rowOf(name)
+    const nameEl = row?.querySelector('.name')
+    const title = row?.closest('[data-test=group]')?.querySelector('[data-test=group-title]')
+    if (!nameEl || !title) return null
+    return Math.abs(nameEl.getBoundingClientRect().left - title.getBoundingClientRect().left) <= 1
+  }
+  const nameAlignedTagged = nameAligned('smoke-临时')
   // 行布局（2026-09-21）：行上没有标签色点，状态点是行的最后一个子元素（右侧）
   const rowTagDots = $$('[data-test=row-tag-dot]').length
   const statusDotLast = rowOf('smoke-临时')?.lastElementChild?.classList.contains('dot') ?? null
@@ -246,6 +255,7 @@ const SMOKE_SCRIPT = `(async () => {
   await api.tag.remove(tagA.id)
   await api.tag.remove(tagB.id)
   const tagsCleared = await waitFor(() => groupTitles().length === 1 && groupsOf('smoke-临时').length === 1)
+  const nameAlignedUntagged = nameAligned('smoke-临时')
   const groupsAfterRemove = groupTitles()
 
   // 右键行 → 菜单 → 编辑会话 → 改名保存（s1 正在运行且空闲，只改名不重启）→ 行名更新、弹窗关闭
@@ -301,7 +311,7 @@ const SMOKE_SCRIPT = `(async () => {
     cwdTrack,
     sessionDrag: { namesBeforeDrag, dragApplied, namesAfterDrag, globalOrderChanged },
     tags: {
-      gotTagged, s1Groups, rowTagDots, statusDotLast, groupsTagged, s2Tooltip, chipCounts, groupsAny, groupsAll, rowsAll, groupsCleared,
+      gotTagged, s1Groups, rowTagDots, statusDotLast, nameAlignedTagged, nameAlignedUntagged, groupsTagged, s2Tooltip, chipCounts, groupsAny, groupsAll, rowsAll, groupsCleared,
       rowsWhenSearching, emptyText, pillsBefore, pillRemoved, popOptions, popClosed, copyHover, tagsCleared, groupsAfterRemove,
       groupsBeforeReorder, reorderApplied, groupsAfterReorder, chipsAfterReorder,
       hiddenApplied, rowsWhenAHidden, untaggedWhenAHidden, searchFindsHidden, sessionsKeptWhenHidden,

@@ -146,6 +146,8 @@ function onDrop(group: SessionGroup, targetId: string): void {
         <button class="group-h" data-test="group-head" @click="filter.toggleCollapsed(g.key)">
           <span class="tri"></span>
           <i v-if="g.color" :style="{ '--c': g.color }" data-test="group-dot"></i>
+          <!-- 「未打标签」组没有色点，但位置照样占着：所有组名从同一列起，会话行才能统一对齐到组名（2026-09-21） -->
+          <i v-else class="blank" data-test="group-dot-blank"></i>
           <b data-test="group-title">{{ g.title }}</b>
           <em data-test="group-count">{{ g.sessions.length }}</em>
         </button>
@@ -225,6 +227,9 @@ function onDrop(group: SessionGroup, targetId: string): void {
   height: 8px;
   border-radius: 50%;
   background: var(--c);
+}
+.group-h i.blank {
+  background: transparent;
 }
 .group-h b {
   font-weight: 600;
