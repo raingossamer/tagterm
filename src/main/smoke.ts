@@ -177,6 +177,20 @@ const SMOKE_SCRIPT = `(async () => {
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
   await sleep(50)
   const popClosed = !$('[data-test=tag-pop]')
+  // 「复制」悬停露出「打开」（纯前端，2026-09-21）：只看露出与对齐，不点它 —— 点了烟测会真的弹出资源管理器窗口
+  const copyWrap = $('[data-test=strip-copy-wrap]')
+  const openHiddenBefore = !$('[data-test=strip-open]')
+  copyWrap?.dispatchEvent(new MouseEvent('mouseenter'))
+  await sleep(50)
+  const openShown = !!$('[data-test=strip-open]')
+  const popRect = $('[data-test=strip-copy-pop]')?.getBoundingClientRect()
+  const copyRect = $('[data-test=strip-copy]')?.getBoundingClientRect()
+  const openAligned = !!popRect && !!copyRect
+    && Math.abs(popRect.left - copyRect.left) <= 1 && popRect.top >= copyRect.bottom - 1
+  copyWrap?.dispatchEvent(new MouseEvent('mouseleave'))
+  await sleep(50)
+  const openHiddenAfter = !$('[data-test=strip-open]')
+  const copyHover = { openHiddenBefore, openShown, openAligned, openHiddenAfter }
   rowOf('smoke-临时')?.click()
   await sleep(100)
 
@@ -288,7 +302,7 @@ const SMOKE_SCRIPT = `(async () => {
     sessionDrag: { namesBeforeDrag, dragApplied, namesAfterDrag, globalOrderChanged },
     tags: {
       gotTagged, s1Groups, rowTagDots, statusDotLast, groupsTagged, s2Tooltip, chipCounts, groupsAny, groupsAll, rowsAll, groupsCleared,
-      rowsWhenSearching, emptyText, pillsBefore, pillRemoved, popOptions, popClosed, tagsCleared, groupsAfterRemove,
+      rowsWhenSearching, emptyText, pillsBefore, pillRemoved, popOptions, popClosed, copyHover, tagsCleared, groupsAfterRemove,
       groupsBeforeReorder, reorderApplied, groupsAfterReorder, chipsAfterReorder,
       hiddenApplied, rowsWhenAHidden, untaggedWhenAHidden, searchFindsHidden, sessionsKeptWhenHidden,
       mixedShown, groupsWhenMixed, shownAgain,
