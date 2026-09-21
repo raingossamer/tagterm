@@ -33,7 +33,9 @@ describe('PathStrip', () => {
     // 假会话的 cwd 只有三级，原样显示；tooltip 始终是完整路径
     const path = wrapper.find('[data-test=strip-path]')
     expect(path.text()).toBe('D:\\Projects\\simba\\api')
-    expect(path.attributes('title')).toBe('D:\\Projects\\simba\\api\n会话固定在这个目录')
+    expect(path.attributes('title')).toBe(
+      'D:\\Projects\\simba\\api\n会话固定在这个目录\n点击在资源管理器中打开',
+    )
 
     const copy = wrapper.find('[data-test=strip-copy]')
     await copy.trigger('click')
@@ -58,7 +60,7 @@ describe('PathStrip', () => {
     const path = wrapper.find('[data-test=strip-path]')
     expect(path.text()).toBe('C:\\Users\\21477\\Desktop\\…')
     expect(path.attributes('title')).toBe(
-      'C:\\Users\\21477\\Desktop\\Self-Project\\aly-Inform\n会话固定在这个目录',
+      'C:\\Users\\21477\\Desktop\\Self-Project\\aly-Inform\n会话固定在这个目录\n点击在资源管理器中打开',
     )
 
     await wrapper.find('[data-test=strip-copy]').trigger('click')
@@ -66,37 +68,51 @@ describe('PathStrip', () => {
     expect(writeText).toHaveBeenCalledWith('C:\\Users\\21477\\Desktop\\Self-Project\\aly-Inform')
   })
 
-  it('鼠标悬停在「复制」上即在其正下方露出「打开」：点它调 session.openDirectory（当前会话 id）并收起，移开鼠标也收起；打不开时路径条红字 1.2 s', async () => {
+  it('路径 chip 是按钮：点它调 session.openDirectory（当前会话 id），tooltip 末行提示可点；不再有悬停「打开」；打不开时路径条红字 1.2 s', async () => {
     vi.useFakeTimers()
     const api = installFakeApi()
     const wrapper = mount(PathStrip)
 
-    const hover = wrapper.find('[data-test=strip-copy-wrap]')
-    expect(wrapper.find('[data-test=strip-open]').exists()).toBe(false)
-    await hover.trigger('mouseenter')
-    const open = wrapper.find('[data-test=strip-open]')
-    expect(open.text()).toBe('打开')
-    // 移开鼠标即收起（不点也不残留）
-    await hover.trigger('mouseleave')
+    const path = wrapper.find('[data-test=strip-path]')
+    expect(path.element.tagName).toBe('BUTTON')
+    expect(path.attributes('title')?.split('\n').at(-1)).toBe('点击在资源管理器中打开')
+    expect(wrapper.find('[data-test=strip-copy-wrap]').exists()).toBe(false)
     expect(wrapper.find('[data-test=strip-open]').exists()).toBe(false)
 
-    await hover.trigger('mouseenter')
-    await wrapper.find('[data-test=strip-open]').trigger('click')
+    await path.trigger('click')
     await flushPromises()
     expect(api.session.openDirectory).toHaveBeenCalledWith(session.id)
-    expect(wrapper.find('[data-test=strip-open]').exists()).toBe(false)
     expect(wrapper.find('[data-test=strip-error]').exists()).toBe(false)
 
     // 打不开（目录被删等）：主进程 reject 的中文 message 在路径条内红字显示 1.2 s
     vi.mocked(api.session.openDirectory).mockRejectedValueOnce(
       new Error('打不开目录：Failed to open path'),
     )
-    await hover.trigger('mouseenter')
-    await wrapper.find('[data-test=strip-open]').trigger('click')
+    await vi.advanceTimersByTimeAsync(500) // 过了双击冷却
+    await path.trigger('click')
     await flushPromises()
     expect(wrapper.find('[data-test=strip-error]').text()).toBe('打不开目录：Failed to open path')
     await vi.advanceTimersByTimeAsync(1200)
     expect(wrapper.find('[data-test=strip-error]').exists()).toBe(false)
+  })
+
+  it('点 chip 后 500 ms 内的再次点击忽略（双击不会开两个资源管理器窗口），满 500 ms 再点才调第二次', async () => {
+    vi.useFakeTimers()
+    const api = installFakeApi()
+    const wrapper = mount(PathStrip)
+    const path = wrapper.find('[data-test=strip-path]')
+
+    await path.trigger('click')
+    await path.trigger('click')
+    await flushPromises()
+    expect(api.session.openDirectory).toHaveBeenCalledTimes(1)
+
+    await vi.advanceTimersByTimeAsync(499)
+    await path.trigger('click')
+    expect(api.session.openDirectory).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    await path.trigger('click')
+    expect(api.session.openDirectory).toHaveBeenCalledTimes(2)
   })
 
   it('路径条不再有「移除会话」按钮（入口在左栏）；主进程广播移除后的列表到达时标签页关闭', async () => {
@@ -264,7 +280,7 @@ describe('PathStrip', () => {
     const path = wrapper.find('[data-test=strip-path]')
     expect(path.text()).toBe('C:\\Users\\k\\Desktop\\…')
     expect(path.attributes('title')).toBe(
-      'C:\\Users\\k\\Desktop\\deep\\dir\n会话固定在：D:\\Projects\\simba\\api',
+      'C:\\Users\\k\\Desktop\\deep\\dir\n会话固定在：D:\\Projects\\simba\\api\n点击在资源管理器中打开',
     )
     await wrapper.find('[data-test=strip-copy]').trigger('click')
     await flushPromises()
@@ -282,7 +298,7 @@ describe('PathStrip', () => {
     }
     await flushPromises()
     expect(wrapper.find('[data-test=strip-path]').attributes('title')).toBe(
-      'D:\\Projects\\simba\\api\n会话固定在这个目录',
+      'D:\\Projects\\simba\\api\n会话固定在这个目录\n点击在资源管理器中打开',
     )
   })
 })
