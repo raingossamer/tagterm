@@ -105,6 +105,7 @@ export interface IpcInvokeMap {
   'session:remove': { args: [id: string]; result: void } // 同时 kill 其 pty
   'session:reorder': { args: [ids: string[]]; result: void } // ids 必须是全部会话 id 的一个排列；按位置写 sortOrder 1..n
   'session:pick-directory': { args: []; result: string | null }
+  'session:open-directory': { args: [id: string]; result: void } // 在资源管理器打开会话的当前目录（cwdNow 优先，缺省固定目录）；路径由主进程解析，打不开 reject
   'settings:get': { args: []; result: Settings }
   'settings:update': { args: [patch: SettingsPatch]; result: Settings } // 补丁合并，返回全量
   'settings:read-background-image': { args: [path?: string]; result: string | null } // data: URL；未设置 / 文件不存在为 null

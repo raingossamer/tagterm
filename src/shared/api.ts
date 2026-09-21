@@ -50,6 +50,8 @@ export interface TagTermApi {
     /** 按 ids 顺序整体重排；ids 必须是全部会话 id 的一个排列 */
     reorder(ids: string[]): Promise<void>
     pickDirectory(): Promise<string | null>
+    /** 在资源管理器打开该会话的当前目录（终端里 cd 过则是 cd 后的目录）；打不开 reject 中文 message */
+    openDirectory(id: string): Promise<void>
     onChanged(cb: (sessions: Session[]) => void): Unsubscribe
   }
   settings: {

@@ -54,6 +54,7 @@ export function createFakeApi(overrides: Overrides = {}): TagTermApi {
       remove: vi.fn(async () => {}),
       reorder: vi.fn(async () => {}),
       pickDirectory: vi.fn(async () => null),
+      openDirectory: vi.fn(async () => {}),
       onChanged: vi.fn(() => () => {}),
       ...overrides.session,
     },

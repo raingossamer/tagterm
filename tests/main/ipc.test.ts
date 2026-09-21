@@ -35,6 +35,9 @@ describe('IPC 接口层', () => {
   let childQueries = 0
   /** 假登录项：开机自启状态 */
   let autoLaunch: AutoLaunchStatus = { enabled: false, blockedBySystem: false }
+  /** 假 shell.openPath：记下要打开的路径；openPathError 非空即模拟打开失败（electron 语义：返回错误说明） */
+  const opened: string[] = []
+  let openPathError = ''
 
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), 'tagterm-ipc-'))
@@ -102,6 +105,10 @@ describe('IPC 接口层', () => {
       dataDir: dir,
       pickImage: async () => join(dir, 'picked.png'),
       pickDirectory: async () => 'D:\\picked',
+      openPath: async (path) => {
+        opened.push(path)
+        return openPathError
+      },
       listShells: () => ['cmd.exe', 'powershell.exe'],
       getAutoLaunch: () => autoLaunch,
       setAutoLaunch: (enabled) => {
@@ -117,6 +124,8 @@ describe('IPC 接口层', () => {
     hasChildren = false
     childQueries = 0
     autoLaunch = { enabled: false, blockedBySystem: false }
+    opened.length = 0
+    openPathError = ''
     exits.length = 0
     agentChanges.length = 0
     agentRemovals.length = 0
@@ -155,6 +164,27 @@ describe('IPC 接口层', () => {
 
   it('session:pick-directory 返回系统目录选择框的结果', async () => {
     await expect(ipc.invoke('session:pick-directory')).resolves.toBe('D:\\picked')
+  })
+
+  it('session:open-directory：把会话当前目录交给注入的 openPath —— 终端里 cd 过则是 cwdNow，否则固定目录；渲染进程只传会话 id；会话不存在 / id 非法 reject；openPath 返回错误说明 → reject「打不开目录：…」', async () => {
+    const s = (await ipc.invoke('session:create', { cwd: process.cwd() })) as Session
+    await expect(ipc.invoke('session:open-directory', s.id)).resolves.toBeUndefined()
+    expect(opened).toEqual([process.cwd()])
+
+    // 终端跑起来并在里面 cd 到别处：主进程从提示符解析到的 cwdNow 优先
+    await ipc.invoke('pty:open', s.id, { cols: 80, rows: 24 })
+    ipc.send('agent:report-output', s.id, { tail: ['C:\\Windows>'], silentMs: 1500 })
+    await ipc.invoke('session:open-directory', s.id)
+    expect(opened.at(-1)).toBe('C:\\Windows')
+
+    await expect(ipc.invoke('session:open-directory', 'missing')).rejects.toThrow()
+    await expect(ipc.invoke('session:open-directory', '')).rejects.toThrow()
+    expect(opened).toHaveLength(2)
+
+    openPathError = 'Failed to open path'
+    await expect(ipc.invoke('session:open-directory', s.id)).rejects.toThrow(
+      '打不开目录：Failed to open path',
+    )
   })
 
   it('app:list-shells 返回本机可用的 shell', async () => {

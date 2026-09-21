@@ -66,6 +66,33 @@ describe('PathStrip', () => {
     expect(writeText).toHaveBeenCalledWith('C:\\Users\\21477\\Desktop\\Self-Project\\aly-Inform')
   })
 
+  it('「复制」右侧的 ▾ 打开只有一项「打开」的弹出层：点「打开」调 session.openDirectory（当前会话 id）并收起；打不开时路径条红字 1.2 s', async () => {
+    vi.useFakeTimers()
+    const api = installFakeApi()
+    const wrapper = mount(PathStrip)
+
+    expect(wrapper.find('[data-test=strip-open]').exists()).toBe(false)
+    await wrapper.find('[data-test=strip-copy-more]').trigger('click')
+    const open = wrapper.find('[data-test=strip-open]')
+    expect(open.text()).toBe('打开')
+    await open.trigger('click')
+    await flushPromises()
+    expect(api.session.openDirectory).toHaveBeenCalledWith(session.id)
+    expect(wrapper.find('[data-test=strip-open]').exists()).toBe(false)
+    expect(wrapper.find('[data-test=strip-error]').exists()).toBe(false)
+
+    // 打不开（目录被删等）：主进程 reject 的中文 message 在路径条内红字显示 1.2 s
+    vi.mocked(api.session.openDirectory).mockRejectedValueOnce(
+      new Error('打不开目录：Failed to open path'),
+    )
+    await wrapper.find('[data-test=strip-copy-more]').trigger('click')
+    await wrapper.find('[data-test=strip-open]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test=strip-error]').text()).toBe('打不开目录：Failed to open path')
+    await vi.advanceTimersByTimeAsync(1200)
+    expect(wrapper.find('[data-test=strip-error]').exists()).toBe(false)
+  })
+
   it('路径条不再有「移除会话」按钮（入口在左栏）；主进程广播移除后的列表到达时标签页关闭', async () => {
     installFakeApi()
     const wrapper = mount(PathStrip)

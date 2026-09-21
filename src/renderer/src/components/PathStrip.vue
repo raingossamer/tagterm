@@ -1,7 +1,8 @@
 <script setup lang="ts">
-// 路径条：当前会话的当前目录（终端里 cd 之后追踪到的 cwdNow，没有则是固定目录）、复制、标签胶囊（× 直接 detach）、「+ 标签」弹出层、
-// 唤起区（settings.json 里的命令：pinned 平铺、其余收进「更多 ▾」、「编辑」）、清屏。移除会话的入口在左栏会话行的右键菜单
-import { computed, ref } from 'vue'
+// 路径条：当前会话的当前目录（终端里 cd 之后追踪到的 cwdNow，没有则是固定目录）、复制 + ▾（「打开」= 在资源管理器打开当前目录）、
+// 标签胶囊（× 直接 detach）、「+ 标签」弹出层、唤起区（settings.json 里的命令：pinned 平铺、其余收进「更多 ▾」、「编辑」）、清屏。
+// 移除会话的入口在左栏会话行的右键菜单
+import { computed, onUnmounted, ref } from 'vue'
 import { useAgentStore } from '../stores/agent'
 import { useSessionsStore } from '../stores/sessions'
 import { useSettingsStore } from '../stores/settings'
@@ -20,11 +21,32 @@ const workspace = useWorkspaceStore()
 const agent = useAgentStore()
 const { isCopied, copy } = useCopy()
 const isEditOpen = ref(false)
-// 两个弹出层：点击容器（按钮 + 弹出层）外部即关闭；TagPopover 的 Esc 由它自己 emit close
+// 三个弹出层：点击容器（按钮 + 弹出层）外部即关闭；TagPopover 的 Esc 由它自己 emit close
+const copyMoreEl = ref<HTMLElement | null>(null)
 const moreEl = ref<HTMLElement | null>(null)
 const tagPopEl = ref<HTMLElement | null>(null)
+const {
+  isOpen: isCopyMoreOpen,
+  toggle: toggleCopyMore,
+  close: closeCopyMore,
+} = usePopover(copyMoreEl)
 const { isOpen: isMoreOpen, toggle: toggleMore, close: closeMore } = usePopover(moreEl)
 const { isOpen: isTagPopOpen, toggle: toggleTagPop, close: closeTagPop } = usePopover(tagPopEl)
+
+// 路径条内的失败提示（打不开目录等）：红字 1.2 s（规范：失败必须出现在用户看得见的地方）
+const ERROR_FLASH_MS = 1200
+const error = ref<string | null>(null)
+let errorTimer: ReturnType<typeof setTimeout> | null = null
+function flashError(message: string): void {
+  error.value = message
+  if (errorTimer) clearTimeout(errorTimer)
+  errorTimer = setTimeout(() => {
+    error.value = null
+  }, ERROR_FLASH_MS)
+}
+onUnmounted(() => {
+  if (errorTimer) clearTimeout(errorTimer)
+})
 
 const session = computed(() => (workspace.activeId ? sessions.byId(workspace.activeId) : undefined))
 const sessionTags = computed(() => (session.value ? tags.tagsOf(session.value.id) : []))
@@ -52,6 +74,15 @@ function runFromMore(cmd: string): void {
   runCommand(cmd)
 }
 
+/** 「打开」= 在资源管理器打开当前目录（与「复制」同一个路径）；路径由主进程从真相源解析，这里只传会话 id */
+function openDirectory(): void {
+  closeCopyMore()
+  if (!session.value) return
+  window.tagterm.session
+    .openDirectory(session.value.id)
+    .catch((err) => flashError(err instanceof Error ? err.message : String(err)))
+}
+
 function clearScreen(): void {
   if (!session.value) return
   runCommand(session.value.shell === 'cmd.exe' ? 'cls' : 'clear')
@@ -64,6 +95,25 @@ function clearScreen(): void {
     <button class="btn sm" title="复制路径" data-test="strip-copy" @click="copy(currentDir)">
       {{ isCopied ? '已复制' : '复制' }}
     </button>
+    <span ref="copyMoreEl" class="copymore">
+      <button
+        class="btn sm caret"
+        title="更多操作"
+        data-test="strip-copy-more"
+        @click="toggleCopyMore"
+        v-text="'▾'"
+      ></button>
+      <div v-if="isCopyMoreOpen" class="pop" data-test="strip-copy-pop">
+        <button
+          class="item"
+          title="在资源管理器中打开当前目录"
+          data-test="strip-open"
+          @click="openDirectory"
+          v-text="'打开'"
+        ></button>
+      </div>
+    </span>
+    <span v-if="error" class="err" data-test="strip-error">{{ error }}</span>
     <span
       v-for="t in sessionTags"
       :key="t.id"
@@ -162,6 +212,19 @@ function clearScreen(): void {
 }
 .stag button:hover {
   opacity: 1;
+}
+/* 「复制」右侧的分段按钮：紧贴复制按钮，弹出层只有「打开」 */
+.copymore {
+  position: relative;
+  margin-left: -5px;
+}
+.copymore .caret {
+  padding-left: 5px;
+  padding-right: 5px;
+}
+.err {
+  font-size: 12px;
+  color: var(--danger, #d14343);
 }
 .tagadd {
   position: relative;
