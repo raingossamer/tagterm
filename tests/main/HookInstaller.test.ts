@@ -44,7 +44,7 @@ describe('HookInstaller（改用户的 hooks 配置文件，真实临时目录�
     }
   }
 
-  it('Claude：安装前备份（内容等于原文件、文件名带 tagterm）、只追加我们的五条、别人的原样；status 报告已安装与端口；重复安装幂等（不再备份）', async () => {
+  it('Claude：安装前备份（内容等于原文件、文件名带 tagterm）、只追加我们的六条、别人的原样；status 报告已安装与端口；重复安装幂等（不再备份）', async () => {
     const { installer, file } = claude()
     const original = {
       model: 'opus',
@@ -68,7 +68,14 @@ describe('HookInstaller（改用户的 hooks 配置文件，真实临时目录�
     expect(written.hooks['Stop']).toHaveLength(2)
     expect(written.hooks['Stop']![0]).toEqual(original.hooks.Stop[0])
     expect(Object.keys(written.hooks).sort()).toEqual(
-      ['Notification', 'SessionEnd', 'SessionStart', 'Stop', 'UserPromptSubmit'].sort(),
+      [
+        'Notification',
+        'SessionEnd',
+        'SessionStart',
+        'Stop',
+        'StopFailure',
+        'UserPromptSubmit',
+      ].sort(),
     )
     expect(hasOurHooks(written)).toEqual({ installed: true, port: PORT })
     await expect(installer.status(PORT)).resolves.toEqual({

@@ -357,6 +357,29 @@ describe('AgentDetector（运行时状态机）', () => {
     hook({ hook_event_name: 'Stop' })
     expect(changes.at(-1)).toMatchObject({ status: 'idle' })
 
+    // 回合因 API 错误终止（网络断等）：Claude Code 发 StopFailure 而不是 Stop → 等你确认（黄），不是已完成（蓝）；
+    // 正被查看也一样是 blocked（要人重发）；重新提问 → working 并清提示
+    hook({ hook_event_name: 'UserPromptSubmit' })
+    hook({
+      hook_event_name: 'StopFailure',
+      error: 'unknown',
+      error_details: 'Connection lost mid-response. The response above may be incomplete.',
+    })
+    expect(changes.at(-1)).toEqual({
+      sessionId: 's1',
+      alive: true,
+      agent: 'claude',
+      status: 'blocked',
+      pendingHint: 'Connection lost mid-response. The response above may be incomplete.',
+    })
+    hook({ hook_event_name: 'UserPromptSubmit' })
+    expect(changes.at(-1)).toEqual({
+      sessionId: 's1',
+      alive: true,
+      agent: 'claude',
+      status: 'working',
+    })
+
     hook({ hook_event_name: 'UserPromptSubmit' })
     hook({ hook_event_name: 'SessionEnd' })
     expect(changes.at(-1)).toEqual({ sessionId: 's1', alive: true, agent: null, status: 'idle' })

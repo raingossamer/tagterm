@@ -51,6 +51,44 @@ describe('hookContract（装什么 = 识别什么 = 处理什么）', () => {
     expect(handled.sort()).toEqual(installed)
   })
 
+  it('Claude 的 StopFailure（回合因 API 错误终止，Claude Code 只发它、不发 Stop）在安装表里；interpret → blocked，提示优先 error_details，否则按 error 种类给中文说明，未知种类原样带出', () => {
+    const { events, interpret } = HOOK_CONTRACTS.claude
+    expect(events.some((e) => e.event === 'StopFailure')).toBe(true)
+
+    // 用户实机撞到的情形：连接中断，回合终止
+    const lost = interpret(
+      'StopFailure',
+      {
+        hook_event_name: 'StopFailure',
+        error: 'unknown',
+        error_details: 'Connection lost mid-response. The response above may be incomplete.',
+      },
+      working,
+      { isViewed: true },
+    )
+    expect(lost).toEqual({
+      ...working,
+      status: 'blocked',
+      pendingHint: 'Connection lost mid-response. The response above may be incomplete.',
+    })
+    // 没有细节：按种类给中文说明
+    expect(
+      interpret('StopFailure', { error: 'rate_limit' }, working, { isViewed: false }),
+    ).toMatchObject({ status: 'blocked', pendingHint: 'API 出错：触发速率限制' })
+    expect(
+      interpret('StopFailure', { error: 'overloaded' }, working, { isViewed: false }),
+    ).toMatchObject({ status: 'blocked', pendingHint: 'API 出错：服务过载' })
+    // 将来新增的种类：原样带出，不因为不认识就漏报
+    expect(
+      interpret('StopFailure', { error: 'some_new_kind' }, working, { isViewed: false }),
+    ).toMatchObject({ status: 'blocked', pendingHint: 'API 出错：some_new_kind' })
+    // 连种类都没有：仍是 blocked
+    expect(interpret('StopFailure', {}, working, { isViewed: false })).toMatchObject({
+      status: 'blocked',
+      pendingHint: 'API 出错：未知错误',
+    })
+  })
+
   it('命令串指向契约前缀且 isOurHook 认得；HookServer 只给契约表里的来源 204，其他来源 404', async () => {
     for (const agent of HOOK_AGENTS) {
       const cmd = buildHookCommand(agent, 51233, 'Stop')

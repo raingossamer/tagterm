@@ -818,6 +818,21 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         winVisible: win.isVisible(),
         r3Status: deps.agent.list().find((r) => r.sessionId === prepare.ids[0])?.status ?? null,
       })
+      // 回合因 API 错误终止（用户实机：网络断 → 「API Error: Connection lost mid-response」）：Claude Code 发 StopFailure 而不是 Stop
+      // → 等你确认（黄）而不是已完成（蓝），行 tooltip 带错误细节；重新提问 → 运行中；正常 Stop（正被查看）→ 空闲
+      await send('claude', { hook_event_name: 'UserPromptSubmit', cwd: claudeCwd })
+      await send('claude', {
+        hook_event_name: 'StopFailure',
+        error: 'unknown',
+        error_details: 'Connection lost mid-response. The response above may be incomplete.',
+        cwd: claudeCwd,
+      })
+      const claudeFailedBlocked = await waitDot('smoke-r3', 'blocked')
+      const failedRowTitle = (await rowState('smoke-r3'))['rowTitle']
+      await send('claude', { hook_event_name: 'UserPromptSubmit', cwd: claudeCwd })
+      const claudeWorkingAfterFailure = await waitDot('smoke-r3', 'working')
+      await send('claude', { hook_event_name: 'Stop', cwd: claudeCwd })
+      const claudeIdleAfterFailureRound = await waitDot('smoke-r3', 'idle')
 
       const codexCwd = 'C:/Windows/System32'
       await send('codex', { hook_event_name: 'SessionStart', cwd: codexCwd })
@@ -868,6 +883,10 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         doneCounts: doneState['counts'],
         claudeIdleAfterView,
         viewDiag,
+        claudeFailedBlocked,
+        failedRowTitle,
+        claudeWorkingAfterFailure,
+        claudeIdleAfterFailureRound,
         codexBlocked,
         codexRowTitle: codexBlockedState['rowTitle'],
         codexIdle,

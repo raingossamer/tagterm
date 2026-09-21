@@ -22,6 +22,24 @@ const CLAUDE_BLOCKING_TYPES: readonly string[] = [
   'agent_needs_input',
 ]
 
+/**
+ * Claude 的 StopFailure（回合因 API 错误终止，claude-code 2.1.258 实测：这条路只发 StopFailure、不发 Stop）里 `error` 的种类 → 中文说明；
+ * 载荷有 `error_details` 时优先用它（如「Connection lost mid-response…」）。种类清单来自二进制里的枚举，不认识的原样带出，不因此漏报
+ */
+const CLAUDE_FAILURE_KINDS: Readonly<Record<string, string>> = {
+  authentication_failed: '认证失败',
+  oauth_org_not_allowed: '组织不允许此登录',
+  account_on_hold: '账户被暂停',
+  billing_error: '账单问题',
+  rate_limit: '触发速率限制',
+  overloaded: '服务过载',
+  invalid_request: '请求无效',
+  model_not_found: '模型不存在',
+  server_error: '服务端错误',
+  max_output_tokens: '输出超长被截断',
+  unknown: '未知错误',
+}
+
 export interface HookEventSpec {
   event: string
   /** Claude 的 Notification 只挑需要人的类型 */
@@ -62,7 +80,7 @@ function bareOf(current: SessionRuntime): SessionRuntime {
   return bare
 }
 
-/** 两个 agent 共有的两个事件：UserPromptSubmit → working；Stop → 被查看 ? idle : done */
+/** 两个 agent 共有的两个事件：UserPromptSubmit → working；Stop（回合正常结束）→ 被查看 ? idle : done */
 function interpretShared(
   event: string,
   current: SessionRuntime,
@@ -79,6 +97,7 @@ const claude: HookContract = {
     { event: 'Notification', matcher: CLAUDE_BLOCKING_TYPES.join('|'), timeoutSec: 5 },
     { event: 'UserPromptSubmit', timeoutSec: 5 },
     { event: 'Stop', timeoutSec: 5 },
+    { event: 'StopFailure', timeoutSec: 5 },
     { event: 'SessionStart', timeoutSec: 5 },
     { event: 'SessionEnd', timeoutSec: 1 },
   ],
@@ -91,6 +110,16 @@ const claude: HookContract = {
         ...bareOf(current),
         status: 'blocked',
         pendingHint: hintOf(payload['message'], type),
+      }
+    }
+    // 回合因 API 错误终止（网络断、限流、过载…）：要人去重发 → 等你确认，不是已完成；正被查看也一样
+    if (event === 'StopFailure') {
+      const kind = typeof payload['error'] === 'string' ? payload['error'] : 'unknown'
+      const fallback = `API 出错：${CLAUDE_FAILURE_KINDS[kind] ?? kind}`
+      return {
+        ...bareOf(current),
+        status: 'blocked',
+        pendingHint: hintOf(payload['error_details'], fallback),
       }
     }
     return interpretShared(event, current, ctx)
