@@ -185,6 +185,9 @@ describe('SessionGroups', () => {
     expect(groups.map((g) => g.find('[data-test=group-count]').text())).toEqual(['1', '0', '1'])
     expect(groups[0]!.find('[data-test=group-dot]').attributes('style')).toContain('#2F6FDB')
     expect(groups[2]!.find('[data-test=group-dot]').exists()).toBe(false)
+    // 无色点的组仍留出色点的位置，所有组名同一列起（会话行按组名对齐）
+    expect(groups[2]!.find('[data-test=group-dot-blank]').exists()).toBe(true)
+    expect(groups[0]!.find('[data-test=group-dot-blank]').exists()).toBe(false)
     const simbaRows = groups[0]!.findAll('[data-test=session-row]')
     expect(simbaRows).toHaveLength(1)
     expect(simbaRows[0]!.text()).toContain('api')
