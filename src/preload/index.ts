@@ -54,6 +54,7 @@ const api: TagTermApi = {
     remove: (id) => invoke('session:remove', id),
     reorder: (ids) => invoke('session:reorder', ids),
     pickDirectory: () => invoke('session:pick-directory'),
+    openDirectory: (id) => invoke('session:open-directory', id),
     onChanged: (cb) => subscribe('session:changed', cb),
   },
   settings: {

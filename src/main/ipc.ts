@@ -57,6 +57,8 @@ export interface IpcDeps {
   dataDir: string
   /** 系统目录选择框（平台层注入，服务层不 import electron） */
   pickDirectory: () => Promise<string | null>
+  /** 在资源管理器打开一个目录（装配层注入 shell.openPath）：返回空串成功，否则是错误说明 */
+  openPath: (path: string) => Promise<string>
   /** 系统文件对话框选图片（平台层注入） */
   pickImage: () => Promise<string | null>
   /** 本机可用 shell（启动时探测） */
@@ -123,6 +125,15 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   // 排列是否合法（缺 / 多 / 重复 / 不存在）由 SessionStore 判定，它才认识全部会话；接口层只守卫类型
   handle('session:reorder', (ids) => deps.store.reorder(assertSessionIds(ids)))
   handle('session:pick-directory', () => deps.pickDirectory())
+  // 「打开」当前目录：路径由主进程从真相源解析（运行时 cwdNow 优先，缺省会话固定目录），渲染进程只传会话 id ——
+  // 不给它「打开任意路径」的能力；shell.openPath 打不开（目录被删等）返回说明，转成中文 reject 让界面显示
+  handle('session:open-directory', async (id) => {
+    const sessionId = assertId(id)
+    const session = deps.store.get(sessionId)
+    const cwdNow = deps.agent.list().find((r) => r.sessionId === sessionId)?.cwdNow
+    const error = await deps.openPath(cwdNow ?? session.cwd)
+    if (error) throw new Error(`打不开目录：${error}`)
+  })
 
   handle('settings:get', () => deps.settings.get())
   handle('settings:update', (patch) => deps.settings.update(assertSettingsPatch(patch)))
