@@ -122,15 +122,21 @@ const SMOKE_SCRIPT = `(async () => {
   // 标签链路：两个标签，s1 挂 A、s2 挂 A + B → 左栏 A / B 两组且 s2 出现两次、tooltip 带「同时在」
   const rowOf = (name) => $$('[data-test=session-row]').find((r) => r.textContent.includes(name))
   const rowsOf = (name) => $$('[data-test=session-row]').filter((r) => r.textContent.includes(name))
-  const dotsOf = (name) => rowOf(name)?.querySelectorAll('[data-test=row-tag-dot]').length ?? -1
   const groupTitles = () => $$('[data-test=group-title]').map((g) => g.textContent)
+  // 某会话出现在哪些分组下（行上不再画标签色点，挂了哪些标签看它落在哪些组）
+  const groupsOf = (name) => $$('[data-test=group]')
+    .filter((g) => [...g.querySelectorAll('[data-test=session-row]')].some((r) => r.textContent.includes(name)))
+    .map((g) => g.querySelector('[data-test=group-title]')?.textContent ?? null)
   const tagA = await api.tag.create('smoke-标签A')
   const tagB = await api.tag.create('smoke-标签B')
   await api.tag.attach(s1.id, tagA.id)
   await api.tag.attach(s2.id, tagA.id)
   await api.tag.attach(s2.id, tagB.id)
-  const gotTagDot = await waitFor(() => dotsOf('smoke-临时') === 1 && rowsOf('smoke-2').length === 2)
-  const tagDotColor = rowOf('smoke-临时')?.querySelector('[data-test=row-tag-dot]')?.style.background ?? null
+  const gotTagged = await waitFor(() => groupsOf('smoke-临时').includes('smoke-标签A') && rowsOf('smoke-2').length === 2)
+  const s1Groups = groupsOf('smoke-临时')
+  // 行布局（2026-09-21）：行上没有标签色点，状态点是行的最后一个子元素（右侧）
+  const rowTagDots = $$('[data-test=row-tag-dot]').length
+  const statusDotLast = rowOf('smoke-临时')?.lastElementChild?.classList.contains('dot') ?? null
   const groupsTagged = groupTitles()
   const s2Tooltip = rowOf('smoke-2')?.getAttribute('title') ?? null
   // 筛选：点 chip A「任一」→ 只剩 A 组；再选 B 切「全部」→ 单组 A ∩ B 只含 s2；清除后恢复
@@ -222,10 +228,10 @@ const SMOKE_SCRIPT = `(async () => {
   await api.tag.update(tagA.id, { hidden: false })
   const shownAgain = await waitFor(() => groupTitles().includes('smoke-标签A') && !!rowOf('smoke-临时'))
 
-  // 删标签 → 分组与色点消失
+  // 删标签 → 分组消失，会话回到唯一的「未打标签」组
   await api.tag.remove(tagA.id)
   await api.tag.remove(tagB.id)
-  const tagDotCleared = await waitFor(() => dotsOf('smoke-临时') === 0 && groupTitles().length === 1)
+  const tagsCleared = await waitFor(() => groupTitles().length === 1 && groupsOf('smoke-临时').length === 1)
   const groupsAfterRemove = groupTitles()
 
   // 右键行 → 菜单 → 编辑会话 → 改名保存（s1 正在运行且空闲，只改名不重启）→ 行名更新、弹窗关闭
@@ -281,8 +287,8 @@ const SMOKE_SCRIPT = `(async () => {
     cwdTrack,
     sessionDrag: { namesBeforeDrag, dragApplied, namesAfterDrag, globalOrderChanged },
     tags: {
-      gotTagDot, tagDotColor, groupsTagged, s2Tooltip, chipCounts, groupsAny, groupsAll, rowsAll, groupsCleared,
-      rowsWhenSearching, emptyText, pillsBefore, pillRemoved, popOptions, popClosed, tagDotCleared, groupsAfterRemove,
+      gotTagged, s1Groups, rowTagDots, statusDotLast, groupsTagged, s2Tooltip, chipCounts, groupsAny, groupsAll, rowsAll, groupsCleared,
+      rowsWhenSearching, emptyText, pillsBefore, pillRemoved, popOptions, popClosed, tagsCleared, groupsAfterRemove,
       groupsBeforeReorder, reorderApplied, groupsAfterReorder, chipsAfterReorder,
       hiddenApplied, rowsWhenAHidden, untaggedWhenAHidden, searchFindsHidden, sessionsKeptWhenHidden,
       mixedShown, groupsWhenMixed, shownAgain,
