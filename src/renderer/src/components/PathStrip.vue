@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 路径条：当前会话的当前目录（终端里 cd 之后追踪到的 cwdNow，没有则是固定目录）、复制（悬停其上即露出「打开」= 在资源管理器打开当前目录）、
+// 路径条：当前会话的当前目录（终端里 cd 之后追踪到的 cwdNow，没有则是固定目录；chip 本身是按钮，点击 = 在资源管理器打开它）、复制、
 // 标签胶囊（× 直接 detach）、「+ 标签」弹出层、唤起区（settings.json 里的命令：pinned 平铺、其余收进「更多 ▾」、「编辑」）、清屏。
 // 移除会话的入口在左栏会话行的右键菜单
 import { computed, onUnmounted, ref } from 'vue'
@@ -27,24 +27,6 @@ const tagPopEl = ref<HTMLElement | null>(null)
 const { isOpen: isMoreOpen, toggle: toggleMore, close: closeMore } = usePopover(moreEl)
 const { isOpen: isTagPopOpen, toggle: toggleTagPop, close: closeTagPop } = usePopover(tagPopEl)
 
-// 「打开」是悬停式的：鼠标停在「复制」上即在它正下方露出，移开就收起，不占路径条的常驻宽度。
-// 不走 usePopover（那套是给点击式弹出层管「点外面关闭」的）：这里鼠标离开容器就收起，不必监听 document。
-// 弹出层是容器的子元素，鼠标从按钮滑到它身上不会触发容器的 mouseleave；键盘用户 Tab 到「复制」同样露出（focusin / focusout）
-const copyWrapEl = ref<HTMLElement | null>(null)
-const isOpenShown = ref(false)
-
-function showOpen(): void {
-  isOpenShown.value = true
-}
-function hideOpen(): void {
-  isOpenShown.value = false
-}
-/** 焦点仍在容器内（从「复制」Tab 到「打开」）时不收起 */
-function onCopyFocusOut(e: FocusEvent): void {
-  const next = e.relatedTarget as Node | null
-  if (!next || !copyWrapEl.value?.contains(next)) hideOpen()
-}
-
 // 路径条内的失败提示（打不开目录等）：红字 1.2 s（规范：失败必须出现在用户看得见的地方）
 const ERROR_FLASH_MS = 1200
 const error = ref<string | null>(null)
@@ -66,13 +48,15 @@ const sessionTags = computed(() => (session.value ? tags.tagsOf(session.value.id
 const currentDir = computed(() =>
   session.value ? (agent.runtimeOf(session.value.id)?.cwdNow ?? session.value.cwd) : '',
 )
-// 路径条只显示到第三级，完整路径放 tooltip 与「复制」；cd 到别处时 tooltip 第二行仍给出固定目录
+// 路径条只显示到第三级，完整路径放 tooltip 与「复制」；cd 到别处时 tooltip 第二行仍给出固定目录；末行提示 chip 可点（它不再像原型那样单击全选）
 const pathDisplay = computed(() => (currentDir.value ? pathHead(currentDir.value) : ''))
 const pathTitle = computed(() => {
   if (!session.value) return ''
-  return currentDir.value === session.value.cwd
-    ? `${session.value.cwd}\n会话固定在这个目录`
-    : `${currentDir.value}\n会话固定在：${session.value.cwd}`
+  const where =
+    currentDir.value === session.value.cwd
+      ? `${session.value.cwd}\n会话固定在这个目录`
+      : `${currentDir.value}\n会话固定在：${session.value.cwd}`
+  return `${where}\n点击在资源管理器中打开`
 })
 
 /** 唤起按钮本质是向终端写入 `<cmd>\r` */
@@ -86,10 +70,15 @@ function runFromMore(cmd: string): void {
   runCommand(cmd)
 }
 
-/** 「打开」= 在资源管理器打开当前目录（与「复制」同一个路径）；路径由主进程从真相源解析，这里只传会话 id */
+// 点路径 chip = 在资源管理器打开当前目录（与「复制」同一个路径）；路径由主进程从真相源解析，这里只传会话 id。
+// 500 ms 冷却：shell.openPath 每调一次多开一个资源管理器窗口，沿原型「单击全选」旧习惯双击 chip 的人不该得到两个窗口
+const OPEN_COOLDOWN_MS = 500
+let lastOpenAt = -Infinity
 function openDirectory(): void {
-  hideOpen()
   if (!session.value) return
+  const now = Date.now()
+  if (now - lastOpenAt < OPEN_COOLDOWN_MS) return
+  lastOpenAt = now
   window.tagterm.session
     .openDirectory(session.value.id)
     .catch((err) => flashError(err instanceof Error ? err.message : String(err)))
@@ -103,29 +92,17 @@ function clearScreen(): void {
 
 <template>
   <div v-if="session" class="strip">
-    <span class="path" :title="pathTitle" data-test="strip-path">{{ pathDisplay }}</span>
-    <span
-      ref="copyWrapEl"
-      class="copywrap"
-      data-test="strip-copy-wrap"
-      @mouseenter="showOpen"
-      @mouseleave="hideOpen"
-      @focusin="showOpen"
-      @focusout="onCopyFocusOut"
-    >
-      <button class="btn sm" title="复制路径" data-test="strip-copy" @click="copy(currentDir)">
-        {{ isCopied ? '已复制' : '复制' }}
-      </button>
-      <div v-if="isOpenShown" class="pop" data-test="strip-copy-pop">
-        <button
-          class="item"
-          title="在资源管理器中打开当前目录"
-          data-test="strip-open"
-          @click="openDirectory"
-          v-text="'打开'"
-        ></button>
-      </div>
-    </span>
+    <!-- chip 用 v-text：拆行的插值会带进首尾空格，烟测按 textContent 精确比对 -->
+    <button
+      class="path"
+      :title="pathTitle"
+      data-test="strip-path"
+      @click="openDirectory"
+      v-text="pathDisplay"
+    ></button>
+    <button class="btn sm" title="复制路径" data-test="strip-copy" @click="copy(currentDir)">
+      {{ isCopied ? '已复制' : '复制' }}
+    </button>
     <span v-if="error" class="err" data-test="strip-error">{{ error }}</span>
     <span
       v-for="t in sessionTags"
@@ -197,6 +174,7 @@ function clearScreen(): void {
   border-bottom: 1px solid var(--line);
   flex-wrap: wrap;
 }
+/* 路径 chip 是按钮（偏离原型的 span + user-select: all，用户 2026-09-21 判定）：外观照原型，悬停边框换主色提示可点 */
 .strip .path {
   font-family: var(--mono);
   font-size: 13px;
@@ -204,7 +182,9 @@ function clearScreen(): void {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 5px;
-  user-select: all;
+}
+.strip .path:hover {
+  border-color: var(--accent);
 }
 .stag {
   display: inline-flex;
@@ -225,11 +205,6 @@ function clearScreen(): void {
 }
 .stag button:hover {
   opacity: 1;
-}
-/* 悬停「复制」时在它正下方露出「打开」：定位基准是容器，弹出层与按钮之间不留空隙（留了鼠标滑过去就会先离开容器） */
-.copywrap {
-  position: relative;
-  display: inline-flex;
 }
 .err {
   font-size: 12px;

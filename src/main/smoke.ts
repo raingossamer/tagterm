@@ -189,20 +189,13 @@ const SMOKE_SCRIPT = `(async () => {
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
   await sleep(50)
   const popClosed = !$('[data-test=tag-pop]')
-  // 「复制」悬停露出「打开」（纯前端，2026-09-21）：只看露出与对齐，不点它 —— 点了烟测会真的弹出资源管理器窗口
-  const copyWrap = $('[data-test=strip-copy-wrap]')
-  const openHiddenBefore = !$('[data-test=strip-open]')
-  copyWrap?.dispatchEvent(new MouseEvent('mouseenter'))
-  await sleep(50)
-  const openShown = !!$('[data-test=strip-open]')
-  const popRect = $('[data-test=strip-copy-pop]')?.getBoundingClientRect()
-  const copyRect = $('[data-test=strip-copy]')?.getBoundingClientRect()
-  const openAligned = !!popRect && !!copyRect
-    && Math.abs(popRect.left - copyRect.left) <= 1 && popRect.top >= copyRect.bottom - 1
-  copyWrap?.dispatchEvent(new MouseEvent('mouseleave'))
-  await sleep(50)
-  const openHiddenAfter = !$('[data-test=strip-open]')
-  const copyHover = { openHiddenBefore, openShown, openAligned, openHiddenAfter }
+  // 路径 chip 就是「打开」的入口（2026-09-21）：只守它是按钮、tooltip 末行是提示、悬停弹出层已不存在，不点它 —— 点了烟测会真的弹出资源管理器窗口
+  const pathChipEl = $('[data-test=strip-path]')
+  const pathChip = {
+    isButton: pathChipEl?.tagName === 'BUTTON',
+    titleHint: (pathChipEl?.getAttribute('title') ?? '').split('\\n').at(-1) === '点击在资源管理器中打开',
+    noHoverPop: !$('[data-test=strip-copy-wrap]') && !$('[data-test=strip-open]'),
+  }
   rowOf('smoke-临时')?.click()
   await sleep(100)
 
@@ -315,7 +308,7 @@ const SMOKE_SCRIPT = `(async () => {
     sessionDrag: { namesBeforeDrag, dragApplied, namesAfterDrag, globalOrderChanged },
     tags: {
       gotTagged, s1Groups, rowTagDots, statusDotLast, nameAlignedTagged, nameAlignedUntagged, groupsTagged, s2Tooltip, chipCounts, groupsAny, groupsAll, rowsAll, groupsCleared,
-      rowsWhenSearching, emptyText, pillsBefore, pillRemoved, popOptions, popClosed, copyHover, tagsCleared, groupsAfterRemove,
+      rowsWhenSearching, emptyText, pillsBefore, pillRemoved, popOptions, popClosed, pathChip, tagsCleared, groupsAfterRemove,
       groupsBeforeReorder, reorderApplied, groupsAfterReorder, chipsAfterReorder,
       hiddenApplied, rowsWhenAHidden, untaggedWhenAHidden, searchFindsHidden, sessionsKeptWhenHidden,
       mixedShown, groupsWhenMixed, shownAgain,
