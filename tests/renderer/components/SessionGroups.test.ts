@@ -135,7 +135,7 @@ describe('SessionGroups', () => {
     expect(wrapper.text()).toContain('没有匹配的会话。换个标签组合，或新建一个会话。')
   })
 
-  it('会话行右侧按标签 sortOrder 显示色点；多标签时 tooltip 追加「同时在：a、b」', () => {
+  it('会话行上不画标签色点；同一会话出现在它所有标签的组下，多标签时 tooltip 追加「同时在：a、b」', () => {
     const s1 = makeSession({ name: 'iot', cwd: 'C:/work/iot', sortOrder: 1 })
     const s2 = makeSession({ name: 'api', cwd: 'C:/work/api', sortOrder: 2 })
     useSessionsStore().sessions = [s1, s2]
@@ -155,15 +155,13 @@ describe('SessionGroups', () => {
     const apiRows = rows.filter((r) => r.text().includes('api'))
     expect(iotRows).toHaveLength(2)
     expect(apiRows).toHaveLength(1)
+    // 行上不再画标签色点（与状态色撞车）：挂了哪些标签由所在分组与 tooltip「同时在」表达
     for (const row of iotRows) {
-      expect(row.findAll('[data-test=row-tag-dot]').map((d) => d.attributes('style'))).toEqual([
-        'background: #2F6FDB;',
-        'background: #C98A0C;',
-      ])
+      expect(row.find('[data-test=row-tag-dot]').exists()).toBe(false)
       expect(row.attributes('title')).toBe(`C:/work/iot
 同时在：simba、java`)
     }
-    expect(apiRows[0]!.findAll('[data-test=row-tag-dot]')).toHaveLength(1)
+    expect(apiRows[0]!.find('[data-test=row-tag-dot]').exists()).toBe(false)
     expect(apiRows[0]!.attributes('title')).toBe('C:/work/api')
   })
 

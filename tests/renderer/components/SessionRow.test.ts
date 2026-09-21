@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import SessionRow from '../../../src/renderer/src/components/SessionRow.vue'
-import { makeSession } from '../fakeApi'
+import { makeSession, makeTag } from '../fakeApi'
 
 describe('SessionRow', () => {
   const session = makeSession({ name: 'simba-api', cwd: 'D:\\Projects\\simba\\api' })
@@ -64,6 +64,29 @@ describe('SessionRow', () => {
     expect(wrapper.find('[data-test=session-row]').text().replace(/\s+/g, '')).toBe(
       'simba-apisimba\\api',
     )
+  })
+
+  it('行右侧不再有标签色点（挂了标签也没有，标签只进 tooltip「同时在」）；状态点是行的最后一个子元素（右侧），不与分组头的标签色点同一列', () => {
+    const wrapper = mount(SessionRow, {
+      props: {
+        session,
+        active: false,
+        tags: [makeTag({ name: 'simba', color: '#2F6FDB' }), makeTag({ name: 'java' })],
+        peer: false,
+        canDrag: true,
+        status: 'blocked',
+        pendingHint: 'Allow?',
+      },
+    })
+    const row = wrapper.find('[data-test=session-row]')
+
+    expect(wrapper.find('[data-test=row-tags]').exists()).toBe(false)
+    expect(wrapper.find('[data-test=row-tag-dot]').exists()).toBe(false)
+    expect(row.element.lastElementChild?.classList.contains('dot')).toBe(true)
+    expect(row.element.firstElementChild?.classList.contains('dot')).toBe(false)
+    expect(row.attributes('title')).toBe(`${session.cwd}
+同时在：simba、java
+等你确认：Allow?`)
   })
 
   it('右键：阻止系统菜单并发出 menu(id, x, y)', () => {

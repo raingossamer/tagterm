@@ -1,8 +1,9 @@
 <script setup lang="ts">
-// 一行会话：状态点 + 名称 + 路径末两段 + 右侧标签色点；
-// tooltip 为完整路径，多标签时追加「同时在：a、b」；active 行左侧蓝条；peer = 同一会话在其他分组的副本正被悬停（一起高亮）。
+// 一行会话：名称 + 路径末两段 + **右侧**状态点；标签只进 tooltip（多标签时追加「同时在：a、b」），行上不画标签色点 ——
+// 标签色与状态色撞车（蓝完全相同、黄几乎一样），色点排在右列会被读成「等你确认」；状态点放右侧也让它离开分组头标签色点那一列（用户 2026-09-21 判定，偏离原型）。
+// tooltip 为完整路径；active 行左侧蓝条；peer = 同一会话在其他分组的副本正被悬停（一起高亮）。
 // 根元素是 div[role=button]：click / Enter / Space 选中，右键发 menu 给父组件弹菜单（移除会话在菜单里）。状态点由父组件从 agent store 取好传进来
-// 排序拖拽是**整行**可拖、不加手柄：会话行是高频主操作区，行里已经挤了状态点 / 名称 / 路径 / 标签色点。
+// 排序拖拽是**整行**可拖、不加手柄：会话行是高频主操作区，行里已经挤了名称 / 路径 / 状态点。
 // 拖拽只上抛事件（起点 / 落点 / 结束），是否同组、新顺序算成什么，全由 SessionGroups 裁决
 import { computed } from 'vue'
 import type { AgentStatus, Session, Tag } from '@shared/models'
@@ -72,14 +73,11 @@ function onContextMenu(e: MouseEvent): void {
     @mouseenter="emit('hover', session.id)"
     @mouseleave="emit('leave', session.id)"
   >
-    <StatusDot :status="status" />
     <span class="txt">
       <div class="name">{{ session.name }}</div>
       <div class="path" data-test="row-path">{{ pathTail(session.cwd) }}</div>
     </span>
-    <span class="dots" data-test="row-tags">
-      <i v-for="t in tags" :key="t.id" :style="{ background: t.color }" data-test="row-tag-dot" />
-    </span>
+    <StatusDot :status="status" />
   </div>
 </template>
 
@@ -132,14 +130,8 @@ function onContextMenu(e: MouseEvent): void {
   text-overflow: ellipsis;
   font-family: var(--mono);
 }
-.row .dots {
-  display: flex;
-  gap: 3px;
-  flex: none;
-}
-.row .dots i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
+/* 状态点在行尾：.txt 撑满剩余宽度把它推到右侧，与分组头的标签色点不同列 */
+.row .dot {
+  margin-left: auto;
 }
 </style>
