@@ -87,9 +87,9 @@ function onContextMenu(e: MouseEvent): void {
   align-items: center;
   gap: 8px;
   width: 100%;
-  /* 左内边距 39px = 会话名与分组头的标签名左缘对齐（用户 2026-09-21 选定「文字对文字」，色点那一列留空当层级缩进）：
-     分组头 padding 6 + 三角 margin 3 + 三角 8 + margin 2 + gap 6 + 色点 8 + gap 6 = 39；烟测量真实 DOM 守这条对齐 */
-  padding: 6px 8px 6px 39px;
+  /* 左内边距 36px = 会话名左缘落在分组头「色点与标签名之间那 6px 空格」的正中（用户 2026-09-21 判定：比对齐标签名再左移 3px，不压色点那一列）：
+     分组头 padding 6 + 三角 margin 3 + 三角 8 + margin 2 + gap 6 + 色点 8 = 33（色点右缘），再加 gap 6 的一半 = 36；烟测量真实 DOM 守这条对齐 */
+  padding: 6px 8px 6px 36px;
   border-radius: 6px;
   text-align: left;
   position: relative;

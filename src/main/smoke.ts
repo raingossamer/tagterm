@@ -134,13 +134,16 @@ const SMOKE_SCRIPT = `(async () => {
   await api.tag.attach(s2.id, tagB.id)
   const gotTagged = await waitFor(() => groupsOf('smoke-临时').includes('smoke-标签A') && rowsOf('smoke-2').length === 2)
   const s1Groups = groupsOf('smoke-临时')
-  // 会话名与所在分组头的标签名左缘对齐（2026-09-21 用户选定「文字对文字」，色点那一列留空）：有色点的组与「未打标签」组都要对上
+  // 会话名左缘落在分组头「色点与标签名之间的空格」正中（2026-09-21 用户判定）：有色点的组与「未打标签」组（透明占位点）都要对上
   const nameAligned = (name) => {
     const row = rowOf(name)
     const nameEl = row?.querySelector('.name')
-    const title = row?.closest('[data-test=group]')?.querySelector('[data-test=group-title]')
-    if (!nameEl || !title) return null
-    return Math.abs(nameEl.getBoundingClientRect().left - title.getBoundingClientRect().left) <= 1
+    const head = row?.closest('[data-test=group]')?.querySelector('[data-test=group-head]')
+    const dot = head?.querySelector('[data-test=group-dot], [data-test=group-dot-blank]')
+    const title = head?.querySelector('[data-test=group-title]')
+    if (!nameEl || !dot || !title) return null
+    const mid = (dot.getBoundingClientRect().right + title.getBoundingClientRect().left) / 2
+    return Math.abs(nameEl.getBoundingClientRect().left - mid) <= 1
   }
   const nameAlignedTagged = nameAligned('smoke-临时')
   // 行布局（2026-09-21）：行上没有标签色点，状态点是行的最后一个子元素（右侧）
