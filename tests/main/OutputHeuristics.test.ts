@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   classify,
+  hasCountedDown,
   hasTicked,
   isShellPrompt,
   parseElapsedSeconds,
   parsePromptCwd,
+  parseRetryCountdown,
 } from '../../src/main/agent/OutputHeuristics'
 
 describe('OutputHeuristics（屏幕末尾启发式，纯函数）', () => {
@@ -61,6 +63,46 @@ describe('OutputHeuristics（屏幕末尾启发式，纯函数）', () => {
     expect(hasTicked([19], [18])).toBe(false) // 倒退
     expect(hasTicked([], [19])).toBe(false) // 没有上次的值可比
     expect(hasTicked([19], [])).toBe(false)
+  })
+
+  it('parseRetryCountdown：只认含 retry / next try / reconnect 字样的行里、不在括号内的时长读数（Claude Code 2.1.258 三种重试横幅的实测形态）；括号内的耗时归计时器；没有这些字样的行不算', () => {
+    // 网络断（stalled 横幅）
+    expect(
+      parseRetryCountdown([
+        'Waiting for API response · will retry in 5s · check your network',
+        '> ',
+      ]),
+    ).toEqual([5])
+    // API 出错重试：h / m / s 折成秒；同一行的「attempt 2/10」不是时长
+    expect(parseRetryCountdown(['Connection error. · Retrying in 1m 4s · attempt 2/10'])).toEqual([
+      64,
+    ])
+    // 低优先级排队横幅
+    expect(
+      parseRetryCountdown(['Usage limit reached · next try in 12s · attempt 3 · esc to interrupt']),
+    ).toEqual([12])
+    // 大小写不敏感；「4 seconds」也认
+    expect(parseRetryCountdown(['RECONNECTING in 3s'])).toEqual([3])
+    expect(parseRetryCountdown(['Retrying in 4 seconds…'])).toEqual([4])
+    // 括号内的耗时属于计时器：带 retry 字样的工作状态行不会被当成倒数
+    expect(parseRetryCountdown(['✻ Retrying tool… (19s · ↓ 1.2k tokens)'])).toEqual([])
+    // 同一行括号外与括号内并存：只取括号外
+    expect(parseRetryCountdown(['Retrying in 5s (elapsed 19s)'])).toEqual([5])
+    // 没有 retry 字样的时长不算（跑完那行、普通文字）
+    expect(parseRetryCountdown(['✻ Cooked for 8m 39s · done 13:57', 'sleep 5s'])).toEqual([])
+    expect(parseRetryCountdown([])).toEqual([])
+  })
+
+  it('hasCountedDown：新采样里出现比上次某个值小 1–4 秒的读数 → 倒数在走；值没变（静态引用的横幅文字）、消失（滚出屏幕）、跳太远、变大都不算', () => {
+    expect(hasCountedDown([5], [4])).toBe(true) // 正常一秒一减
+    expect(hasCountedDown([64], [61])).toBe(true) // 采样抖动（≤ 4 s）
+    expect(hasCountedDown([5, 30], [4, 30])).toBe(true) // 活的倒数 + 静态的 30s 并存
+    expect(hasCountedDown([5], [5])).toBe(false) // 静态：聊天里引用的一句「Retrying in 5s」
+    expect(hasCountedDown([5, 30], [30])).toBe(false) // 倒数那行滚出屏幕
+    expect(hasCountedDown([64], [4])).toBe(false) // 跳太远：不是同一个倒数
+    expect(hasCountedDown([4], [5])).toBe(false) // 变大：那是计时器，不是倒数
+    expect(hasCountedDown([], [5])).toBe(false) // 没有上次的值可比
+    expect(hasCountedDown([5], [])).toBe(false)
   })
 
   it('classify：末行是 cmd / PowerShell 提示符 → quiet（提示符里的 > 不算提示）；普通输出 / 空 → quiet', () => {

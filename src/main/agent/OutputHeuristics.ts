@@ -6,6 +6,9 @@
  *   也不认任何固定文案 —— 2026-09-18 实测：claude-code 2.1.258 工作时的状态行是 `✻ Bloviating… (3m 12s · ↓ 3.6k tokens)`，
  *   根本不显示 `esc to interrupt`（该串只在它的「重试等待」横幅里），而按文案匹配又会被屏幕上任何提到该文案的文字
  *   （解释这件事的聊天、源码、文档）永久钉在运行中。计时器必须真的在走，二者都不会误判。
+ * parseRetryCountdown + hasCountedDown + retryBannerLine：「网络失败 / 重试中」的信号 —— 屏幕上有个**在倒数的计时器**
+ *   （工具重试横幅里的「Retrying in 4s」，claude-code 2.1.258 实测），同样由 AgentDetector 拿相邻两次采样比较；
+ *   retry 字样只是筛选行的降噪条件，结论由「读数在减少」给出，聊天里引用的一句横幅不会倒数（用户 2026-09-21 判定）。
  * parsePromptCwd：从末尾往前找第一个 cmd / PowerShell 提示符行，取目录（路径条显示「当前目录」用）。
  * 输入是渲染进程从 xterm 活动缓冲区读来的末尾几行，主进程从不记录它们（规范：不记录终端内容）。
  */
@@ -20,6 +23,18 @@ const ELAPSED_IN_PARENS = /\((?:[^()\d]{0,24})?(?:(\d+)\s*h\s*)?(?:(\d+)\s*m\s*)
 
 /** 相邻两次采样间计时器最多认几秒的前进：正常一秒一跳，留点抖动余量；跳太远说明不是同一个计时器 */
 const MAX_TICK_STEP = 4
+
+/**
+ * 重试横幅的行：含 retry / next try / reconnect 字样（大小写不敏感）。文案在这里只是**筛选条件**（降噪，与计时器用括号同理），
+ * 结论由 hasCountedDown「读数在减少」这个自证信号给出 —— 聊天里引用一句「Retrying in 5s」不会倒数，不误报。
+ * claude-code 2.1.258 实测三种横幅：`will retry in 5s · check your network`、`Retrying in 4s · attempt 2/10`、`next try in 5s · attempt 2`
+ */
+const RETRY_LINE = /retry|next try|reconnect/i
+/** 括号段：倒数只取括号**外**的时长（括号内的耗时归 parseElapsedSeconds，两者互不干扰） */
+const PAREN_SEGMENT = /\([^()]*\)/g
+/** 括号外的时长读数：`5s` / `1m 4s` / `4 seconds`，秒数必给 */
+const DURATION =
+  /(?:(\d+)\s*h(?:ours?)?\s*)?(?:(\d+)\s*m(?:in(?:utes?)?)?\s*)?(\d+)\s*s(?:ec(?:onds?)?)?\b/gi
 
 /** 「等你确认」的提示模式（大小写不敏感，子串匹配）；`>` 不在清单里 —— 它和 shell 提示符重叠 */
 const PROMPT_PATTERNS: readonly RegExp[] = [
@@ -80,6 +95,38 @@ export function hasTicked(prev: readonly number[], next: readonly number[]): boo
   if (prev.length === 0 || next.length === 0) return false
   const before = new Set(prev)
   return next.some((v) => !before.has(v) && prev.some((u) => v - u >= 1 && v - u <= MAX_TICK_STEP))
+}
+
+/** 这一屏里重试横幅的倒数读数（秒），按出现顺序：只看含 retry 字样的行、只取括号外的时长；没有返回空数组 */
+export function parseRetryCountdown(tail: readonly string[]): number[] {
+  const out: number[] = []
+  for (const line of tail) {
+    if (!RETRY_LINE.test(line)) continue
+    for (const m of line.replace(PAREN_SEGMENT, ' ').matchAll(DURATION)) {
+      const [, h, min, s] = m
+      out.push(Number(h ?? 0) * 3600 + Number(min ?? 0) * 60 + Number(s))
+    }
+  }
+  return out
+}
+
+/** 重试横幅那一行（末尾最近的一行含 retry 字样且括号外带时长），去两侧空白；没有返回 null。「等你确认」的提示文案用 */
+export function retryBannerLine(tail: readonly string[]): string | null {
+  for (let i = tail.length - 1; i >= 0; i -= 1) {
+    const line = tail[i]!
+    if (RETRY_LINE.test(line) && parseRetryCountdown([line]).length > 0) return line.trim()
+  }
+  return null
+}
+
+/**
+ * 倒数是否在走：新采样里出现了「比上次某个读数小 1…MAX_TICK_STEP 秒、且上次没有过」的读数。
+ * 静态引用的横幅文字读数一模一样 → 不算；行滚出屏幕只会让读数变少 → 不算；变大的是计时器不是倒数 → 不算
+ */
+export function hasCountedDown(prev: readonly number[], next: readonly number[]): boolean {
+  if (prev.length === 0 || next.length === 0) return false
+  const before = new Set(prev)
+  return next.some((v) => !before.has(v) && prev.some((u) => u - v >= 1 && u - v <= MAX_TICK_STEP))
 }
 
 /**

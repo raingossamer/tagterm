@@ -14,6 +14,21 @@ const busy = (s: number, silentMs = 0): { tail: string[]; silentMs: number } => 
   silentMs,
 })
 
+/** 重试横幅的一屏（claude-code 2.1.258 实测形态）：s 递减即「倒数在走」；给 elapsed 时状态行的计时器也在走 */
+const retrying = (
+  s: number,
+  elapsed?: number,
+  silentMs = 0,
+): { tail: string[]; silentMs: number } => ({
+  tail: [
+    ...(elapsed === undefined ? [] : [`✻ Cogitating… (${elapsed}s · ↓ 1.2k tokens)`]),
+    `Connection error. · Retrying in ${s}s · attempt 2/10`,
+    '> ',
+  ],
+  silentMs,
+})
+const retryHint = (s: number): string => `Connection error. · Retrying in ${s}s · attempt 2/10`
+
 describe('AgentDetector（运行时状态机）', () => {
   let changes: SessionRuntime[]
   let removed: string[]
@@ -201,6 +216,102 @@ describe('AgentDetector（运行时状态机）', () => {
     detector.reportOutput('s1', { tail: ['Stopped.'], silentMs: 1500 })
     expect(changes.at(-1)).toMatchObject({ status: 'done' })
     expect(changes.at(-1)).not.toHaveProperty('pendingHint')
+  })
+
+  it('重试横幅：有 agent 且倒数在走 → blocked、提示 = 横幅那一行（两种报告都认，从 working / idle 都转）；同屏计时器也在走时倒数优先；静态引用的横幅不转移；倒数还在屏上时不放行；倒数消失后计时器走起来 → working（清提示）、静默 → done / idle', () => {
+    detector.ptySpawned('s1')
+    detector.processSnapshot(new Map([['s1', 'claude']]))
+    changes.length = 0
+
+    // 静态引用：聊天里印着一句横幅，两份采样读数一样 → 不是在倒数
+    const quoted = { tail: ['解释一下 Retrying in 5s 这句是什么意思', '> '], silentMs: 0 }
+    detector.reportOutput('s1', quoted)
+    detector.reportOutput('s1', quoted)
+    expect(changes).toEqual([])
+
+    // 工作中 → 断网：倒数 5s → 4s，同屏的计时器也在走（20s → 21s），倒数优先 → blocked
+    detector.reportOutput('s1', busy(10))
+    detector.reportOutput('s1', busy(11))
+    expect(changes.at(-1)).toMatchObject({ status: 'working' })
+    detector.reportOutput('s1', retrying(5, 20))
+    detector.reportOutput('s1', retrying(4, 21))
+    expect(changes.at(-1)).toEqual({
+      sessionId: 's1',
+      alive: true,
+      agent: 'claude',
+      status: 'blocked',
+      pendingHint: retryHint(4),
+    })
+    // 倒数还在屏上、这一秒采样读数没变（抖动）：仍 blocked，不因计时器在走而放行
+    const count = changes.length
+    detector.reportOutput('s1', retrying(4, 22))
+    expect(detector.list()[0]).toMatchObject({ status: 'blocked', pendingHint: retryHint(4) })
+    expect(changes).toHaveLength(count)
+    // 重试成功：横幅消失、计时器继续走 → working，提示清掉
+    detector.reportOutput('s1', busy(23))
+    detector.reportOutput('s1', busy(24))
+    expect(changes.at(-1)).toEqual({
+      sessionId: 's1',
+      alive: true,
+      agent: 'claude',
+      status: 'working',
+    })
+
+    // 静默报告也认倒数；从 idle 也转
+    detector.reportOutput('s1', { tail: ['✻ Cooked for 24s · done 13:57', '> '], silentMs: 1500 })
+    expect(changes.at(-1)).toMatchObject({ status: 'done' })
+    detector.setViewed('s1')
+    expect(changes.at(-1)).toMatchObject({ status: 'idle' })
+    detector.reportOutput('s1', retrying(8, undefined, 1500))
+    detector.reportOutput('s1', retrying(7, undefined, 1500))
+    expect(changes.at(-1)).toMatchObject({ status: 'blocked', pendingHint: retryHint(7) })
+    // 用户按 Esc 中断：横幅消失、屏幕静默、计时器没动 → 正被查看 → idle，提示清掉
+    detector.reportOutput('s1', {
+      tail: ['Interrupted · What should Claude do instead?', '> '],
+      silentMs: 1500,
+    })
+    expect(changes.at(-1)).toMatchObject({ status: 'idle' })
+    expect(changes.at(-1)).not.toHaveProperty('pendingHint')
+  })
+
+  it('抑制窗例外：hooks 事件后 30 s 内倒数照样 → blocked，从这种 blocked 离开也不受抑制；释放后回到常规抑制；任一 hooks 事件撤销例外', () => {
+    detector.ptySpawned('s1')
+    detector.hookEvent(['s1'], 'claude', { hook_event_name: 'SessionStart' })
+    detector.hookEvent(['s1'], 'claude', { hook_event_name: 'UserPromptSubmit' })
+    changes.length = 0
+
+    // 提问 5 s 后断网：倒数 → blocked，不等 30 s
+    now += 5_000
+    detector.reportOutput('s1', retrying(5, 20))
+    detector.reportOutput('s1', retrying(4, 21))
+    expect(changes.at(-1)).toMatchObject({ status: 'blocked', pendingHint: retryHint(4) })
+    // 仍在窗内：重试成功、计时器走起来 → working（释放同样不受抑制）
+    now += 3_000
+    detector.reportOutput('s1', busy(22))
+    detector.reportOutput('s1', busy(23))
+    expect(changes.at(-1)).toMatchObject({ status: 'working' })
+    expect(changes.at(-1)).not.toHaveProperty('pendingHint')
+    // 释放后回到常规：窗内的静默提示不再转移
+    detector.reportOutput('s1', { tail: ['Allow?'], silentMs: 1500 })
+    expect(detector.list()[0]).toMatchObject({ status: 'working' })
+
+    // 再次断网 → blocked；此时 hooks 的 Notification 到达 → hooks 说了算（blocked + message），例外撤销
+    detector.reportOutput('s1', retrying(9, 30))
+    detector.reportOutput('s1', retrying(8, 31))
+    expect(changes.at(-1)).toMatchObject({ status: 'blocked', pendingHint: retryHint(8) })
+    detector.hookEvent(['s1'], 'claude', {
+      hook_event_name: 'Notification',
+      notification_type: 'permission_prompt',
+      message: 'Allow smoke tool?',
+    })
+    expect(changes.at(-1)).toMatchObject({ status: 'blocked', pendingHint: 'Allow smoke tool?' })
+    // 撤销例外后，窗内计时器在走也不再放行
+    detector.reportOutput('s1', busy(40))
+    detector.reportOutput('s1', busy(41))
+    expect(detector.list()[0]).toMatchObject({
+      status: 'blocked',
+      pendingHint: 'Allow smoke tool?',
+    })
   })
 
   it('Claude hooks：UserPromptSubmit → working；Notification 契约表里的阻塞类型 → blocked + message（截断 200）；其他类型忽略；Stop → 被查看 idle / 否则 done；SessionStart 记 claude；SessionEnd 清 agent 回 idle', () => {

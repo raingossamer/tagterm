@@ -846,6 +846,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
       // 没装 hooks 时的「运行中」判定走真实链路核查（0.3.1 的回归就出在这里，单测的合成屏幕守不住装配）：
       //   把 ping.exe 复制成 claude.exe 在 s1 里跑起来 → 进程树认出 agent（s1 从未收到 hook，不在抑制窗里）
       //   → 经真实 IPC 送两份计时器递增的屏幕 → 运行中；送一份只是「提到提示文案」的屏幕 → 不得转移；
+      //   送两份重试横幅倒数递减的屏幕 → 等你确认（只是引用横幅的静态两份不得转移），横幅消失计时器再走 → 回运行中；
       //   送跑完的屏幕（耗时不在括号里）→ 离开运行中；Ctrl+C 停掉假 agent → 回空闲
       const fakeAgentExe = join(app.getPath('userData'), 'claude.exe')
       let heuristic: Record<string, unknown> = {}
@@ -888,6 +889,21 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         await report(['✻ Cogitating… (8s · ↓ 1.3k tokens)', '> '], 0)
         const working = await waitUntil(() => statusOf() === 'working', 3000)
         const badgeWhenWorking = deps.badgeCounts()
+        // 网络失败 / 重试中（2026-09-21）：屏幕上只是「引用」了一句横幅（读数不变）的两份采样不得转移（反例）；
+        // 倒数 5s → 4s 的两份采样 → 等你确认（提示 = 横幅那一行）且角标 blocked 1；横幅消失、计时器继续走 → 回运行中（释放）
+        const quotedBanner = ['解释一下 Retrying in 5s 这句是什么意思', '> ']
+        await report(quotedBanner, 0)
+        await report(quotedBanner, 0)
+        await sleep(200)
+        const afterQuotedBanner = statusOf()
+        await report(['Connection error. · Retrying in 5s · attempt 2/10', '> '], 0)
+        await report(['Connection error. · Retrying in 4s · attempt 2/10', '> '], 0)
+        const retryBlocked = await waitUntil(() => statusOf() === 'blocked', 3000)
+        const retryHint = deps.agent.list().find((r) => r.sessionId === s1)?.pendingHint ?? null
+        const badgeWhenRetrying = deps.badgeCounts()
+        await report(['✻ Cogitating… (9s · ↓ 1.4k tokens)', '> '], 0)
+        await report(['✻ Cogitating… (10s · ↓ 1.5k tokens)', '> '], 0)
+        const workingAfterRetry = await waitUntil(() => statusOf() === 'working', 3000)
         // 跑完：状态行换成「Cooked for …」，耗时不在括号里 → 计时器读数消失 → 离开运行中
         await report(['✻ Cooked for 8s · done 13:57', '> '], 1500)
         const leftWorking = await waitUntil(() => statusOf() !== 'working', 3000)
@@ -902,6 +918,12 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
           mentionKeptIdle: afterMention === idleWithAgent,
           working,
           badgeWhenWorking,
+          afterQuotedBanner,
+          quotedKeptWorking: afterQuotedBanner === 'working',
+          retryBlocked,
+          retryHint,
+          badgeWhenRetrying,
+          workingAfterRetry,
           leftWorking,
           statusAfterDone,
           agentGone,
