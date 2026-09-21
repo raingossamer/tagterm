@@ -751,6 +751,9 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         await sleep(300)
       }
       await clickTab('smoke-r4')
+      // r4 刚 spawn：进程树探针 2 s 一轮，它被 watch 后的首轮快照会把整张表回调一次；若那一拍落在 hooks 已声明 agent 之后，
+      // 「agent 以进程树为准」会把 r4 的 agent 清回 null，后面的 PermissionRequest 就因无 agent 被忽略（实测偶发）。等过这一轮再发 hooks
+      await sleep(2200)
       const claudeCwd = 'C:/Windows'
       const statuses: number[] = []
       const send = async (
@@ -877,6 +880,9 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         const recordSeen = await waitUntil(() => statusOf() !== null, 8000)
         deps.pty.write(s1, `"${fakeAgentExe}" -n 30 127.0.0.1 >nul\r`)
         const agentSeen = await waitUntil(() => agentOf() === 'claude', 8000)
+        // 刚写入的命令回显是这条 pty 最后一次真实输出，渲染进程 1.5 s 后会送一份**真实**的静默报告（屏幕只有提示符与命令行，没有计时器）；
+        // 它若落在下面的合成采样中间，会把刚判出的运行中打回空闲（实测偶发）。等它过去再送合成采样
+        await sleep(1800)
         const idleWithAgent = statusOf()
         // 屏幕上只是「写着」提示文案：静态的两份采样不得变成运行中（用户 2026-09-18 撞到的误报）
         const mention = ['末尾任一行含 esc to interrupt 就算运行中', '> ']
