@@ -5,6 +5,7 @@
  */
 import type {
   FontZoom,
+  SearchResult,
   TerminalInstance,
   TerminalSize,
 } from '../../src/renderer/src/terminal/TerminalInstance'
@@ -17,11 +18,16 @@ export class FakeTerminal implements TerminalInstance {
   isWebgl = false
   isDisposed = false
   fontSize = 14
+  /** 查找：当前查的词与第几处（-1 = 没有当前项）、清除高亮的次数 */
+  searchQuery = ''
+  searchIndex = -1
+  clearSearchCount = 0
   /** fit() 的返回值；置 null 模拟宿主量不到尺寸 */
   size: TerminalSize | null = { cols: 80, rows: 24 }
   private dataHandlers: Array<(d: string) => void> = []
   private resizeHandlers: Array<(s: TerminalSize) => void> = []
   private zoomHandlers: Array<(z: FontZoom) => void> = []
+  private searchHandlers: Array<(r: SearchResult) => void> = []
 
   open(host: HTMLElement): void {
     this.host = host
@@ -53,6 +59,32 @@ export class FakeTerminal implements TerminalInstance {
   }
   setWebgl(enabled: boolean): void {
     this.isWebgl = enabled
+  }
+  /** 在写入流里不区分大小写地数匹配（真 xterm 查的是缓冲区）；换词从第一处开始，incremental 时停在当前处 */
+  findNext(query: string, options?: { incremental?: boolean }): void {
+    this.find(query, 1, options?.incremental ?? false)
+  }
+  findPrevious(query: string): void {
+    this.find(query, -1, false)
+  }
+  clearSearch(): void {
+    this.searchQuery = ''
+    this.searchIndex = -1
+    this.clearSearchCount += 1
+  }
+  onSearchResults(cb: (result: SearchResult) => void) {
+    this.searchHandlers.push(cb)
+    return { dispose: () => this.searchHandlers.splice(this.searchHandlers.indexOf(cb), 1) }
+  }
+  private find(query: string, direction: 1 | -1, incremental: boolean): void {
+    const count = query ? this.written.toLowerCase().split(query.toLowerCase()).length - 1 : 0
+    if (count === 0) this.searchIndex = -1
+    else if (query !== this.searchQuery || this.searchIndex < 0)
+      this.searchIndex = direction > 0 ? 0 : count - 1
+    else if (!incremental) this.searchIndex = (this.searchIndex + direction + count) % count
+    this.searchQuery = query
+    const result = { index: this.searchIndex, count }
+    this.searchHandlers.forEach((h) => h(result))
   }
   /** 把写入内容按行拆开、去掉空行，取末尾 lines 行（真 xterm 读的是缓冲区，这里以写入流近似） */
   readTail(lines: number): string[] {

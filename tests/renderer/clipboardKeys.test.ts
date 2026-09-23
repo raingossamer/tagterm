@@ -31,6 +31,13 @@ describe('terminalKeyAction（Windows 终端习惯 + 全局搜索键）', () => 
     expect(terminalKeyAction(key({ key: 'c', ctrlKey: true }), false)).toBeNull()
   })
 
+  it('Ctrl+Shift+F 归 find（终端内搜索，不写进 shell）；Ctrl+F 不带 Shift 照常交给终端程序', () => {
+    expect(terminalKeyAction(key({ key: 'F', ctrlKey: true, shiftKey: true }), false)).toBe('find')
+    expect(terminalKeyAction(key({ key: 'F', ctrlKey: true, shiftKey: true }), true)).toBe('find')
+    expect(terminalKeyAction(key({ key: 'f', ctrlKey: true }), false)).toBeNull()
+    expect(terminalKeyAction(key({ key: 'F', shiftKey: true }), false)).toBeNull()
+  })
+
   it('Ctrl+0（主键盘或小键盘）归 font-reset：字号回到默认；不带 Ctrl 的 0 照常输入', () => {
     expect(terminalKeyAction(key({ key: '0', ctrlKey: true }), false)).toBe('font-reset')
     expect(terminalKeyAction(key({ key: '0', ctrlKey: true }), true)).toBe('font-reset')

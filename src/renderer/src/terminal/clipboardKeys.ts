@@ -4,10 +4,11 @@
  * - 复制：Ctrl+Shift+C；Ctrl+C 仅在有选区时复制，无选区时交给终端（发送中断）
  * - 搜索：Ctrl+K 在终端里也抢下（不写 pty），交给全局监听聚焦搜索框
  * - 字号复位：Ctrl+0 回到默认字号（与 Windows Terminal 一致；cmd / PowerShell 里 Ctrl+0 本无作用）
+ * - 终端内查找：Ctrl+Shift+F 不写 pty，冒泡到 document 由 TerminalPane 打开搜索框（Ctrl+F 不带 Shift 仍归终端程序）
  * - 右键：有选区复制，无选区粘贴；但程序开了鼠标追踪（claude / codex 等 TUI）时把右键让给程序，
  *   否则程序自己按鼠标事件粘一次、我们又粘一次 → 粘两遍（Shift+右键强制走终端，与 Windows Terminal 一致）
  */
-export type TerminalKeyAction = 'copy' | 'paste' | 'search' | 'font-reset' | null
+export type TerminalKeyAction = 'copy' | 'paste' | 'search' | 'find' | 'font-reset' | null
 export type ClipboardAction = 'copy' | 'paste' | null
 
 export interface KeyLike {
@@ -25,6 +26,7 @@ export function terminalKeyAction(ev: KeyLike, hasSelection: boolean): TerminalK
   if (!ev.ctrlKey) return null
   if (key === 'k') return 'search'
   if (key === '0') return 'font-reset'
+  if (key === 'f' && ev.shiftKey) return 'find'
   if (key === 'v') return 'paste'
   if (key === 'c') {
     if (ev.shiftKey) return 'copy'

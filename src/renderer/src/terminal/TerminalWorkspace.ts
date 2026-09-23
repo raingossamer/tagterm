@@ -8,7 +8,7 @@
 import type { Session } from '@shared/models'
 import type { OutputReport, PtyExitEvent } from '@shared/ipc'
 import type { TagTermApi, Unsubscribe } from '@shared/api'
-import type { FontZoom, TerminalFactory } from './TerminalInstance'
+import type { FindOptions, FontZoom, SearchResult, TerminalFactory } from './TerminalInstance'
 import { TerminalPool } from './TerminalPool'
 import { OutputWatcher } from './OutputWatcher'
 import { clampFontSize, DEFAULT_FONT_SIZE } from './fontSize'
@@ -71,6 +71,7 @@ export class TerminalWorkspace {
   private fontSize = DEFAULT_FONT_SIZE
   /** 用户每调一次字号（含已到上下限、字号没变的那次）都通知：终端区据此浮出「字号 N」小牌 */
   private readonly zoomListeners = new Set<(size: number) => void>()
+  private readonly searchListeners = new Set<(sessionId: string, result: SearchResult) => void>()
 
   /** 构造即订阅 pty.onData / onExit（订阅不随 TerminalPane 挂载摇摆） */
   constructor(private readonly deps: TerminalWorkspaceDeps) {
@@ -80,6 +81,9 @@ export class TerminalWorkspace {
       onInput: (id, data) => this.handleInput(id, data),
       onResize: (id, size) => void deps.pty.resize(id, size),
       onFontZoom: (zoom) => this.handleFontZoom(zoom),
+      onSearchResults: (id, result) => {
+        for (const listener of [...this.searchListeners]) listener(id, result)
+      },
     })
     this.watcher = new OutputWatcher({
       readTail: (id, lines) => this.pool.readTail(id, lines),
@@ -247,6 +251,24 @@ export class TerminalWorkspace {
     }
   }
 
+  /** 终端内查找（TerminalSearch 用）：在当前页的终端里查下一处 / 上一处；没有当前页时无副作用 */
+  find(query: string, direction: 'next' | 'previous', options?: FindOptions): void {
+    this.pool.find(query, direction, options)
+  }
+
+  /** 清掉某会话终端的查找高亮（搜索框关闭或切走时） */
+  clearSearch(sessionId: string): void {
+    this.pool.clearSearch(sessionId)
+  }
+
+  /** 订阅查找结果（带会话 id：切走后旧终端的迟到结果由订阅方按 id 丢弃） */
+  onSearchResults(listener: (sessionId: string, result: SearchResult) => void): Unsubscribe {
+    this.searchListeners.add(listener)
+    return () => {
+      this.searchListeners.delete(listener)
+    }
+  }
+
   snapshot(): WorkspaceSnapshot {
     return {
       openTabs: [...this.openTabs],
@@ -268,6 +290,7 @@ export class TerminalWorkspace {
     for (const unsubscribe of this.unsubscribes) unsubscribe()
     this.watcher.dispose()
     this.zoomListeners.clear()
+    this.searchListeners.clear()
     for (const id of this.pool.sessionIds()) this.pool.dispose(id)
     this.runtime.clear()
     this.pids.clear()
