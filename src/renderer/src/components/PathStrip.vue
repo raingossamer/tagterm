@@ -8,6 +8,7 @@ import { useSessionsStore } from '../stores/sessions'
 import { useSettingsStore } from '../stores/settings'
 import { useTagsStore } from '../stores/tags'
 import { useWorkspaceStore } from '../stores/workspace'
+import { createCooldown } from '../composables/cooldown'
 import { pathHead } from '../composables/path'
 import { useCopy } from '../composables/useCopy'
 import { usePopover } from '../composables/usePopover'
@@ -72,13 +73,9 @@ function runFromMore(cmd: string): void {
 
 // 点路径 chip = 在资源管理器打开当前目录（与「复制」同一个路径）；路径由主进程从真相源解析，这里只传会话 id。
 // 500 ms 冷却：shell.openPath 每调一次多开一个资源管理器窗口，沿原型「单击全选」旧习惯双击 chip 的人不该得到两个窗口
-const OPEN_COOLDOWN_MS = 500
-let lastOpenAt = -Infinity
+const canOpenDirectory = createCooldown(500)
 function openDirectory(): void {
-  if (!session.value) return
-  const now = Date.now()
-  if (now - lastOpenAt < OPEN_COOLDOWN_MS) return
-  lastOpenAt = now
+  if (!session.value || !canOpenDirectory()) return
   window.tagterm.session
     .openDirectory(session.value.id)
     .catch((err) => flashError(err instanceof Error ? err.message : String(err)))

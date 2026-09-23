@@ -2,6 +2,7 @@
  * 接口层：ipcMain.handle / on 的薄层 —— 校验参数 → 调服务层 → 返回；不写业务逻辑，但跨 store 的级联与运行时前置条件在此顺序编排。
  * ipcMain 以参数注入（IpcMainLike），测试时可传假对象脱离 Electron 运行。
  */
+import { mkdir } from 'node:fs/promises'
 import type {
   AutoLaunchStatus,
   CreateSessionInput,
@@ -55,6 +56,8 @@ export interface IpcDeps {
   agent: AgentSubsystem
   /** 数据目录（设置「关于」显示） */
   dataDir: string
+  /** 日志目录（装配层给定，= 数据目录下的 logs）；「打开日志目录」用 */
+  logsDir: string
   /** 系统目录选择框（平台层注入，服务层不 import electron） */
   pickDirectory: () => Promise<string | null>
   /** 在资源管理器打开一个目录（装配层注入 shell.openPath）：返回空串成功，否则是错误说明 */
@@ -83,6 +86,12 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   handle('app:get-os-build', () => deps.osBuild)
   handle('app:list-shells', () => deps.listShells())
   handle('app:get-data-dir', () => deps.dataDir)
+  // 「打开日志目录」：路径由装配层给定，渲染进程不传路径；日志模块打开时已建过目录，这里再建一次兜底（建目录失败也会在 openPath 处报出来）
+  handle('app:open-logs-dir', async () => {
+    await mkdir(deps.logsDir, { recursive: true })
+    const error = await deps.openPath(deps.logsDir)
+    if (error) throw new Error(`打不开日志目录：${error}`)
+  })
   handle('app:pick-image', () => deps.pickImage())
   handle('app:get-auto-launch', () => deps.getAutoLaunch())
   handle('app:set-auto-launch', (enabled) => deps.setAutoLaunch(assertAutoLaunch(enabled)))

@@ -8,7 +8,7 @@
  * 以 JSON 打印到 stdout。生产运行不触发。
  */
 import { app, nativeImage, type BrowserWindow } from 'electron'
-import { copyFileSync, existsSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { join } from 'node:path'
 import type { PtyManager } from './pty/PtyManager'
@@ -1132,6 +1132,18 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         exists: existsSync(join(app.getPath('userData'), 'tags.json')),
         remaining: deps.tags.list(),
       }
+      // 日志落文件（reliability-hardening 行为 6）：烟测实例写到自己的数据目录；有启动行、行格式对；
+      // 反例：烟测往终端里敲过的「你好，TagTerm」绝不能出现在日志里（终端输出与键入内容一律不记）
+      const logPath = join(app.getPath('userData'), 'logs', 'main.log')
+      const logText = existsSync(logPath) ? readFileSync(logPath, 'utf8') : ''
+      const logFileCheck = {
+        exists: existsSync(logPath),
+        hasStartupLine: logText.includes('INFO  [main] 可用 shell'),
+        lineFormatOk: /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} (INFO |WARN |ERROR) /m.test(
+          logText,
+        ),
+        noTerminalOutput: !logText.includes('你好，TagTerm'),
+      }
       report({
         ...result,
         clipboard,
@@ -1148,6 +1160,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         hooks,
         remaining,
         tagsFile,
+        logFile: logFileCheck,
         consoleErrors,
       })
     } catch (err) {

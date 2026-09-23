@@ -167,6 +167,7 @@ const api = {
     getOsBuild: () => ok(26100),
     listShells: () => ok(['cmd.exe', 'powershell.exe', 'pwsh.exe']),
     getDataDir: () => ok('C:\\Users\\demo\\AppData\\Roaming\\TagTerm'),
+    openLogsDir: () => ok(),
     pickImage: () => ok(null),
     getAutoLaunch: () => ok({ enabled: true, blockedBySystem: false }),
     setAutoLaunch: (enabled) => ok({ enabled, blockedBySystem: false }),

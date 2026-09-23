@@ -10,6 +10,7 @@ import { MAX_BLUR_PX, MIN_PANEL_OPACITY } from '@shared/models'
 import { useSettingsStore } from '../stores/settings'
 import { useUpdateStore } from '../stores/update'
 import { describeUpdateStatus } from '../composables/updateStatus'
+import { createCooldown } from '../composables/cooldown'
 
 type SectionKey = 'appearance' | 'startup' | 'agent' | 'update' | 'about'
 
@@ -75,13 +76,21 @@ const updateText = computed(() => describeUpdateStatus(update.status))
 /** 检查 / 下载进行中不允许再点 */
 const isUpdateBusy = computed(() => ['checking', 'downloading'].includes(update.status.state))
 
-async function runUpdateAction(action: () => Promise<void>): Promise<void> {
+/** 即时生效的按钮（检查更新、下载、安装、打开日志目录）：先清红字，失败把中文 message 显示在弹窗底部 */
+async function runAction(action: () => Promise<void>): Promise<void> {
   error.value = ''
   try {
     await action()
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   }
+}
+
+// 「关于」→「打开日志目录」：路径由主进程定（渲染进程不传路径）；会弹资源管理器，500 ms 冷却防双击开两个窗口；打不开红字
+const canOpenLogs = createCooldown(500)
+function openLogsDir(): void {
+  if (!canOpenLogs()) return
+  void runAction(() => window.tagterm.app.openLogsDir())
 }
 
 onMounted(async () => {
@@ -379,7 +388,7 @@ function onKeydown(e: KeyboardEvent): void {
                 type="button"
                 :disabled="isUpdateBusy"
                 data-test="update-check"
-                @click="runUpdateAction(update.check)"
+                @click="runAction(update.check)"
               >
                 检查更新
               </button>
@@ -388,7 +397,7 @@ function onKeydown(e: KeyboardEvent): void {
                 class="btn sm primary"
                 type="button"
                 data-test="update-download"
-                @click="runUpdateAction(update.download)"
+                @click="runAction(update.download)"
               >
                 下载
               </button>
@@ -397,7 +406,7 @@ function onKeydown(e: KeyboardEvent): void {
                 class="btn sm primary"
                 type="button"
                 data-test="update-install"
-                @click="runUpdateAction(update.install)"
+                @click="runAction(update.install)"
               >
                 立即安装并重启
               </button>
@@ -410,6 +419,15 @@ function onKeydown(e: KeyboardEvent): void {
             <p data-test="about-version">TagTerm v{{ version }}</p>
             <p class="hint">数据目录</p>
             <p class="name mono" data-test="about-data-dir">{{ dataDir }}</p>
+            <div class="row">
+              <button
+                class="btn sm"
+                type="button"
+                data-test="about-open-logs"
+                @click="openLogsDir"
+                v-text="'打开日志目录'"
+              ></button>
+            </div>
           </section>
 
           <p v-if="error" class="error" data-test="settings-error">{{ error }}</p>

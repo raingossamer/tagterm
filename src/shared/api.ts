@@ -35,6 +35,8 @@ export interface TagTermApi {
     getOsBuild(): Promise<number>
     listShells(): Promise<ShellKind[]>
     getDataDir(): Promise<string>
+    /** 在资源管理器打开日志目录（路径由主进程定）；打不开 reject 中文 message */
+    openLogsDir(): Promise<void>
     pickImage(): Promise<string | null>
     getAutoLaunch(): Promise<AutoLaunchStatus>
     setAutoLaunch(enabled: boolean): Promise<AutoLaunchStatus>
