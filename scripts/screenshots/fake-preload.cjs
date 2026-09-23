@@ -61,13 +61,14 @@ let settings = {
 
 /** 终端打开后各会话处于什么状态（真实应用里由进程树 / hooks / 屏幕判定给出） */
 const DEMO_RUNTIME = {
-  's-api': { agent: 'claude', status: 'working' },
+  's-api': { agent: 'claude', status: 'working', program: 'claude' },
   's-web': {
     agent: 'claude',
     status: 'blocked',
+    program: 'claude',
     pendingHint: 'Claude needs your permission to use Bash',
   },
-  's-infra': { agent: 'codex', status: 'done' },
+  's-infra': { agent: 'codex', status: 'done', program: 'codex' },
 }
 
 const ESC = '\x1b['
@@ -146,6 +147,8 @@ const ok = (v) => Promise.resolve(v === undefined ? undefined : clone(v))
 // ---- 运行时（打开终端后才有记录，与真实应用一致） ----
 
 const runtime = new Map()
+/** 每个会话当前那条假 pty 的 pid（与主进程一致：open 幂等，已开着就返回同一个） */
+const pids = new Map()
 let nextPid = 4200
 
 function setRuntime(sessionId) {
@@ -294,12 +297,18 @@ const api = {
         setRuntime(sessionId)
         setTimeout(() => emit('pty:data', sessionId, transcriptOf(sessionId)), 60)
       }
-      return ok({ created, pid: (nextPid += 4) })
+      if (created) pids.set(sessionId, (nextPid += 4))
+      return ok({ created, pid: pids.get(sessionId) })
     },
     write: () => {},
     resize: () => ok(),
+    // 与主进程一致：等进程退出才返回 —— pty:exit 与运行时记录的墓碑先广播出去
     kill: (sessionId) => {
-      runtime.delete(sessionId)
+      if (runtime.has(sessionId)) {
+        runtime.delete(sessionId)
+        emit('pty:exit', { sessionId, exitCode: 1, pid: pids.get(sessionId) ?? 0 })
+        emit('agent:status', { sessionId, alive: false, agent: null, status: 'idle' })
+      }
       return ok()
     },
     isAlive: (sessionId) => ok(runtime.has(sessionId)),
