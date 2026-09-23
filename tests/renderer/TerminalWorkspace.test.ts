@@ -41,7 +41,7 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
   it('1 select 未知 id：无标签页、无实例、pty.open 未调', async () => {
     await core.select('ghost')
 
-    expect(core.snapshot()).toEqual({ openTabs: [], activeId: null, runtime: {} })
+    expect(core.snapshot()).toEqual({ openTabs: [], activeId: null, runtime: {}, fontSize: 14 })
     expect(terminals).toHaveLength(0)
     expect(pty.opens).toEqual([])
   })
@@ -52,6 +52,7 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
       openTabs: [a.id],
       activeId: a.id,
       runtime: { [a.id]: { phase: 'opening' } },
+      fontSize: 14,
     })
 
     await pending
@@ -169,6 +170,7 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
       openTabs: [a.id],
       activeId: a.id,
       runtime: { [a.id]: { phase: 'running' } },
+      fontSize: 14,
     })
   })
 
@@ -188,6 +190,7 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
       openTabs: [b.id, a.id],
       activeId: a.id,
       runtime: { [a.id]: { phase: 'running' }, [b.id]: { phase: 'running' } },
+      fontSize: 14,
     })
   })
 
@@ -208,6 +211,7 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
       openTabs: [b.id, a.id],
       activeId: a.id,
       runtime: { [a.id]: { phase: 'running' }, [b.id]: { phase: 'running' } },
+      fontSize: 14,
     })
 
     // 新终端照常：按键转发到新 pty
@@ -248,6 +252,7 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
       openTabs: [a.id, c.id],
       activeId: c.id,
       runtime: { [a.id]: { phase: 'running' }, [c.id]: { phase: 'running' } },
+      fontSize: 14,
     })
     expect(terminals[2]!.isVisible).toBe(true)
 
@@ -276,6 +281,7 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
       openTabs: [a.id, b.id],
       activeId: b.id,
       runtime: { [a.id]: { phase: 'running' }, [b.id]: { phase: 'running' } },
+      fontSize: 14,
     })
   })
 
@@ -393,7 +399,12 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
     core.subscribe((s) => seen.push(s))
 
     core.restoreTabs([b.id, a.id, 'ghost', a.id])
-    expect(core.snapshot()).toEqual({ openTabs: [b.id, a.id], activeId: null, runtime: {} })
+    expect(core.snapshot()).toEqual({
+      openTabs: [b.id, a.id],
+      activeId: null,
+      runtime: {},
+      fontSize: 14,
+    })
     expect(terminals).toHaveLength(0)
     expect(pty.opens).toEqual([])
     expect(seen).toHaveLength(1)
@@ -459,6 +470,59 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
     }
   })
 
+  it('20 字号：任一终端上 Ctrl+滚轮 → 全部终端一起变（含之后新开的），快照 fontSize 跟着变；到上下限不再变也不 emit；Ctrl+0 回到 14；每次调整（含到限）都通知 onFontZoom', async () => {
+    await core.select(a.id)
+    await core.select(b.id)
+    const seen: WorkspaceSnapshot[] = []
+    core.subscribe((s) => seen.push(s))
+    const zoomed: number[] = []
+    const offZoom = core.onFontZoom((size) => zoomed.push(size))
+
+    terminals[0]!.emitFontZoom(2)
+    expect(core.snapshot().fontSize).toBe(16)
+    expect(terminals.map((t) => t.fontSize)).toEqual([16, 16])
+    expect(seen).toHaveLength(1)
+
+    await core.select(c.id)
+    expect(terminals[2]!.fontSize).toBe(16)
+
+    terminals[2]!.emitFontZoom(40)
+    expect(core.snapshot().fontSize).toBe(32)
+    const count = seen.length
+    terminals[2]!.emitFontZoom(1)
+    expect(seen).toHaveLength(count)
+
+    terminals[1]!.emitFontZoom('reset')
+    expect(core.snapshot().fontSize).toBe(14)
+    expect(terminals.map((t) => t.fontSize)).toEqual([14, 14, 14])
+    terminals[1]!.emitFontZoom(-10)
+    expect(core.snapshot().fontSize).toBe(10)
+    expect(zoomed).toEqual([16, 32, 32, 14, 10])
+
+    offZoom()
+    terminals[1]!.emitFontZoom(1)
+    expect(zoomed).toHaveLength(5)
+  })
+
+  it('21 setFontSize（启动时恢复本机偏好）：夹紧到 10–32、坏值回落 14；只 fit 可见终端，尺寸变化照旧经 pty.resize 同步', async () => {
+    await core.select(a.id)
+    await core.select(b.id)
+    const fitsBefore = [terminals[0]!.fitCount, terminals[1]!.fitCount]
+    core.setFontSize(99)
+    expect(core.snapshot().fontSize).toBe(32)
+    expect(terminals[1]!.fitCount).toBe(fitsBefore[1]! + 1)
+    expect(terminals[0]!.fitCount).toBe(fitsBefore[0])
+    core.setFontSize(Number.NaN)
+    expect(core.snapshot().fontSize).toBe(14)
+    const zoomed: number[] = []
+    core.onFontZoom((size) => zoomed.push(size))
+    core.setFontSize(20)
+    expect(zoomed).toEqual([]) // 程序设置（启动恢复）不算用户调整，不弹小牌
+
+    terminals[1]!.emitResize({ cols: 70, rows: 20 })
+    expect(pty.resizes.at(-1)).toEqual([b.id, { cols: 70, rows: 20 }])
+  })
+
   it('13 subscribe 每次变化收到新快照对象且等于 snapshot()，退订后不再收到；dispose 退订 pty、销毁全部实例、清空记录', async () => {
     const seen: WorkspaceSnapshot[] = []
     const off = core.subscribe((s) => seen.push(s))
@@ -477,6 +541,6 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
     core.dispose()
     expect(pty.subscriberCount).toBe(0)
     expect(terminals.every((t) => t.isDisposed)).toBe(true)
-    expect(core.snapshot()).toEqual({ openTabs: [], activeId: null, runtime: {} })
+    expect(core.snapshot()).toEqual({ openTabs: [], activeId: null, runtime: {}, fontSize: 14 })
   })
 })

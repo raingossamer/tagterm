@@ -3,6 +3,7 @@
  * WebGL 只在 setWebgl(true) 时加载；上下文丢失即退回 DOM 渲染器，内容不丢。
  * 剪贴板：Ctrl+V 等粘贴键交给浏览器原生 paste 事件（xterm 自行处理），右键无选区时读剪贴板粘贴。
  * Ctrl+K：xterm 不处理、不写 pty，事件继续冒泡到 document，由 SideHead 的全局监听聚焦搜索框。
+ * Ctrl+滚轮 / Ctrl+0：截下不滚回滚区、不写 pty，只经 onFontZoom 上报（字号全部终端共用一份，由上层决定）。
  */
 import { Terminal, type ITerminalOptions } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -10,8 +11,9 @@ import { SearchAddon } from '@xterm/addon-search'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
-import type { TerminalFactory, TerminalInstance, TerminalSize } from './TerminalInstance'
+import type { FontZoom, TerminalFactory, TerminalInstance, TerminalSize } from './TerminalInstance'
 import { clipboardActionForRightClick, terminalKeyAction } from './clipboardKeys'
+import { createWheelZoom } from './fontSize'
 
 export function createXtermFactory(getOptions: () => ITerminalOptions): TerminalFactory {
   return (): TerminalInstance => {
@@ -22,6 +24,11 @@ export function createXtermFactory(getOptions: () => ITerminalOptions): Terminal
     term.unicode.activeVersion = '11'
     term.loadAddon(new SearchAddon()) // M2 搜索时接线
     let webgl: WebglAddon | null = null
+    const zoomListeners = new Set<(zoom: FontZoom) => void>()
+    const emitZoom = (zoom: FontZoom): void => {
+      for (const listener of [...zoomListeners]) listener(zoom)
+    }
+    const wheelZoom = createWheelZoom()
 
     const disposeWebgl = (): void => {
       webgl?.dispose()
@@ -60,7 +67,21 @@ export function createXtermFactory(getOptions: () => ITerminalOptions): Terminal
         copySelection()
         return false
       }
+      if (action === 'font-reset') {
+        ev.preventDefault()
+        emitZoom('reset')
+        return false
+      }
       return action === null
+    })
+
+    // Ctrl+滚轮调字号（触摸板双指捏合同为 Ctrl+滚轮）：不滚回滚区；增量攒够一格才上报一步
+    term.attachCustomWheelEventHandler((ev) => {
+      if (!ev.ctrlKey) return true
+      ev.preventDefault()
+      const steps = wheelZoom.push(ev.deltaY, ev.deltaMode)
+      if (steps !== 0) emitZoom(steps)
+      return false
     })
 
     const onContextMenu = (e: MouseEvent): void => {
@@ -90,6 +111,13 @@ export function createXtermFactory(getOptions: () => ITerminalOptions): Terminal
       },
       onData: (cb) => term.onData(cb),
       onResize: (cb) => term.onResize(cb),
+      onFontZoom: (cb) => {
+        zoomListeners.add(cb)
+        return { dispose: () => zoomListeners.delete(cb) }
+      },
+      setFontSize: (size) => {
+        if (term.options.fontSize !== size) term.options.fontSize = size
+      },
       // 活动缓冲区自底向上取非空行：普通模式含回滚区末尾，alt-screen（TUI）时就是当前画面底部
       readTail: (lines) => {
         const buffer = term.buffer.active

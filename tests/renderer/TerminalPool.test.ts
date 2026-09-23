@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { TerminalPool } from '../../src/renderer/src/terminal/TerminalPool'
-import type { TerminalSize } from '../../src/renderer/src/terminal/TerminalInstance'
+import type { FontZoom, TerminalSize } from '../../src/renderer/src/terminal/TerminalInstance'
 import { FakeTerminal } from './fakeTerminal'
 
 describe('TerminalPool（只管 xterm 一侧，不认识 pty）', () => {
@@ -8,6 +8,7 @@ describe('TerminalPool（只管 xterm 一侧，不认识 pty）', () => {
   let container: HTMLElement
   let inputs: Array<[string, string]>
   let resizes: Array<[string, TerminalSize]>
+  let zooms: FontZoom[]
   let nextSize: TerminalSize | null
   let pool: TerminalPool
 
@@ -15,6 +16,7 @@ describe('TerminalPool（只管 xterm 一侧，不认识 pty）', () => {
     terminals = []
     inputs = []
     resizes = []
+    zooms = []
     nextSize = { cols: 80, rows: 24 }
     container = document.createElement('div')
     pool = new TerminalPool({
@@ -27,6 +29,7 @@ describe('TerminalPool（只管 xterm 一侧，不认识 pty）', () => {
       raf: (fn) => fn(),
       onInput: (id, data) => inputs.push([id, data]),
       onResize: (id, size) => resizes.push([id, size]),
+      onFontZoom: (zoom) => zooms.push(zoom),
     })
     pool.attach(container)
   })
@@ -140,6 +143,49 @@ describe('TerminalPool（只管 xterm 一侧，不认识 pty）', () => {
     expect(pool.readTail('a', 2)).toEqual(['line2', 'line3'])
     expect(pool.readTail('a', 10)).toEqual(['line1', 'line2', 'line3'])
     expect(pool.readTail('ghost', 2)).toBeNull()
+  })
+
+  it('setFontSize：全部实例一起换字号，只 fit 可见实例（隐藏的切过去时 show 会 fit）；之后新建的实例首次 fit 前就用当前字号；同值不动', () => {
+    pool.open('a')
+    pool.open('b')
+    pool.show('a')
+    const fitsBefore = [terminals[0]!.fitCount, terminals[1]!.fitCount]
+
+    pool.setFontSize(18)
+    expect(terminals.map((t) => t.fontSize)).toEqual([18, 18])
+    expect(terminals[0]!.fitCount).toBe(fitsBefore[0]! + 1)
+    expect(terminals[1]!.fitCount).toBe(fitsBefore[1])
+
+    pool.setFontSize(18)
+    expect(terminals[0]!.fitCount).toBe(fitsBefore[0]! + 1)
+
+    // 新实例：open 里先设字号再量尺寸
+    const sizesAtFit: number[] = []
+    const origFit = FakeTerminal.prototype.fit
+    FakeTerminal.prototype.fit = function (this: FakeTerminal) {
+      sizesAtFit.push(this.fontSize)
+      return origFit.call(this)
+    }
+    try {
+      pool.open('c')
+    } finally {
+      FakeTerminal.prototype.fit = origFit
+    }
+    expect(terminals[2]!.fontSize).toBe(18)
+    expect(sizesAtFit).toEqual([18])
+  })
+
+  it('任一实例上的 Ctrl+滚轮 / Ctrl+0 经 onFontZoom 交上层（池不自己改字号）', () => {
+    pool.open('a')
+    pool.open('b')
+    terminals[1]!.emitFontZoom(2)
+    terminals[0]!.emitFontZoom('reset')
+    expect(zooms).toEqual([2, 'reset'])
+    expect(terminals.map((t) => t.fontSize)).toEqual([14, 14])
+
+    pool.dispose('b')
+    terminals[1]!.emitFontZoom(1)
+    expect(zooms).toEqual([2, 'reset'])
   })
 
   it('attach 补挂已建的 host；detach 后再 attach 到新容器同样补挂', () => {

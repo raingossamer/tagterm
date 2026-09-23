@@ -1,8 +1,10 @@
 /**
- * 假终端（TerminalInstance 的测试替身）：记录 open 的 host、写入内容、fit / focus 次数、WebGL 与 dispose 状态；
- * 可手动触发 onData（模拟用户键入）与 onResize（模拟 xterm 重排）。display 由池写在 host.style 上，经 isVisible 读取。
+ * 假终端（TerminalInstance 的测试替身）：记录 open 的 host、写入内容、fit / focus 次数、字号、WebGL 与 dispose 状态；
+ * 可手动触发 onData（模拟用户键入）、onResize（模拟 xterm 重排）与 onFontZoom（模拟 Ctrl+滚轮 / Ctrl+0）。
+ * display 由池写在 host.style 上，经 isVisible 读取。
  */
 import type {
+  FontZoom,
   TerminalInstance,
   TerminalSize,
 } from '../../src/renderer/src/terminal/TerminalInstance'
@@ -14,10 +16,12 @@ export class FakeTerminal implements TerminalInstance {
   fitCount = 0
   isWebgl = false
   isDisposed = false
+  fontSize = 14
   /** fit() 的返回值；置 null 模拟宿主量不到尺寸 */
   size: TerminalSize | null = { cols: 80, rows: 24 }
   private dataHandlers: Array<(d: string) => void> = []
   private resizeHandlers: Array<(s: TerminalSize) => void> = []
+  private zoomHandlers: Array<(z: FontZoom) => void> = []
 
   open(host: HTMLElement): void {
     this.host = host
@@ -39,6 +43,13 @@ export class FakeTerminal implements TerminalInstance {
   onResize(cb: (size: TerminalSize) => void) {
     this.resizeHandlers.push(cb)
     return { dispose: () => this.resizeHandlers.splice(this.resizeHandlers.indexOf(cb), 1) }
+  }
+  onFontZoom(cb: (zoom: FontZoom) => void) {
+    this.zoomHandlers.push(cb)
+    return { dispose: () => this.zoomHandlers.splice(this.zoomHandlers.indexOf(cb), 1) }
+  }
+  setFontSize(size: number): void {
+    this.fontSize = size
   }
   setWebgl(enabled: boolean): void {
     this.isWebgl = enabled
@@ -66,5 +77,9 @@ export class FakeTerminal implements TerminalInstance {
   }
   emitResize(size: TerminalSize): void {
     this.resizeHandlers.forEach((h) => h(size))
+  }
+  /** 模拟在这个终端上 Ctrl+滚轮（步数，往上滚为正）或按 Ctrl+0（'reset'） */
+  emitFontZoom(zoom: FontZoom): void {
+    this.zoomHandlers.forEach((h) => h(zoom))
   }
 }
