@@ -61,6 +61,17 @@ describe('TerminalPane', () => {
     expect(wrapper.find('[data-test=terminal-pane]').exists()).toBe(true)
   })
 
+  it('终端内搜索框挂在终端区右上角浮层里：Ctrl+Shift+F 打开', async () => {
+    const wrapper = mountPane()
+    await fake.workspace.select(a.id)
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'F', ctrlKey: true, shiftKey: true, bubbles: true }),
+    )
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.overlay [data-test=terminal-search]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
   describe('字号小牌', () => {
     afterEach(() => vi.useRealTimers())
 
