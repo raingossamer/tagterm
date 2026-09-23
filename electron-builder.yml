@@ -1,7 +1,7 @@
 # electron-builder：nsis 安装包；node-pty 的原生 .node 与 ConPTY 附属文件必须在 asar 外
 appId: com.tagterm.app
 productName: TagTerm
-copyright: Copyright © 2026 k
+copyright: Copyright © 2026 raingossamer
 directories:
   buildResources: resources
   output: dist
