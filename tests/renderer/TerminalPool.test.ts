@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { TerminalPool } from '../../src/renderer/src/terminal/TerminalPool'
-import type { FontZoom, TerminalSize } from '../../src/renderer/src/terminal/TerminalInstance'
+import type {
+  FontZoom,
+  SearchResult,
+  TerminalSize,
+} from '../../src/renderer/src/terminal/TerminalInstance'
 import { FakeTerminal } from './fakeTerminal'
 
 describe('TerminalPool（只管 xterm 一侧，不认识 pty）', () => {
@@ -9,6 +13,7 @@ describe('TerminalPool（只管 xterm 一侧，不认识 pty）', () => {
   let inputs: Array<[string, string]>
   let resizes: Array<[string, TerminalSize]>
   let zooms: FontZoom[]
+  let results: Array<[string, SearchResult]>
   let nextSize: TerminalSize | null
   let pool: TerminalPool
 
@@ -17,6 +22,7 @@ describe('TerminalPool（只管 xterm 一侧，不认识 pty）', () => {
     inputs = []
     resizes = []
     zooms = []
+    results = []
     nextSize = { cols: 80, rows: 24 }
     container = document.createElement('div')
     pool = new TerminalPool({
@@ -30,6 +36,7 @@ describe('TerminalPool（只管 xterm 一侧，不认识 pty）', () => {
       onInput: (id, data) => inputs.push([id, data]),
       onResize: (id, size) => resizes.push([id, size]),
       onFontZoom: (zoom) => zooms.push(zoom),
+      onSearchResults: (id, result) => results.push([id, result]),
     })
     pool.attach(container)
   })
@@ -186,6 +193,33 @@ describe('TerminalPool（只管 xterm 一侧，不认识 pty）', () => {
     pool.dispose('b')
     terminals[1]!.emitFontZoom(1)
     expect(zooms).toEqual([2, 'reset'])
+  })
+
+  it('查找只作用于可见实例：findNext / findPrevious 查当前终端，结果带会话 id 经 onSearchResults 上报；clearSearch 清指定实例；没有可见实例时无副作用', () => {
+    pool.open('a')
+    pool.open('b')
+    pool.write('a', 'error one\r\nERROR two\r\n')
+    pool.write('b', 'error in b\r\n')
+    pool.find('error', 'next')
+    expect(results).toEqual([])
+
+    pool.show('a')
+    pool.find('error', 'next')
+    pool.find('error', 'next')
+    pool.find('error', 'previous')
+    expect(results).toEqual([
+      ['a', { index: 0, count: 2 }],
+      ['a', { index: 1, count: 2 }],
+      ['a', { index: 0, count: 2 }],
+    ])
+    expect(terminals[1]!.searchQuery).toBe('')
+
+    pool.find('err', 'next', { incremental: true })
+    expect(terminals[0]!.searchQuery).toBe('err')
+
+    pool.clearSearch('a')
+    expect(terminals[0]!.clearSearchCount).toBe(1)
+    pool.clearSearch('ghost')
   })
 
   it('attach 补挂已建的 host；detach 后再 attach 到新容器同样补挂', () => {

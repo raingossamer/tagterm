@@ -5,7 +5,9 @@
  */
 import type {
   Disposable,
+  FindOptions,
   FontZoom,
+  SearchResult,
   TerminalFactory,
   TerminalInstance,
   TerminalSize,
@@ -24,6 +26,8 @@ export interface TerminalPoolDeps {
   onResize: (sessionId: string, size: TerminalSize) => void
   /** 用户在某实例上 Ctrl+滚轮 / Ctrl+0：字号全部终端共用一份，由上层决定后经 setFontSize 下发 */
   onFontZoom?: (zoom: FontZoom) => void
+  /** 某实例的查找结果变化（查一次、或高亮着时又有新输出） */
+  onSearchResults?: (sessionId: string, result: SearchResult) => void
 }
 
 interface Entry {
@@ -78,6 +82,7 @@ export class TerminalPool {
         this.deps.onResize(sessionId, size)
       }),
       term.onFontZoom((zoom) => this.deps.onFontZoom?.(zoom)),
+      term.onSearchResults((result) => this.deps.onSearchResults?.(sessionId, result)),
     )
     this.entries.set(sessionId, entry)
     entry.size = term.fit() ?? FALLBACK_SIZE
@@ -130,6 +135,19 @@ export class TerminalPool {
     this.fontSize = size
     for (const { term } of this.entries.values()) term.setFontSize(size)
     this.fitActive()
+  }
+
+  /** 在可见实例里查找下一处 / 上一处；没有可见实例时无副作用 */
+  find(query: string, direction: 'next' | 'previous', options?: FindOptions): void {
+    const term = this.activeId ? this.entries.get(this.activeId)?.term : undefined
+    if (!term) return
+    if (direction === 'next') term.findNext(query, options)
+    else term.findPrevious(query)
+  }
+
+  /** 清掉某实例的查找高亮（搜索框关闭或切走时） */
+  clearSearch(sessionId: string): void {
+    this.entries.get(sessionId)?.term.clearSearch()
   }
 
   /** 没有活动会话（空状态） */

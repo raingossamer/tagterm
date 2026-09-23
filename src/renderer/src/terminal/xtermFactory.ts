@@ -11,9 +11,16 @@ import { SearchAddon } from '@xterm/addon-search'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
-import type { FontZoom, TerminalFactory, TerminalInstance, TerminalSize } from './TerminalInstance'
+import type {
+  FontZoom,
+  SearchResult,
+  TerminalFactory,
+  TerminalInstance,
+  TerminalSize,
+} from './TerminalInstance'
 import { clipboardActionForRightClick, terminalKeyAction } from './clipboardKeys'
 import { createWheelZoom } from './fontSize'
+import { SEARCH_DECORATIONS, SEARCH_HIGHLIGHT_LIMIT } from './theme'
 
 export function createXtermFactory(getOptions: () => ITerminalOptions): TerminalFactory {
   return (): TerminalInstance => {
@@ -22,7 +29,15 @@ export function createXtermFactory(getOptions: () => ITerminalOptions): Terminal
     term.loadAddon(fit)
     term.loadAddon(new Unicode11Addon())
     term.unicode.activeVersion = '11'
-    term.loadAddon(new SearchAddon()) // M2 搜索时接线
+    // 终端内查找（Ctrl+Shift+F）：不区分大小写的普通文本，带高亮才会有结果计数事件
+    const search = new SearchAddon({ highlightLimit: SEARCH_HIGHLIGHT_LIMIT })
+    term.loadAddon(search)
+    const searchOptions = {
+      caseSensitive: false,
+      regex: false,
+      wholeWord: false,
+      decorations: SEARCH_DECORATIONS,
+    }
     let webgl: WebglAddon | null = null
     const zoomListeners = new Set<(zoom: FontZoom) => void>()
     const emitZoom = (zoom: FontZoom): void => {
@@ -118,6 +133,20 @@ export function createXtermFactory(getOptions: () => ITerminalOptions): Terminal
       setFontSize: (size) => {
         if (term.options.fontSize !== size) term.options.fontSize = size
       },
+      findNext: (query, options) => {
+        search.findNext(query, { ...searchOptions, incremental: options?.incremental ?? false })
+      },
+      findPrevious: (query) => {
+        search.findPrevious(query, searchOptions)
+      },
+      clearSearch: () => {
+        search.clearDecorations()
+        term.clearSelection()
+      },
+      onSearchResults: (cb) =>
+        search.onDidChangeResults((e) =>
+          cb({ index: e.resultIndex, count: e.resultCount } satisfies SearchResult),
+        ),
       // 活动缓冲区自底向上取非空行：普通模式含回滚区末尾，alt-screen（TUI）时就是当前画面底部
       readTail: (lines) => {
         const buffer = term.buffer.active

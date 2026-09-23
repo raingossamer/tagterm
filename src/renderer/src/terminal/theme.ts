@@ -36,6 +36,19 @@ export const CAMPBELL_THEME: ITheme = {
   brightWhite: '#F2F2F2',
 }
 
+/**
+ * 终端内查找的高亮：全部匹配暗黄底、当前项主色蓝底（插件要求 #RRGGBB）；概览标尺未开启，但插件要求给颜色
+ */
+export const SEARCH_DECORATIONS = {
+  matchBackground: '#5C4F00',
+  matchOverviewRuler: '#C19C00',
+  activeMatchBackground: '#0A5FD1',
+  activeMatchColorOverviewRuler: '#0A5FD1',
+} as const
+
+/** 高亮上限（超出后仍能逐处跳转，但不再全部标出，计数改显示「1000+」由界面决定） */
+export const SEARCH_HIGHLIGHT_LIMIT = 1000
+
 /** osBuild 为 Windows 构建号（如 26200），xterm 据此选择 ConPTY 的兼容策略 */
 export function buildTerminalOptions(osBuild: number): ITerminalOptions {
   return {

@@ -523,6 +523,29 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
     expect(pty.resizes.at(-1)).toEqual([b.id, { cols: 70, rows: 20 }])
   })
 
+  it('22 终端内查找：find 查当前页的终端，结果连同会话 id 通知 onSearchResults；clearSearch 清指定会话的高亮；没有当前页时无副作用', async () => {
+    const results: Array<[string, { index: number; count: number }]> = []
+    const off = core.onSearchResults((id, r) => results.push([id, r]))
+    core.find('x', 'next')
+    expect(results).toEqual([])
+
+    await core.select(a.id)
+    pty.emitData(a.id, 'Build FAILED\r\nfailed again\r\n')
+    core.find('failed', 'next')
+    core.find('failed', 'previous')
+    expect(results).toEqual([
+      [a.id, { index: 0, count: 2 }],
+      [a.id, { index: 1, count: 2 }],
+    ])
+
+    core.clearSearch(a.id)
+    expect(terminals[0]!.clearSearchCount).toBe(1)
+
+    off()
+    core.find('failed', 'next')
+    expect(results).toHaveLength(2)
+  })
+
   it('13 subscribe 每次变化收到新快照对象且等于 snapshot()，退订后不再收到；dispose 退订 pty、销毁全部实例、清空记录', async () => {
     const seen: WorkspaceSnapshot[] = []
     const off = core.subscribe((s) => seen.push(s))
