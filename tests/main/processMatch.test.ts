@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { detectAgent, type ProcessNode } from '../../src/main/agent/processMatch'
+import { detectAgent, foregroundProgram, type ProcessNode } from '../../src/main/agent/processMatch'
 
 const node = (partial: Partial<ProcessNode> & { name: string }): ProcessNode => ({
   pid: 1,
@@ -54,5 +54,66 @@ describe('detectAgent（进程子树 → 工具）', () => {
     expect(
       detectAgent([node({ pid: 2, name: 'claude.exe' }), node({ pid: 3, name: 'codex.exe' })]),
     ).toBe('claude')
+  })
+})
+
+describe('foregroundProgram（shell 下正在跑的程序名）', () => {
+  const SHELL = 100
+
+  it('取 shell 的直接子进程：去掉 .exe、统一小写；没有子进程为 null', () => {
+    expect(foregroundProgram([], SHELL)).toBeNull()
+    expect(foregroundProgram([node({ pid: 101, ppid: SHELL, name: 'PING.EXE' })], SHELL)).toBe(
+      'ping',
+    )
+    // 孙进程不改变结论：显示的是 shell 直接启动的那个程序
+    expect(
+      foregroundProgram(
+        [
+          node({ pid: 101, ppid: SHELL, name: 'node.exe', commandLine: 'node npm-cli.js run dev' }),
+          node({ pid: 102, ppid: 101, name: 'esbuild.exe' }),
+        ],
+        SHELL,
+      ),
+    ).toBe('node')
+  })
+
+  it('直接子进程是外壳（cmd / powershell / pwsh）且下面还有进程时往下剥，直到不是外壳', () => {
+    // PowerShell 里 npm run dev：npm.cmd 由 cmd.exe 代跑，真正的程序是它下面的 node
+    expect(
+      foregroundProgram(
+        [
+          node({ pid: 101, ppid: SHELL, name: 'cmd.exe', commandLine: 'cmd /c npm.cmd run dev' }),
+          node({ pid: 102, ppid: 101, name: 'node.exe' }),
+        ],
+        SHELL,
+      ),
+    ).toBe('node')
+    // 外壳套外壳
+    expect(
+      foregroundProgram(
+        [
+          node({ pid: 101, ppid: SHELL, name: 'pwsh.exe' }),
+          node({ pid: 102, ppid: 101, name: 'PowerShell.exe' }),
+          node({ pid: 103, ppid: 102, name: 'python.exe' }),
+        ],
+        SHELL,
+      ),
+    ).toBe('python')
+    // 在终端里另开一个空闲的交互 shell：它自己就是在跑的程序
+    expect(
+      foregroundProgram([node({ pid: 101, ppid: SHELL, name: 'powershell.exe' })], SHELL),
+    ).toBe('powershell')
+  })
+
+  it('直接子进程有多个时取第一个', () => {
+    expect(
+      foregroundProgram(
+        [
+          node({ pid: 101, ppid: SHELL, name: 'notepad.exe' }),
+          node({ pid: 102, ppid: SHELL, name: 'ping.exe' }),
+        ],
+        SHELL,
+      ),
+    ).toBe('notepad')
   })
 })
