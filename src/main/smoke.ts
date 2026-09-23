@@ -4,7 +4,8 @@
  * 标签链路：建标签 / 挂标签 / 分组与副本 / 任一 / 全部 / 搜索 / 路径条胶囊与弹出层 / 删标签 →
  * 右键菜单编辑会话改名 / 移除会话 → 真实 Ctrl+K 聚焦搜索 → 设置弹窗四段导航与全局背景往返），
  * 再在主进程侧核查「关窗只隐藏、pty 存活、托盘恢复」、「结束 pty 后整页重载 → 标签页与当前页恢复、只有当前页重新 spawn」
- * 与 tags.json 落盘，最后清理会话并走正常退出路径（before-quit killAll）。
+ * 与 tags.json 落盘，再走没装 hooks 时的状态判定、唤起区置灰 / 路径条拖拽 / 右键重启终端的真实链路，
+ * 最后清理会话并走正常退出路径（before-quit killAll）。
  * 以 JSON 打印到 stdout。生产运行不触发。
  */
 import { app, nativeImage, type BrowserWindow } from 'electron'
@@ -744,6 +745,209 @@ const ROW_STATE = (name: string): string => `(() => {
   }
 })()`
 
+/** 主进程侧轮询：条件在时限内成立即真 */
+async function pollUntil(cond: () => boolean, timeoutMs: number): Promise<boolean> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (cond()) return true
+    await sleep(100)
+  }
+  return false
+}
+
+/** 渲染进程里的表达式在时限内变为真即真 */
+async function pollJs(win: BrowserWindow, expr: string, timeoutMs: number): Promise<boolean> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    if (await win.webContents.executeJavaScript(`!!(${expr})`)) return true
+    await sleep(100)
+  }
+  return false
+}
+
+/** 唤起区烟测用的三条命令：两条常用、一条收进「更多」（rem 是 cmd 的注释命令，万一被敲进终端也无害） */
+const SMOKE_LAUNCH_COMMANDS = [
+  { label: 'smoke-a', command: 'rem smoke-a', pinned: true, sortOrder: 1 },
+  { label: 'smoke-b', command: 'rem smoke-b', pinned: true, sortOrder: 2 },
+  { label: 'smoke-c', command: 'rem smoke-c', pinned: false, sortOrder: 3 },
+]
+
+/** 唤起区当前的样子：按钮文字、悬停提示、是否全部置灰 / 全部可用（只给「应为真」的布尔，发布门逐个判） */
+const LAUNCH_STATE = `(() => {
+  const cmds = [...document.querySelectorAll('[data-test=launch-cmd]')]
+  const clear = document.querySelector('[data-test=strip-clear]')
+  const isGreyed = (b) => b?.getAttribute('aria-disabled') === 'true'
+  return {
+    labels: cmds.map((b) => b.textContent.trim()),
+    titles: cmds.map((b) => b.getAttribute('title') ?? ''),
+    clearTitle: clear?.getAttribute('title') ?? '',
+    allGreyed: cmds.length > 0 && cmds.every(isGreyed) && isGreyed(clear),
+    noneGreyed: cmds.length > 0 && !cmds.some(isGreyed) && !isGreyed(clear),
+  }
+})()`
+
+/**
+ * 路径条上合成拖放往返（Chromium 允许脚本派发 DragEvent，只是 dataTransfer 为 null；真实鼠标拖拽的手感靠人工验收）：
+ * 平铺的 smoke-a 拖到「更多 ▾」上 → 放到「更多」末尾；展开「更多」把它拖回「唤起」小字上 → 最前面的常用按钮。每步都核对落盘顺序
+ */
+const LAUNCH_DRAG_SCRIPT = `(async () => {
+  const $ = (sel) => document.querySelector(sel)
+  const $$ = (sel) => [...document.querySelectorAll(sel)]
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  const waitFor = async (cond, timeoutMs = 5000) => {
+    const start = Date.now()
+    while (!cond()) {
+      if (Date.now() - start > timeoutMs) return false
+      await sleep(50)
+    }
+    return true
+  }
+  const drag = async (from, to) => {
+    from?.dispatchEvent(new DragEvent('dragstart', { bubbles: true }))
+    await sleep(30)
+    to?.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true }))
+    await sleep(30)
+    to?.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true }))
+    from?.dispatchEvent(new DragEvent('dragend', { bubbles: true }))
+  }
+  const labels = () => $$('[data-test=launch-cmd]').map((b) => b.textContent.trim()).join(' ')
+  const saved = async () => (await window.tagterm.settings.get()).launchCommands
+    .sort((a, b) => a.sortOrder - b.sortOrder)
+    .map((c) => (c.pinned ? '+' : '-') + c.label)
+    .join(' ')
+  await drag($$('[data-test=launch-cmd]')[0], $('[data-test=launch-more]'))
+  const movedIntoMore = await waitFor(() => labels() === 'smoke-b')
+  const savedAfterInto = await saved()
+  $('[data-test=launch-more]')?.click()
+  await sleep(100)
+  const item = $$('[data-test=launch-more-item]').find((b) => b.textContent.trim() === 'smoke-a')
+  await drag(item, $('[data-test=launch-label]'))
+  const movedBack = await waitFor(() => labels() === 'smoke-a smoke-b')
+  const savedAfterBack = await saved()
+  return {
+    movedIntoMore,
+    savedAfterInto,
+    intoOrderRight: savedAfterInto === '+smoke-b -smoke-c -smoke-a',
+    movedBack,
+    savedAfterBack,
+    backOrderRight: savedAfterBack === '+smoke-a +smoke-b -smoke-c',
+    popClosed: !$('[data-test=launch-more-pop]'),
+  }
+})()`
+
+/** 右键左栏某会话 → 菜单「重启终端」；返回菜单项当时是否可用 */
+const RIGHT_CLICK_RESTART = (name: string): string => `(async () => {
+  const row = [...document.querySelectorAll('[data-test=session-row]')].find((r) => r.textContent.includes(${JSON.stringify(name)}))
+  row?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 60, clientY: 120 }))
+  await new Promise((r) => setTimeout(r, 50))
+  const item = document.querySelector('[data-test=menu-restart]')
+  const isEnabled = !!item && item.getAttribute('aria-disabled') !== 'true'
+  item?.click()
+  return isEnabled
+})()`
+
+/**
+ * 第二批「路径条」走真实链路（launch-drag-busy-restart 行为 8）：
+ *   终端里跑认不出的程序（ping）→ 进程树 → program → 唤起按钮与清屏置灰、悬停写出程序名（反例：回到提示符时一个都不灰）；
+ *   置灰期间在路径条上拖动唤起按钮往返 → 落盘顺序对（置灰的按钮也能拖）；
+ *   从别的标签页右键「重启终端」：有程序在跑时确认框写出程序名 → pid 换了、旧实例没了、切到该会话、新 shell 空闲按钮恢复；
+ *   空闲时再重启一次：不弹确认。
+ * 用自己的三条唤起命令（CI 上 PATH 里没有 claude 等，种子出来的可能是空的），结束时还原
+ */
+async function runLaunchBarChecks(
+  win: BrowserWindow,
+  deps: SmokeDeps,
+  s1: string,
+  s1Name: string,
+): Promise<Record<string, unknown>> {
+  const js = (code: string): Promise<unknown> => win.webContents.executeJavaScript(code)
+  const programOf = (): string | undefined =>
+    deps.agent.list().find((r) => r.sessionId === s1)?.program
+  const clickTab = (name: string): Promise<unknown> =>
+    js(
+      `[...document.querySelectorAll('[data-test=tab]')].find((t) => t.textContent.includes(${JSON.stringify(name)}))?.click()`,
+    )
+  const pidChangedFrom = (before: number | null) => (): boolean => {
+    const pid = deps.pty.getPid(s1)
+    return pid !== null && pid !== before
+  }
+  const original = await js(`window.tagterm.settings.get().then((s) => s.launchCommands)`)
+  await js(
+    `window.tagterm.settings.update({ launchCommands: ${JSON.stringify(SMOKE_LAUNCH_COMMANDS)} })`,
+  )
+  try {
+    await clickTab(s1Name)
+    const launchersShown = await pollJs(
+      win,
+      `document.querySelectorAll('[data-test=launch-cmd]').length === 2`,
+      5000,
+    )
+    // 反例：回到提示符的空闲终端，唤起按钮一个都不灰
+    const idleSeen = await pollUntil(() => deps.pty.has(s1) && programOf() === undefined, 8000)
+    const idle = (await js(LAUNCH_STATE)) as Record<string, unknown>
+
+    deps.pty.write(s1, 'ping -n 30 127.0.0.1 >nul\r')
+    const programSeen = await pollUntil(() => programOf() === 'ping', 8000)
+    const greyedSeen = await pollJs(win, `${LAUNCH_STATE}.allGreyed`, 3000)
+    const busy = (await js(LAUNCH_STATE)) as { titles: string[]; clearTitle: string }
+    const busyTitle = '当前在 ping 里，退出后再用'
+    const drag = (await js(LAUNCH_DRAG_SCRIPT)) as Record<string, unknown>
+
+    // 重启：先给 s1 当前的终端实例做个记号，切到别的标签页，再从左栏右键重启 s1
+    const markedOld = (await js(
+      `(() => { const h = [...document.querySelectorAll('[data-test=terminal-pane] > div')].find((h) => h.style.display === 'block'); if (h) h.dataset.smokeOld = '1'; return !!h })()`,
+    )) as boolean
+    await clickTab('smoke-r3')
+    await sleep(200)
+    await js(
+      `window.__smokeConfirms = []; window.confirm = (m) => { window.__smokeConfirms.push(m); return true }; true`,
+    )
+    const pidBusy = deps.pty.getPid(s1)
+    const menuEnabled = (await js(RIGHT_CLICK_RESTART(s1Name))) as boolean
+    const restarted = await pollUntil(pidChangedFrom(pidBusy), 8000)
+    await sleep(300)
+    const afterRestart = (await js(
+      `({ confirms: window.__smokeConfirms, active: document.querySelector('[data-test=tab].active [data-test=tab-name]')?.textContent ?? '', oldGone: !document.querySelector('[data-smoke-old]') })`,
+    )) as { confirms: string[]; active: string; oldGone: boolean }
+    const ungreyedAfterRestart = await pollJs(win, `${LAUNCH_STATE}.noneGreyed`, 8000)
+
+    // 空闲时重启：不弹确认，照样换一条新 pty
+    const pidIdle = deps.pty.getPid(s1)
+    await js(RIGHT_CLICK_RESTART(s1Name))
+    const idleRestarted = await pollUntil(pidChangedFrom(pidIdle), 8000)
+    const confirmCount = (await js(`window.__smokeConfirms.length`)) as number
+
+    return {
+      launchersShown,
+      idleSeen,
+      idleNoneGreyed: idle['noneGreyed'],
+      programSeen,
+      greyedSeen,
+      busyTitles: busy.titles,
+      busyTitlesNamed:
+        busy.titles.length === 2 &&
+        busy.titles.every((t) => t === busyTitle) &&
+        busy.clearTitle === busyTitle,
+      drag,
+      markedOld,
+      menuEnabled,
+      restarted,
+      confirms: afterRestart.confirms,
+      confirmedWithName:
+        afterRestart.confirms.length === 1 &&
+        afterRestart.confirms[0] === '终端里有程序在运行（ping），重启会结束它。继续？',
+      activeAfterRestart: afterRestart.active,
+      switchedToIt: afterRestart.active === s1Name,
+      oldInstanceGone: afterRestart.oldGone,
+      ungreyedAfterRestart,
+      idleRestarted,
+      idleRestartNotAsked: confirmCount === 1,
+    }
+  } finally {
+    await js(`window.tagterm.settings.update({ launchCommands: ${JSON.stringify(original)} })`)
+  }
+}
+
 export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
   const consoleErrors: string[] = []
   win.webContents.on('console-message', (event) => {
@@ -1146,6 +1350,18 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         rmSync(fakeAgentExe, { force: true })
       }
 
+      // 第二批「路径条」：唤起区置灰（认不出的程序）、路径条拖拽往返、右键重启终端（launch-drag-busy-restart）
+      let launchBar: Record<string, unknown> = {}
+      try {
+        launchBar = await withTimeout(
+          runLaunchBarChecks(win, deps, sessionIds[0]!, 'smoke-已改名'),
+          90000,
+          '唤起区与重启终端烟测',
+        )
+      } catch (err) {
+        launchBar = { error: String(err) }
+      }
+
       // 清理烟测会话（正常退出路径由 before-quit killAll 结束 pty）；tags.json 应已落盘且只剩空集合
       for (const id of sessionIds) await deps.store.remove(id)
       const remaining = deps.store.list().length
@@ -1176,6 +1392,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         lifecycle,
         restore,
         heuristic,
+        launchBar,
         processTree,
         termBackground,
         hooks,
