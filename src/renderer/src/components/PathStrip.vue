@@ -23,7 +23,7 @@ const { isCopied, copy } = useCopy()
 const tagPopEl = ref<HTMLElement | null>(null)
 const { isOpen: isTagPopOpen, toggle: toggleTagPop, close: closeTagPop } = usePopover(tagPopEl)
 
-// 路径条内的失败提示（打不开目录等）：红字 1.2 s（规范：失败必须出现在用户看得见的地方）
+// 路径条内的失败提示（打不开目录、拖动唤起按钮后保存失败等）：红字 1.2 s（规范：失败必须出现在用户看得见的地方）
 const ERROR_FLASH_MS = 1200
 const error = ref<string | null>(null)
 let errorTimer: ReturnType<typeof setTimeout> | null = null
@@ -98,7 +98,7 @@ function openDirectory(): void {
       <button class="btn sm" data-test="strip-add-tag" @click="toggleTagPop">+ 标签</button>
       <TagPopover v-if="isTagPopOpen" :session-id="session.id" @close="closeTagPop" />
     </span>
-    <LaunchBar :session="session" />
+    <LaunchBar :session="session" @error="flashError" />
   </div>
 </template>
 

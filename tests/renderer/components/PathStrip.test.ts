@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import LaunchBar from '../../../src/renderer/src/components/LaunchBar.vue'
 import PathStrip from '../../../src/renderer/src/components/PathStrip.vue'
 import { useSessionsStore } from '../../../src/renderer/src/stores/sessions'
 import { useWorkspaceStore } from '../../../src/renderer/src/stores/workspace'
@@ -91,6 +92,18 @@ describe('PathStrip', () => {
     await path.trigger('click')
     await flushPromises()
     expect(wrapper.find('[data-test=strip-error]').text()).toBe('打不开目录：Failed to open path')
+    await vi.advanceTimersByTimeAsync(1200)
+    expect(wrapper.find('[data-test=strip-error]').exists()).toBe(false)
+  })
+
+  it('唤起区（拖动唤起按钮后保存失败）上抛的原因显示成路径条红字 1.2 s', async () => {
+    vi.useFakeTimers()
+    installFakeApi()
+    const wrapper = mount(PathStrip)
+
+    wrapper.findComponent(LaunchBar).vm.$emit('error', '写入设置失败')
+    await flushPromises()
+    expect(wrapper.find('[data-test=strip-error]').text()).toBe('写入设置失败')
     await vi.advanceTimersByTimeAsync(1200)
     expect(wrapper.find('[data-test=strip-error]').exists()).toBe(false)
   })
