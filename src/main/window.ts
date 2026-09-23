@@ -5,12 +5,15 @@
 import { BrowserWindow, shell } from 'electron'
 import { join } from 'node:path'
 import iconPath from '../../resources/icon.ico?asset'
+import { isDevToolsToggle } from './windowKeys'
 
 export interface MainWindowDeps {
   /** 关闭请求时是否应隐藏而非销毁（应用正在退出时返回 false） */
   shouldHideOnClose: () => boolean
   /** 首帧就绪后是否显示窗口；开机自启（--hidden）时为 false，静默留在托盘。缺省 true */
   showOnReady?: boolean
+  /** F12 开关开发者工具：应用不装菜单，开发模式靠它打开；安装版为 false。缺省 false */
+  isDevToolsKeyEnabled?: boolean
 }
 
 export function createMainWindow(deps: MainWindowDeps): BrowserWindow {
@@ -40,6 +43,14 @@ export function createMainWindow(deps: MainWindowDeps): BrowserWindow {
       win.hide()
     }
   })
+
+  if (deps.isDevToolsKeyEnabled) {
+    win.webContents.on('before-input-event', (event, input) => {
+      if (!isDevToolsToggle(input)) return
+      event.preventDefault()
+      win.webContents.toggleDevTools()
+    })
+  }
 
   // 渲染进程不开新窗口；外链交给系统浏览器
   win.webContents.setWindowOpenHandler(({ url }) => {

@@ -3,7 +3,7 @@
  *（agent 子系统含状态机、hooks、通知去重与角标计数），这里只接线一次。
  * 会话生命周期 = 应用生命周期：关窗只隐藏到托盘；托盘「退出」与 before-quit 都 killAll。
  */
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { existsSync } from 'node:fs'
 import { release, tmpdir } from 'node:os'
@@ -265,9 +265,13 @@ app.whenReady().then(async () => {
   })
 
   if (isHiddenStart) console.log('[main] 隐藏启动（开机自启），窗口留在托盘')
+  // 不装菜单：Electron 默认菜单的隐藏快捷键（Ctrl+R 重载界面、Ctrl+= 整窗缩放、Ctrl+W 关窗、单按 Alt 冒菜单栏）
+  // 与终端和字号调节相冲突；输入框的复制粘贴是 Chromium 自带的编辑命令，不依赖菜单。开发模式用 F12 开开发者工具
+  Menu.setApplicationMenu(null)
   mainWindow = createMainWindow({
     shouldHideOnClose: () => !isQuitting,
     showOnReady: !isHiddenStart,
+    isDevToolsKeyEnabled: !app.isPackaged,
   })
   // 渲染进程的警告与错误也进日志（主进程监听窗口的控制台消息，不新增通道）；普通 log 不收
   mainWindow.webContents.on('console-message', (event) => {

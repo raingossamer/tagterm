@@ -8,7 +8,7 @@
  * 最后清理会话并走正常退出路径（before-quit killAll）。
  * 以 JSON 打印到 stdout。生产运行不触发。
  */
-import { app, nativeImage, type BrowserWindow } from 'electron'
+import { app, Menu, nativeImage, type BrowserWindow } from 'electron'
 import { copyFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { join } from 'node:path'
@@ -1381,8 +1381,12 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         ),
         noTerminalOutput: !logText.includes('你好，TagTerm'),
       }
+      // 第三批「键盘」：应用不装菜单（Electron 默认菜单的 Ctrl+R / Ctrl+= / Alt 菜单栏都不在了）；
+      // 真实 Ctrl+V 粘贴（clipboard.gotCtrlVPaste）照旧为真 = 粘贴不依赖菜单
+      const appMenu = { removed: Menu.getApplicationMenu() === null }
       report({
         ...result,
+        appMenu,
         clipboard,
         search,
         rightClick,
