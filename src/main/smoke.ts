@@ -7,7 +7,7 @@
  * 与 tags.json 落盘，最后清理会话并走正常退出路径（before-quit killAll）。
  * 以 JSON 打印到 stdout。生产运行不触发。
  */
-import { app, type BrowserWindow } from 'electron'
+import { app, nativeImage, type BrowserWindow } from 'electron'
 import { copyFileSync, existsSync, rmSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { join } from 'node:path'
@@ -135,6 +135,8 @@ const SMOKE_SCRIPT = `(async () => {
   await api.tag.attach(s2.id, tagB.id)
   const gotTagged = await waitFor(() => groupsOf('smoke-临时').includes('smoke-标签A') && rowsOf('smoke-2').length === 2)
   const s1Groups = groupsOf('smoke-临时')
+  // 分组刚重排：等过渲染的下一拍再量像素位置（2026-09-23 两次偶发对不齐，数值见 alignDiag）
+  await sleep(100)
   // 会话名左缘落在分组头「色点与标签名之间的空格」正中（2026-09-21 用户判定）：有色点的组与「未打标签」组（透明占位点）都要对上
   const nameAligned = (name) => {
     const row = rowOf(name)
@@ -147,6 +149,19 @@ const SMOKE_SCRIPT = `(async () => {
     return Math.abs(nameEl.getBoundingClientRect().left - mid) <= 1
   }
   const nameAlignedTagged = nameAligned('smoke-临时')
+  // 对齐失败时的排查数据（数字不进门槛）：名字左缘、色点右缘、标签名左缘
+  const alignDiag = (() => {
+    const row = rowOf('smoke-临时')
+    const head = row?.closest('[data-test=group]')?.querySelector('[data-test=group-head]')
+    const rect = (el) => el?.getBoundingClientRect()
+    return {
+      nameLeft: rect(row?.querySelector('.name'))?.left ?? -1,
+      rowLeft: rect(row)?.left ?? -1,
+      dotRight: rect(head?.querySelector('[data-test=group-dot], [data-test=group-dot-blank]'))?.right ?? -1,
+      titleLeft: rect(head?.querySelector('[data-test=group-title]'))?.left ?? -1,
+      headLeft: rect(head)?.left ?? -1,
+    }
+  })()
   // 行布局（2026-09-21）：行上没有标签色点，状态点是行的最后一个子元素（右侧）
   const rowTagDots = $$('[data-test=row-tag-dot]').length
   const statusDotLast = rowOf('smoke-临时')?.lastElementChild?.classList.contains('dot') ?? null
@@ -310,7 +325,7 @@ const SMOKE_SCRIPT = `(async () => {
     cwdTrack,
     sessionDrag: { namesBeforeDrag, dragApplied, namesAfterDrag, globalOrderChanged },
     tags: {
-      gotTagged, s1Groups, rowTagDots, statusDotLast, nameAlignedTagged, nameAlignedUntagged, groupsTagged, s2Tooltip, chipCounts, groupsAny, groupsAll, rowsAll, groupsCleared,
+      gotTagged, s1Groups, rowTagDots, statusDotLast, nameAlignedTagged, alignDiag, nameAlignedUntagged, groupsTagged, s2Tooltip, chipCounts, groupsAny, groupsAll, rowsAll, groupsCleared,
       rowsWhenSearching, emptyText, pillsBefore, pillRemoved, popOptions, popChecksRight, popClosed, pathChip, tagsCleared, groupsAfterRemove,
       groupsBeforeReorder, reorderApplied, groupsAfterReorder, chipsAfterReorder,
       hiddenApplied, rowsWhenAHidden, untaggedWhenAHidden, searchFindsHidden, sessionsKeptWhenHidden,
@@ -586,6 +601,92 @@ function report(result: Record<string, unknown>): void {
   console.log('[smoke-verdict] ' + JSON.stringify(judgeSmoke(result)))
 }
 
+type Rgb = [number, number, number]
+
+/** 16×16 纯红 PNG：终端透背景核查用，与终端底色 #0C0C0C 一眼可分 */
+function solidRedPng(): Buffer {
+  const size = 16
+  const bgra = Buffer.alloc(size * size * 4)
+  for (let i = 0; i < size * size; i += 1) bgra.set([0, 0, 255, 255], i * 4)
+  return nativeImage.createFromBitmap(bgra, { width: size, height: size }).toPNG()
+}
+
+/** 当前可见终端画布最右一列上的三个点（CSS 像素，相对内容区）：最右一列很少有字；没有可见终端为空数组 */
+const TERM_EDGE_POINTS = `JSON.stringify((() => {
+  const host = [...document.querySelectorAll('[data-test=terminal-pane] > div')].find((h) => h.style.display === 'block')
+  const r = host?.querySelector('.xterm-screen')?.getBoundingClientRect()
+  if (!r || r.width < 20 || r.height < 20) return []
+  return [0.35, 0.6, 0.85].map((f) => [r.right - 4, r.top + r.height * f])
+})())`
+
+/** 屏幕上真实合成出来的颜色（capturePage 与屏幕取色一致，2026-09-23 实测） */
+async function termEdgePixels(win: BrowserWindow): Promise<Rgb[]> {
+  const points = JSON.parse(
+    (await win.webContents.executeJavaScript(TERM_EDGE_POINTS)) as string,
+  ) as Array<[number, number]>
+  const image = await win.webContents.capturePage()
+  const { width, height } = image.getSize()
+  const scale = width / win.getContentBounds().width
+  const bmp = image.toBitmap() // BGRA
+  return points.map(([x, y]) => {
+    const px = Math.min(width - 1, Math.round(x * scale))
+    const py = Math.min(height - 1, Math.round(y * scale))
+    const i = (py * width + px) * 4
+    return [bmp[i + 2]!, bmp[i + 1]!, bmp[i]!]
+  })
+}
+
+const isTermBg = (p: Rgb): boolean => p.every((c) => Math.abs(c - 12) <= 3)
+// 红图之上还隔着一层半透明的浅灰面板（.main），G / B 会被抬到 60 多：比「红比绿蓝多出 30」就够分辨，且远离终端底色
+const isRedTinted = ([r, g, b]: Rgb): boolean => r - Math.max(g, b) > 30
+/** 多数点满足即算：最右一列偶尔会被一行长文字占到 */
+const mostly = (pixels: Rgb[], test: (p: Rgb) => boolean): boolean =>
+  pixels.length > 0 && pixels.filter(test).length * 2 > pixels.length
+
+/**
+ * 终端区透出全局背景的真实像素核查：不设背景 → 终端底色 #0C0C0C；设纯红背景图（面板半透明）→ 同一处带红色色偏；
+ * 恢复缺省背景设置 → 回到终端底色。像素值本身是排查数据（数字不进门槛），结论是三个布尔核查
+ */
+async function probeTermBackground(win: BrowserWindow): Promise<Record<string, unknown>> {
+  const js = (code: string): Promise<unknown> => win.webContents.executeJavaScript(code)
+  const waitJs = async (expr: string, timeoutMs: number): Promise<boolean> => {
+    const start = Date.now()
+    while (Date.now() - start < timeoutMs) {
+      if (await js(`!!(${expr})`)) return true
+      await sleep(100)
+    }
+    return false
+  }
+  const plain = await termEdgePixels(win)
+  const redPath = join(app.getPath('userData'), 'smoke-red.png')
+  writeFileSync(redPath, solidRedPng())
+  await js(
+    `window.tagterm.settings.update({ background: { imagePath: ${JSON.stringify(redPath)}, fit: 'cover', imageOpacity: 1, panelOpacity: 0.5, blurPx: 0 } })`,
+  )
+  const bgShown = await waitJs(
+    `(document.querySelector('[data-test=app-background]')?.getAttribute('style') ?? '').includes('data:image/png')`,
+    5000,
+  )
+  await sleep(500)
+  const tinted = await termEdgePixels(win)
+  await js(
+    `window.tagterm.settings.update({ background: { imagePath: null, fit: 'contain', imageOpacity: 0.35, panelOpacity: 0.75, blurPx: 4 } })`,
+  )
+  const bgCleared = await waitJs(`!document.querySelector('[data-test=app-background]')`, 5000)
+  await sleep(500)
+  const restored = await termEdgePixels(win)
+  return {
+    plain,
+    tinted,
+    restored,
+    bgShown,
+    bgCleared,
+    plainIsTermBg: mostly(plain, isTermBg),
+    tintedByImage: mostly(tinted, isRedTinted),
+    restoredToTermBg: mostly(restored, isTermBg),
+  }
+}
+
 /** 渲染进程脚本卡住时也要退出并留下线索 */
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -716,6 +817,11 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         await sleep(300)
         rightClick = { termCenter, pasteCount }
       }
+
+      // 终端区透出全局背景（reliability-hardening 行为 4）：xterm 6 自带样式给铺满终端区的 .xterm-viewport 写死了黑底，
+      // DOM 层按设计半透明，屏幕上终端文字区却是纯黑 —— 只能看真实像素。取当前终端画布最右一列的几个点（避开文字），
+      // 不设背景时应是终端底色 #0C0C0C；设一张纯红背景图后同一处带红色色偏；清掉后恢复
+      const termBackground = await probeTermBackground(win)
 
       // 托盘「设置」的广播 → 设置弹窗；背景图设 / 清往返
       const pngPath = join(app.getPath('userData'), 'smoke-bg.png')
@@ -1038,6 +1144,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         restore,
         heuristic,
         processTree,
+        termBackground,
         hooks,
         remaining,
         tagsFile,
