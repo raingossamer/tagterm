@@ -3,14 +3,22 @@
 // 外观段是草稿语义（决策 2）：改动只进本地草稿，经 settings.previewBackground 整窗实时生效但不落盘；
 // 「保存设置」才提交，「取消」/ Esc / 点遮罩丢弃草稿并还原。启动 / Agent / 更新 / 关于四段即时生效。
 // Agent 段：两个开关分别安装 / 移除 Claude Code 与 Codex 的 hooks（改用户配置文件前先备份），各自独立的状态与错误红字
+// 启动段另有全局快捷键（唤出 / 隐藏窗口）：开关 + 键位框，点键位框后按下新组合即改（录制期间暂停当前热键），Esc / 失焦取消
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import type { AutoLaunchStatus, HookAgent, HooksStatusMap } from '@shared/ipc'
-import type { AppBackground, BackgroundFit } from '@shared/models'
+import type { AutoLaunchStatus, GlobalShortcutStatus, HookAgent, HooksStatusMap } from '@shared/ipc'
+import type { AppBackground, BackgroundFit, GlobalShortcutConfig } from '@shared/models'
 import { MAX_BLUR_PX, MIN_PANEL_OPACITY } from '@shared/models'
+import { DEFAULT_GLOBAL_SHORTCUT } from '@shared/accelerator'
 import { useSettingsStore } from '../stores/settings'
 import { useUpdateStore } from '../stores/update'
 import { describeUpdateStatus } from '../composables/updateStatus'
 import { createCooldown } from '../composables/cooldown'
+import { captureAccelerator } from '../composables/shortcutCapture'
+
+const SHORTCUT_OCCUPIED = '该快捷键已被其他程序占用，换一个组合'
+const SHORTCUT_RULE = '需要包含 Ctrl 或 Alt，再加字母、数字或 F1–F12'
+const SHORTCUT_HINT =
+  '窗口在前台时按下藏到托盘，否则唤出并把焦点交给当前终端。点击键位框后按下新组合，Esc 取消'
 
 type SectionKey = 'appearance' | 'startup' | 'agent' | 'update' | 'about'
 
@@ -51,6 +59,20 @@ const dataDir = ref('')
 const error = ref('')
 /** 开机自启：打开弹窗时向主进程取一次，改动后以返回的实际状态回填（不进 store、不落盘） */
 const autoLaunch = ref<AutoLaunchStatus>({ enabled: false, blockedBySystem: false })
+/** 全局快捷键：打开弹窗时取一次，改动后以返回的实际状态回填；配置落 settings.json 由主进程负责 */
+const shortcut = ref<GlobalShortcutStatus>({
+  enabled: true,
+  accelerator: DEFAULT_GLOBAL_SHORTCUT,
+  registered: true,
+})
+const isCapturing = ref(false)
+const shortcutError = ref('')
+/** 键位框下的红字：这次操作的错误优先，否则启动时没注册上（被别的程序占着）也要说 */
+const shortcutProblem = computed(
+  () =>
+    shortcutError.value ||
+    (shortcut.value.enabled && !shortcut.value.registered ? SHORTCUT_OCCUPIED : ''),
+)
 /** hooks 安装状态：打开弹窗时取一次，切换开关后以返回的实际状态回填；两个目标各自的错误红字 */
 const hooks = ref<HooksStatusMap | null>(null)
 const hooksError = ref<Record<HookAgent, string>>({ claude: '', codex: '' })
@@ -96,12 +118,14 @@ function openLogsDir(): void {
 onMounted(async () => {
   document.addEventListener('keydown', onKeydown)
   try {
-    ;[version.value, dataDir.value, autoLaunch.value, hooks.value] = await Promise.all([
-      window.tagterm.app.getVersion(),
-      window.tagterm.app.getDataDir(),
-      window.tagterm.app.getAutoLaunch(),
-      window.tagterm.agent.getHooksStatus(),
-    ])
+    ;[version.value, dataDir.value, autoLaunch.value, hooks.value, shortcut.value] =
+      await Promise.all([
+        window.tagterm.app.getVersion(),
+        window.tagterm.app.getDataDir(),
+        window.tagterm.app.getAutoLaunch(),
+        window.tagterm.agent.getHooksStatus(),
+        window.tagterm.app.getGlobalShortcut(),
+      ])
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   }
@@ -122,7 +146,11 @@ async function onHooksChange(agent: HookAgent, e: Event): Promise<void> {
     input.checked = hooks.value?.[agent].installed ?? false
   }
 }
-onUnmounted(() => document.removeEventListener('keydown', onKeydown))
+onUnmounted(() => {
+  document.removeEventListener('keydown', onKeydown)
+  // 录制中关掉弹窗：把暂停的热键恢复
+  if (isCapturing.value) void window.tagterm.app.pauseGlobalShortcut(false)
+})
 
 // 草稿或预览开关变化 → 整窗预览跟着变（关掉预览就还原为已保存值）
 watch(
@@ -181,6 +209,67 @@ async function onAutoLaunchChange(e: Event): Promise<void> {
     error.value = err instanceof Error ? err.message : String(err)
     input.checked = autoLaunch.value.enabled
   }
+}
+
+/** 提交全局快捷键配置（主进程先注册、成功才落盘）；被占用等失败红字，返回是否成功 */
+async function submitShortcut(config: GlobalShortcutConfig): Promise<boolean> {
+  shortcutError.value = ''
+  try {
+    shortcut.value = await window.tagterm.app.setGlobalShortcut(config)
+    return true
+  } catch (err) {
+    shortcutError.value = err instanceof Error ? err.message : String(err)
+    return false
+  }
+}
+
+async function onShortcutEnabledChange(e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement
+  const isOk = await submitShortcut({
+    enabled: input.checked,
+    accelerator: shortcut.value.accelerator,
+  })
+  if (!isOk) input.checked = shortcut.value.enabled
+}
+
+/** 点键位框开始录制：先暂停当前热键，免得按到旧键把窗口藏掉；关着开关时框是置灰的，点了不录 */
+function startCapture(): void {
+  if (!shortcut.value.enabled || isCapturing.value) return
+  shortcutError.value = ''
+  isCapturing.value = true
+  void window.tagterm.app.pauseGlobalShortcut(true)
+}
+
+async function stopCapture(): Promise<void> {
+  if (!isCapturing.value) return
+  isCapturing.value = false
+  await window.tagterm.app.pauseGlobalShortcut(false)
+}
+
+/** 录制中的按键全部截下（Esc 也不冒泡到弹窗的关闭监听）：只按修饰键继续等、不合法提示规则、合法即提交 */
+async function onShortcutKeydown(e: KeyboardEvent): Promise<void> {
+  if (!isCapturing.value) return
+  e.preventDefault()
+  e.stopPropagation()
+  if (e.key === 'Escape') {
+    shortcutError.value = ''
+    await stopCapture()
+    return
+  }
+  const result = captureAccelerator(e)
+  if (result.kind === 'pending') return
+  if (result.kind === 'invalid') {
+    shortcutError.value = SHORTCUT_RULE
+    return
+  }
+  await stopCapture()
+  await submitShortcut({ enabled: true, accelerator: result.value })
+}
+
+function onShortcutBlur(): void {
+  if (!isCapturing.value) return
+  shortcutError.value = ''
+  void stopCapture()
 }
 
 async function save(): Promise<void> {
@@ -334,6 +423,7 @@ function onKeydown(e: KeyboardEvent): void {
 
           <section v-else-if="section === 'startup'" data-test="auto-launch-section">
             <h4>启动</h4>
+            <p class="hint" data-test="auto-launch-instant">即时生效，不受下方「保存设置」影响</p>
             <label class="check" data-test="auto-launch-label">
               <input
                 type="checkbox"
@@ -343,10 +433,42 @@ function onKeydown(e: KeyboardEvent): void {
               />
               开机时自动启动 TagTerm
             </label>
-            <p class="hint" data-test="auto-launch-instant">即时生效，不受下方「保存设置」影响</p>
             <p v-if="autoLaunch.blockedBySystem" class="hint" data-test="auto-launch-blocked">
               已在系统「启动应用」中被禁用
             </p>
+
+            <div class="shortcut" data-test="global-shortcut-section">
+              <label class="check" data-test="global-shortcut-label">
+                <input
+                  type="checkbox"
+                  :checked="shortcut.enabled"
+                  data-test="global-shortcut-enabled"
+                  @change="onShortcutEnabledChange"
+                />
+                <span v-text="'全局快捷键唤出 / 隐藏窗口'"></span>
+              </label>
+              <div class="row">
+                <button
+                  class="key-box mono"
+                  :class="{ capturing: isCapturing }"
+                  type="button"
+                  data-test="global-shortcut-key"
+                  :aria-disabled="shortcut.enabled ? undefined : 'true'"
+                  :title="shortcut.enabled ? '点击后按下新的组合键' : '先打开左边的开关'"
+                  @click="startCapture"
+                  @keydown="onShortcutKeydown"
+                  @blur="onShortcutBlur"
+                  v-text="isCapturing ? '按下新的组合键…' : shortcut.accelerator"
+                ></button>
+              </div>
+              <p class="hint" data-test="global-shortcut-hint" v-text="SHORTCUT_HINT"></p>
+              <p
+                v-if="shortcutProblem"
+                class="error"
+                data-test="global-shortcut-error"
+                v-text="shortcutProblem"
+              ></p>
+            </div>
           </section>
 
           <section v-else-if="section === 'agent'" data-test="agent-section">
@@ -644,6 +766,26 @@ section h4 {
   margin: 10px 0 0;
   font-size: 12px;
   color: #b42318;
+}
+.shortcut {
+  margin-top: 18px;
+}
+.key-box {
+  min-width: 140px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  font-size: 13px;
+  text-align: left;
+}
+.key-box.capturing {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.key-box[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: default;
 }
 .hooks-row {
   padding: 8px 0;

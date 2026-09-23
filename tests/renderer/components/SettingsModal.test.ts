@@ -200,6 +200,147 @@ describe('SettingsModal', () => {
     expect(wrapper.find('[data-test=settings-error]').text()).toBe('开发模式下不能设置开机自启')
   })
 
+  describe('「启动」段 · 全局快捷键', () => {
+    async function openStartup() {
+      const wrapper = mount(SettingsModal, { attachTo: document.body })
+      await flushPromises()
+      await wrapper.find('[data-test=settings-nav-startup]').trigger('click')
+      return wrapper
+    }
+    const keyBox = (w: ReturnType<typeof mount>) => w.find('[data-test=global-shortcut-key]')
+    const pressKey = (w: ReturnType<typeof mount>, init: KeyboardEventInit) =>
+      keyBox(w).trigger('keydown', init)
+
+    it('显示开关与当前键位，说明怎么用；已注册时没有红字', async () => {
+      installFakeApi()
+      const wrapper = await openStartup()
+      const box = wrapper.find('[data-test=global-shortcut-enabled]').element as HTMLInputElement
+      expect(box.checked).toBe(true)
+      expect(wrapper.find('[data-test=global-shortcut-label]').text()).toBe(
+        '全局快捷键唤出 / 隐藏窗口',
+      )
+      expect(keyBox(wrapper).text()).toBe('Ctrl+Alt+T')
+      expect(wrapper.find('[data-test=global-shortcut-hint]').text()).toContain('Esc 取消')
+      expect(wrapper.find('[data-test=global-shortcut-error]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('启动时没注册上（被别的程序占着）→ 键位框下红字「该快捷键已被其他程序占用，换一个组合」', async () => {
+      installFakeApi({
+        app: {
+          getGlobalShortcut: vi.fn(async () => ({
+            enabled: true,
+            accelerator: 'Ctrl+Alt+T',
+            registered: false,
+          })),
+        },
+      })
+      const wrapper = await openStartup()
+      expect(wrapper.find('[data-test=global-shortcut-error]').text()).toBe(
+        '该快捷键已被其他程序占用，换一个组合',
+      )
+      wrapper.unmount()
+    })
+
+    it('点键位框开始录制：先暂停当前热键，框里提示「按下新的组合键…」；只按修饰键继续等，按下合法组合即提交并回填', async () => {
+      const api = installFakeApi()
+      const wrapper = await openStartup()
+      await keyBox(wrapper).trigger('click')
+      expect(api.app.pauseGlobalShortcut).toHaveBeenCalledWith(true)
+      expect(keyBox(wrapper).text()).toBe('按下新的组合键…')
+
+      await pressKey(wrapper, { key: 'Control', code: 'ControlLeft', ctrlKey: true })
+      expect(api.app.setGlobalShortcut).not.toHaveBeenCalled()
+      await pressKey(wrapper, { key: 'k', code: 'KeyK', ctrlKey: true, altKey: true })
+      await flushPromises()
+      expect(api.app.pauseGlobalShortcut).toHaveBeenLastCalledWith(false)
+      expect(api.app.setGlobalShortcut).toHaveBeenCalledWith({
+        enabled: true,
+        accelerator: 'Ctrl+Alt+K',
+      })
+      expect(keyBox(wrapper).text()).toBe('Ctrl+Alt+K')
+      wrapper.unmount()
+    })
+
+    it('录制中按了不合法的组合 → 提示规则、继续录；Esc 只取消录制（恢复热键、不关弹窗）；失焦同样取消', async () => {
+      const api = installFakeApi()
+      const wrapper = await openStartup()
+      await keyBox(wrapper).trigger('click')
+      await pressKey(wrapper, { key: 't', code: 'KeyT', shiftKey: true })
+      expect(wrapper.find('[data-test=global-shortcut-error]').text()).toBe(
+        '需要包含 Ctrl 或 Alt，再加字母、数字或 F1–F12',
+      )
+      expect(keyBox(wrapper).text()).toBe('按下新的组合键…')
+
+      await pressKey(wrapper, { key: 'Escape', code: 'Escape' })
+      await flushPromises()
+      expect(wrapper.find('[data-test=settings-modal]').exists()).toBe(true)
+      expect(wrapper.emitted('close')).toBeUndefined()
+      expect(api.app.pauseGlobalShortcut).toHaveBeenLastCalledWith(false)
+      expect(keyBox(wrapper).text()).toBe('Ctrl+Alt+T')
+      expect(api.app.setGlobalShortcut).not.toHaveBeenCalled()
+
+      await keyBox(wrapper).trigger('click')
+      await keyBox(wrapper).trigger('blur')
+      await flushPromises()
+      expect(api.app.pauseGlobalShortcut).toHaveBeenLastCalledWith(false)
+      expect(keyBox(wrapper).text()).toBe('Ctrl+Alt+T')
+      wrapper.unmount()
+    })
+
+    it('新键位被占用：红字显示原因，键位框仍是旧键位', async () => {
+      const api = installFakeApi()
+      vi.mocked(api.app.setGlobalShortcut).mockRejectedValueOnce(
+        new Error('该快捷键已被其他程序占用'),
+      )
+      const wrapper = await openStartup()
+      await keyBox(wrapper).trigger('click')
+      await pressKey(wrapper, { key: 'F9', code: 'F9', altKey: true })
+      await flushPromises()
+      expect(wrapper.find('[data-test=global-shortcut-error]').text()).toBe(
+        '该快捷键已被其他程序占用',
+      )
+      expect(keyBox(wrapper).text()).toBe('Ctrl+Alt+T')
+      wrapper.unmount()
+    })
+
+    it('关掉开关 → 提交关闭、键位框置灰（aria-disabled）点了不录；再打开失败则红字并还原复选框', async () => {
+      const api = installFakeApi()
+      const wrapper = await openStartup()
+      const box = () =>
+        wrapper.find('[data-test=global-shortcut-enabled]').element as HTMLInputElement
+      await wrapper.find('[data-test=global-shortcut-enabled]').setValue(false)
+      await flushPromises()
+      expect(api.app.setGlobalShortcut).toHaveBeenCalledWith({
+        enabled: false,
+        accelerator: 'Ctrl+Alt+T',
+      })
+      expect(keyBox(wrapper).attributes('aria-disabled')).toBe('true')
+      await keyBox(wrapper).trigger('click')
+      expect(api.app.pauseGlobalShortcut).not.toHaveBeenCalled()
+      expect(keyBox(wrapper).text()).toBe('Ctrl+Alt+T')
+
+      vi.mocked(api.app.setGlobalShortcut).mockRejectedValueOnce(
+        new Error('该快捷键已被其他程序占用'),
+      )
+      await wrapper.find('[data-test=global-shortcut-enabled]').setValue(true)
+      await flushPromises()
+      expect(box().checked).toBe(false)
+      expect(wrapper.find('[data-test=global-shortcut-error]').text()).toBe(
+        '该快捷键已被其他程序占用',
+      )
+      wrapper.unmount()
+    })
+
+    it('录制中关掉弹窗：恢复热键', async () => {
+      const api = installFakeApi()
+      const wrapper = await openStartup()
+      await keyBox(wrapper).trigger('click')
+      wrapper.unmount()
+      expect(api.app.pauseGlobalShortcut).toHaveBeenLastCalledWith(false)
+    })
+  })
+
   it('「更新」段：检查更新 → 状态文案；有新版本出现「下载」；下载完成出现「立即安装并重启」', async () => {
     const api = installFakeApi()
     const update = useUpdateStore()
