@@ -191,6 +191,50 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
     })
   })
 
+  it('18 restart（右键「重启终端」）：结束该会话的 pty（主进程等它真正退出才返回）→ 旧实例销毁、在同一会话起新的空白终端并切到该页；在不在标签页里都一样', async () => {
+    await core.select(a.id)
+    await core.select(b.id)
+    core.closeTab(a.id)
+    terminals[0]!.written = '旧输出'
+
+    await core.restart(a.id)
+    expect(pty.kills).toEqual([a.id])
+    expect(terminals[0]!.isDisposed).toBe(true)
+    expect(terminals).toHaveLength(3)
+    expect(terminals[2]!.written).toBe('') // 新实例：旧输出与「[进程已退出]」都不带过来
+    expect(terminals[2]!.isVisible).toBe(true)
+    expect(pty.spawnCount(a.id)).toBe(2)
+    expect(core.snapshot()).toEqual({
+      openTabs: [b.id, a.id],
+      activeId: a.id,
+      runtime: { [a.id]: { phase: 'running' }, [b.id]: { phase: 'running' } },
+    })
+
+    // 新终端照常：按键转发到新 pty
+    terminals[2]!.typeInput('dir\r')
+    expect(pty.written).toEqual([[a.id, 'dir\r']])
+  })
+
+  it('19 restart：已退出的直接重开（不再 kill）；从没打开过终端、或正在打开的会话无副作用', async () => {
+    await core.select(a.id)
+    pty.emitExit(a.id, 0)
+    await core.restart(a.id)
+    expect(pty.kills).toEqual([])
+    expect(pty.spawnCount(a.id)).toBe(2)
+    expect(core.snapshot().runtime[a.id]).toEqual({ phase: 'running' })
+
+    const before = core.snapshot()
+    await core.restart(b.id) // 从没打开过
+    expect(pty.kills).toEqual([])
+    expect(core.snapshot()).toEqual(before)
+
+    setup({ manualOpen: true })
+    void core.select(c.id) // 打开中
+    await core.restart(c.id)
+    expect(pty.kills).toEqual([])
+    expect(pty.opens).toHaveLength(1)
+  })
+
   it('9 syncSessions 缺席 id：销毁实例、移除 host、关标签页（邻居规则）、删运行态；重复 sync 幂等；缺席非当前会话时 active 不变', async () => {
     await core.select(a.id)
     await core.select(b.id)

@@ -108,6 +108,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     core?.closeTab(id)
   }
 
+  /** 重启该会话的终端并切过去（左栏右键「重启终端」）；未 attach 时无副作用 */
+  async function restart(id: string): Promise<void> {
+    await core?.restart(id)
+  }
+
   function toggleSide(): void {
     sideHidden.value = !sideHidden.value
   }
@@ -129,6 +134,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     select,
     restore,
     closeTab,
+    restart,
     toggleSide,
     setHovered,
   }

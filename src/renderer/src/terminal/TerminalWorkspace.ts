@@ -38,7 +38,7 @@ export interface WorkspaceSnapshot {
 /** pty 端口 = window.tagterm.pty 的结构子集；生产直接传 window.tagterm.pty，测试传剧本式 FakePty */
 export type PtyPort = Pick<
   TagTermApi['pty'],
-  'open' | 'write' | 'resize' | 'onData' | 'onExit' | 'isAlive'
+  'open' | 'write' | 'resize' | 'kill' | 'onData' | 'onExit' | 'isAlive'
 >
 
 export interface TerminalWorkspaceDeps {
@@ -143,6 +143,22 @@ export class TerminalWorkspace {
       }
     }
     this.emit()
+  }
+
+  /**
+   * 重启终端（左栏右键「重启终端」）：结束该会话的 pty（主进程等它真正退出、pty:exit 先广播出去才返回，
+   * 所以这里拿到的已是 exited）→ 按已退出的路径重开 = 旧实例销毁、同一目录起新的空白终端，并切到该页。
+   * 已退出的直接重开；从没打开过终端、或正在打开的会话不动。
+   */
+  async restart(id: string): Promise<void> {
+    const phase = this.runtime.get(id)?.phase
+    if (phase === undefined || phase === 'opening') return
+    if (phase === 'running') {
+      await this.deps.pty.kill(id)
+      // 退出事件万一没到（主进程等待 3 s 兜底放行）：照样当已退出重开，不停在旧实例上
+      if (this.runtime.get(id)?.phase === 'running') this.runtime.set(id, { phase: 'exited' })
+    }
+    await this.select(id)
   }
 
   /**

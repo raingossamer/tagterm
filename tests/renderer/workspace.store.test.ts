@@ -64,7 +64,7 @@ describe('workspace store（TerminalWorkspace 的薄适配器 + 纯 UI 状态）
     expect(fresh.phaseOf(b.id)).toBe('running')
   })
 
-  it('attachCore 后镜像核心快照；select / closeTab 委托到核心，openTabs / activeId / runtime 随之变化', async () => {
+  it('attachCore 后镜像核心快照；select / closeTab / restart 委托到核心，openTabs / activeId / runtime 随之变化', async () => {
     const ws = useWorkspaceStore()
     expect(ws.hasActive).toBe(false)
     ws.attachCore(core)
@@ -82,6 +82,11 @@ describe('workspace store（TerminalWorkspace 的薄适配器 + 纯 UI 状态）
     ws.closeTab(b.id)
     expect(ws.openTabs).toEqual([a.id])
     expect(ws.activeId).toBe(a.id)
+
+    await ws.restart(b.id) // 重启：结束 → 重开并切过去
+    expect(pty.kills).toEqual([b.id])
+    expect(pty.spawnCount(b.id)).toBe(2)
+    expect(ws.activeId).toBe(b.id)
   })
 
   it('localStorage 坏 JSON / 不是对象 / ids 不是数组 / 混入非字符串：restore() 不抛，无标签页、不 spawn', async () => {
@@ -133,10 +138,12 @@ describe('workspace store（TerminalWorkspace 的薄适配器 + 纯 UI 状态）
     expect(detached.openTabs).toEqual([])
   })
 
-  it('未 attachCore 时 select / closeTab 无副作用', async () => {
+  it('未 attachCore 时 select / closeTab / restart 无副作用', async () => {
     const ws = useWorkspaceStore()
     await ws.select(a.id)
     ws.closeTab(a.id)
+    await ws.restart(a.id)
+    expect(pty.kills).toEqual([])
     expect(ws.activeId).toBeNull()
     expect(pty.opens).toEqual([])
   })
