@@ -63,6 +63,23 @@ describe('TerminalPool（只管 xterm 一侧，不认识 pty）', () => {
     expect(resizes).toEqual([['a', { cols: 120, rows: 40 }]])
   })
 
+  it('setWebglAllowed(false)（设了全局背景图：WebGL 会给暗淡字垫不透明黑底）→ 可见实例立即退回 DOM 渲染，之后 show 也不再开 WebGL；恢复允许 → 只有可见实例重新开', () => {
+    pool.open('a')
+    pool.open('b')
+    pool.show('a')
+    expect(terminals[0]!.isWebgl).toBe(true)
+
+    pool.setWebglAllowed(false)
+    expect(terminals[0]!.isWebgl).toBe(false)
+    pool.show('b')
+    expect(terminals[1]!.isWebgl).toBe(false)
+    expect(terminals[0]!.isWebgl).toBe(false)
+
+    pool.setWebglAllowed(true)
+    expect(terminals[1]!.isWebgl).toBe(true)
+    expect(terminals[0]!.isWebgl).toBe(false)
+  })
+
   it('show 只显示目标实例并在下一帧 fit + focus，WebGL 只挂在可见实例；fitActive / focusActive 只作用于可见实例；hide 隐藏全部', () => {
     pool.open('a')
     pool.open('b')

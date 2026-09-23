@@ -611,12 +611,17 @@ function solidRedPng(): Buffer {
   return nativeImage.createFromBitmap(bgra, { width: size, height: size }).toPNG()
 }
 
-/** 当前可见终端画布最右一列上的三个点（CSS 像素，相对内容区）：最右一列很少有字；没有可见终端为空数组 */
+/**
+ * 当前可见终端文字区最右一列上的三个点（CSS 像素，相对内容区）：最右一列很少有字；没有可见终端为空数组。
+ * 右缘取「画布右缘」与「视口右缘让出滚动条」中较小的那个：DOM 渲染器的 .xterm-screen 比容器还宽、伸到窗口外面
+ */
 const TERM_EDGE_POINTS = `JSON.stringify((() => {
   const host = [...document.querySelectorAll('[data-test=terminal-pane] > div')].find((h) => h.style.display === 'block')
   const r = host?.querySelector('.xterm-screen')?.getBoundingClientRect()
-  if (!r || r.width < 20 || r.height < 20) return []
-  return [0.35, 0.6, 0.85].map((f) => [r.right - 4, r.top + r.height * f])
+  const v = host?.querySelector('.xterm-viewport')?.getBoundingClientRect()
+  if (!r || !v || r.width < 40 || r.height < 20) return []
+  const x = Math.min(r.right, v.right - 16) - 4
+  return [0.35, 0.6, 0.85].map((f) => [x, r.top + r.height * f])
 })())`
 
 /** 屏幕上真实合成出来的颜色（capturePage 与屏幕取色一致，2026-09-23 实测） */
@@ -643,9 +648,18 @@ const isRedTinted = ([r, g, b]: Rgb): boolean => r - Math.max(g, b) > 30
 const mostly = (pixels: Rgb[], test: (p: Rgb) => boolean): boolean =>
   pixels.length > 0 && pixels.filter(test).length * 2 > pixels.length
 
+/** 当前可见终端用的哪种渲染器：WebGL 下没有 .xterm-rows（画在 canvas 上），DOM 渲染器有 */
+const VISIBLE_TERM_RENDERER = `(() => {
+  const host = [...document.querySelectorAll('[data-test=terminal-pane] > div')].find((h) => h.style.display === 'block')
+  if (!host) return 'none'
+  return host.querySelector('.xterm-rows') ? 'dom' : 'webgl'
+})()`
+
 /**
  * 终端区透出全局背景的真实像素核查：不设背景 → 终端底色 #0C0C0C；设纯红背景图（面板半透明）→ 同一处带红色色偏；
- * 恢复缺省背景设置 → 回到终端底色。像素值本身是排查数据（数字不进门槛），结论是三个布尔核查
+ * 恢复缺省背景设置 → 回到终端底色。像素值本身是排查数据（数字不进门槛），结论是三个布尔核查。
+ * 另核查：设了背景图时当前终端必须是 DOM 渲染（WebGL 会给暗淡字垫不透明黑底）；不设背景时用哪种只记录不判 ——
+ * 没有 GPU 的机器（CI）上 WebGL 本来就会退回 DOM
  */
 async function probeTermBackground(win: BrowserWindow): Promise<Record<string, unknown>> {
   const js = (code: string): Promise<unknown> => win.webContents.executeJavaScript(code)
@@ -658,6 +672,7 @@ async function probeTermBackground(win: BrowserWindow): Promise<Record<string, u
     return false
   }
   const plain = await termEdgePixels(win)
+  const plainRenderer = await js(VISIBLE_TERM_RENDERER)
   const redPath = join(app.getPath('userData'), 'smoke-red.png')
   writeFileSync(redPath, solidRedPng())
   await js(
@@ -669,16 +684,22 @@ async function probeTermBackground(win: BrowserWindow): Promise<Record<string, u
   )
   await sleep(500)
   const tinted = await termEdgePixels(win)
+  const tintedRenderer = await js(VISIBLE_TERM_RENDERER)
   await js(
     `window.tagterm.settings.update({ background: { imagePath: null, fit: 'contain', imageOpacity: 0.35, panelOpacity: 0.75, blurPx: 4 } })`,
   )
   const bgCleared = await waitJs(`!document.querySelector('[data-test=app-background]')`, 5000)
   await sleep(500)
   const restored = await termEdgePixels(win)
+  const restoredRenderer = await js(VISIBLE_TERM_RENDERER)
   return {
     plain,
     tinted,
     restored,
+    plainRenderer,
+    tintedRenderer,
+    restoredRenderer,
+    domRendererWithBg: tintedRenderer === 'dom',
     bgShown,
     bgCleared,
     plainIsTermBg: mostly(plain, isTermBg),
