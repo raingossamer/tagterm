@@ -110,6 +110,10 @@ export class FakeTerminal implements TerminalInstance {
   emitResize(size: TerminalSize): void {
     this.resizeHandlers.forEach((h) => h(size))
   }
+  /** 模拟查找插件直接给出的结果（如超出高亮上限时 index 为 -1） */
+  emitSearchResults(result: SearchResult): void {
+    this.searchHandlers.forEach((h) => h(result))
+  }
   /** 模拟在这个终端上 Ctrl+滚轮（步数，往上滚为正）或按 Ctrl+0（'reset'） */
   emitFontZoom(zoom: FontZoom): void {
     this.zoomHandlers.forEach((h) => h(zoom))

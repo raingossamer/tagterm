@@ -1,11 +1,13 @@
 <script setup lang="ts">
 // 终端区：把容器交给会话生命周期核心（内部实例池）并挂 ResizeObserver；点击空白处聚焦当前终端。
 // 背景图由 App 的全局背景层提供（决策 3），这里只留半透明底色，xterm 本身背景透明（theme.ts）。
-// Ctrl+滚轮 / Ctrl+0 调字号时右上角浮出「字号 N」，停手 1 秒消失（到上下限再滚也浮出，让人知道到头了）
+// 右上角浮层：终端内搜索框（Ctrl+Shift+F，TerminalSearch）与字号小牌 —— Ctrl+滚轮 / Ctrl+0 调字号时浮出「字号 N」，
+// 停手 1 秒消失（到上下限再滚也浮出，让人知道到头了）；两者同时出现时小牌排在搜索框下面
 import { inject, onMounted, onUnmounted, ref } from 'vue'
 import type { Unsubscribe } from '@shared/api'
 import { TERMINAL_WORKSPACE_KEY } from '../terminal/workspaceKey'
 import { createDebounced } from '../composables/debounce'
+import TerminalSearch from './TerminalSearch.vue'
 
 /** 尺寸变化后多久才真正 fit：拖动窗口时 ResizeObserver 逐帧回调，逐帧 fit 会卡顿并闪烁 */
 const FIT_DEBOUNCE_MS = 80
@@ -48,12 +50,15 @@ onUnmounted(() => {
 <template>
   <div class="term-wrap">
     <div ref="root" class="term" data-test="terminal-pane" @click="workspace.focusActive()"></div>
-    <div
-      v-if="badgeFontSize !== null"
-      class="font-badge"
-      data-test="font-size-badge"
-      v-text="`字号 ${badgeFontSize}`"
-    ></div>
+    <div class="overlay">
+      <TerminalSearch />
+      <div
+        v-if="badgeFontSize !== null"
+        class="font-badge"
+        data-test="font-size-badge"
+        v-text="`字号 ${badgeFontSize}`"
+      ></div>
+    </div>
   </div>
 </template>
 
@@ -80,11 +85,18 @@ onUnmounted(() => {
 .term :deep(.xterm .xterm-viewport) {
   background-color: transparent;
 }
-/* 字号小牌：浮在终端右上角，不挡点击 */
-.font-badge {
+/* 右上角浮层：搜索框在上、字号小牌在下；浮层本身不挡点击（搜索框自己接事件） */
+.overlay {
   position: absolute;
   top: 8px;
   right: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  pointer-events: none;
+}
+.font-badge {
   padding: 2px 8px;
   border-radius: 4px;
   background: var(--panel2);
