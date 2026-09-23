@@ -108,7 +108,7 @@ describe('HookInstaller（改用户的 hooks 配置文件，真实临时目录�
     expect(readFileSync(file, 'utf8')).toBe('[1, 2]')
   })
 
-  it('Claude：卸载只删我们的，与安装前等价（hooks 空了则删键）；未安装时卸载不写文件；syncPort 只改命令里的端口', async () => {
+  it('Claude：卸载只删我们的，与安装前等价（hooks 空了则删键）；未安装时卸载不写文件；refresh 把已装命令换成本次端口', async () => {
     const { installer, file } = claude()
     const original = { model: 'opus', permissions: { allow: ['Bash'] } }
     writeFileSync(file, JSON.stringify(original))
@@ -127,7 +127,7 @@ describe('HookInstaller（改用户的 hooks 配置文件，真实临时目录�
 
     await installer.install(PORT)
     now += 1000
-    await installer.syncPort(60000)
+    await installer.refresh(60000)
     const moved = readJson(file) as { model: string }
     expect(hasOurHooks(moved)).toEqual({ installed: true, port: 60000 })
     expect(moved.model).toBe('opus')
@@ -137,15 +137,95 @@ describe('HookInstaller（改用户的 hooks 配置文件，真实临时目录�
       port: 60000,
       settingsPath: file,
     })
-    // 端口一致时不写
+    // 端口一致、内容已是当前版本时不写
     const stable = readFileSync(file, 'utf8')
-    await installer.syncPort(60000)
+    await installer.refresh(60000)
     expect(readFileSync(file, 'utf8')).toBe(stable)
-    // 未安装时 syncPort 不写
+    // 未安装时 refresh 不写
     await installer.uninstall(PORT)
     const bare = readFileSync(file, 'utf8')
-    await installer.syncPort(1234)
+    await installer.refresh(1234)
     expect(readFileSync(file, 'utf8')).toBe(bare)
+  })
+
+  it('Claude：refresh 启动补装 —— 旧版本装的条目（缺事件、旧命令、废弃事件）按当前版本重建并先备份；再 refresh 不写不备份；别的程序只调了键顺序也不写', async () => {
+    const { installer, file } = claude()
+    const old = 'curl.exe -s -m 3 -X POST -T - http://127.0.0.1:40000/tagterm/hook/claude'
+    writeFileSync(
+      file,
+      JSON.stringify({
+        model: 'opus',
+        hooks: {
+          Stop: [
+            { hooks: [{ type: 'command', command: 'echo mine' }] },
+            { hooks: [{ type: 'command', command: old }] },
+          ],
+          PreCompact: [{ hooks: [{ type: 'command', command: old }] }],
+          UserPromptSubmit: [{ hooks: [{ type: 'command', command: old }] }],
+        },
+      }),
+    )
+
+    await expect(installer.refresh(PORT)).resolves.toBe(true)
+    expect(backupsOf('settings.json')).toHaveLength(1)
+    const written = readJson(file) as {
+      model: string
+      hooks: Record<string, Array<{ hooks: Array<Record<string, unknown>> }>>
+    }
+    expect(written.model).toBe('opus')
+    expect(Object.keys(written.hooks).sort()).toEqual(
+      [
+        'Notification',
+        'SessionEnd',
+        'SessionStart',
+        'Stop',
+        'StopFailure',
+        'UserPromptSubmit',
+      ].sort(),
+    )
+    expect(written.hooks['Stop']![0]).toEqual({
+      hooks: [{ type: 'command', command: 'echo mine' }],
+    })
+    expect(JSON.stringify(written)).not.toContain('40000')
+    expect(JSON.stringify(written)).toContain('--noproxy')
+    expect(hasOurHooks(written)).toEqual({ installed: true, port: PORT })
+
+    // 已是当前版本：不写、不备份
+    now += 1000
+    const current = readFileSync(file, 'utf8')
+    await expect(installer.refresh(PORT)).resolves.toBe(false)
+    expect(readFileSync(file, 'utf8')).toBe(current)
+    expect(backupsOf('settings.json')).toHaveLength(1)
+
+    // 别的程序（如 Claude Code 自己保存设置）把事件键顺序倒过来写回：内容相同 → 仍不写、不备份
+    const reordered = {
+      hooks: Object.fromEntries(Object.entries(written.hooks).reverse()),
+      model: written.model,
+    }
+    const reorderedText = JSON.stringify(reordered, null, 2)
+    writeFileSync(file, reorderedText)
+    now += 1000
+    await expect(installer.refresh(PORT)).resolves.toBe(false)
+    expect(readFileSync(file, 'utf8')).toBe(reorderedText)
+    expect(backupsOf('settings.json')).toHaveLength(1)
+  })
+
+  it('Claude：refresh 遇到文件缺失不新建、坏 JSON 时 reject 且不动文件；打开开关（install）同样清掉废弃事件里我们的条目', async () => {
+    const { installer, file } = claude()
+    await expect(installer.refresh(PORT)).resolves.toBe(false)
+    expect(readdirSync(dir)).toEqual([])
+
+    writeFileSync(file, '{ not json')
+    await expect(installer.refresh(PORT)).rejects.toThrow('不是合法 JSON')
+    expect(readFileSync(file, 'utf8')).toBe('{ not json')
+    expect(backupsOf('settings.json')).toHaveLength(0)
+
+    const old = 'curl.exe -s -m 3 -X POST -T - http://127.0.0.1:40000/tagterm/hook/claude'
+    writeFileSync(file, JSON.stringify({ hooks: { PreCompact: [{ hooks: [{ command: old }] }] } }))
+    await installer.install(PORT)
+    const written = readJson(file) as { hooks: Record<string, unknown> }
+    expect(written.hooks['PreCompact']).toBeUndefined()
+    expect(hasOurHooks(written)).toEqual({ installed: true, port: PORT })
   })
 
   it('Codex：文件不存在时新建（无备份）并写六条带 commandWindows 的条目；同目录 config.toml 内容与 mtime 不变；卸载后保留空 hooks 骨架', async () => {

@@ -8,7 +8,7 @@
 import { access, copyFile } from 'node:fs/promises'
 import type { HookAgent, HooksStatus } from '@shared/ipc'
 import { readJson, writeJsonAtomic } from '../store/jsonFile'
-import { hasOurHooks, mergeHooks, rewritePort, stripHooks } from './hookSettings'
+import { hasOurHooks, rebuildHooks, stripHooks } from './hookSettings'
 
 export interface HookTarget {
   agent: HookAgent
@@ -36,6 +36,29 @@ async function exists(file: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+/**
+ * 两份 JSON 内容是否相同：对象键的先后不计、数组顺序计。别的程序（Claude Code 自己保存设置）按自己的键顺序写回同样的内容时，
+ * 不该触发一次改写与备份 —— 否则每次启动都多一份备份
+ */
+function isSameJson(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return (
+      Array.isArray(a) &&
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((item, i) => isSameJson(item, b[i]))
+    )
+  }
+  if (isObject(a) && isObject(b)) {
+    const keys = Object.keys(a)
+    return (
+      keys.length === Object.keys(b).length &&
+      keys.every((k) => Object.prototype.hasOwnProperty.call(b, k) && isSameJson(a[k], b[k]))
+    )
+  }
+  return a === b
 }
 
 /** 备份文件名里的时间戳：YYYYMMDD-HHmmss（本地时间） */
@@ -68,13 +91,16 @@ export class HookInstaller {
     return found.installed ? { ...base, installed: true, port: found.port ?? port } : base
   }
 
-  /** 备份 → 追加我们的条目 → 原子写回；已装且内容没变则什么都不做 */
+  /** 备份 → 按当前契约重建我们的条目（顺带清掉旧版本留下的废弃事件）→ 原子写回；已装且内容没变则什么都不做 */
   async install(port: number): Promise<HooksStatus> {
     const existing = await this.read()
     if (existing === null && !this.target.createIfMissing) throw new Error(this.missingMessage())
     const current: Json = existing ?? { hooks: {} }
-    const merged = mergeHooks(this.target.agent, current, port)
-    await this.writeIfChanged(current, merged, existing !== null)
+    await this.writeIfChanged(
+      current,
+      rebuildHooks(this.target.agent, current, port),
+      existing !== null,
+    )
     return this.status(port)
   }
 
@@ -93,13 +119,15 @@ export class HookInstaller {
     return `未找到 ${TARGET_LABEL[this.target.agent]} 配置文件：${this.target.settingsPath}`
   }
 
-  /** 启动时端口顺延了：已安装且端口不一致 → 静默重写命令里的端口 */
-  async syncPort(port: number): Promise<void> {
+  /**
+   * 启动补装：已安装 → 按当前版本整体重建我们的条目并换成本次端口（补新事件、升级旧命令、清废弃事件）；
+   * 内容没变不写不备份；未安装 / 文件缺失一律不写（绝不替用户装）；坏 JSON / 顶层不是对象抛中文 message、不动文件。
+   * 返回是否真的改写了文件（装配层据此记一行日志）
+   */
+  async refresh(port: number): Promise<boolean> {
     const existing = await this.read()
-    if (existing === null) return
-    const found = hasOurHooks(existing)
-    if (!found.installed || found.port === port) return
-    await this.writeIfChanged(existing, rewritePort(existing, port), true)
+    if (existing === null || !hasOurHooks(existing).installed) return false
+    return this.writeIfChanged(existing, rebuildHooks(this.target.agent, existing, port), true)
   }
 
   /** 读并校验：不存在 → null；坏 JSON / 顶层不是对象 → 抛中文 message */
@@ -121,14 +149,16 @@ export class HookInstaller {
     return parsed
   }
 
+  /** 内容变了才备份并写回；返回是否写了。「变了」按内容比，不看对象键的先后（见 isSameJson） */
   private async writeIfChanged(
     before: unknown,
     after: unknown,
     shouldBackup: boolean,
-  ): Promise<void> {
-    if (JSON.stringify(before) === JSON.stringify(after)) return
+  ): Promise<boolean> {
+    if (isSameJson(before, after)) return false
     if (shouldBackup) await copyFile(this.target.settingsPath, await this.backupPath())
     await writeJsonAtomic(this.target.settingsPath, after)
+    return true
   }
 
   /** <文件>.tagterm-bak-<时间戳>；同一秒内再备份（先装后卸）不能覆盖上一份，撞名就加序号 */

@@ -307,6 +307,28 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
     await waitFor(() => runtimeOf('s1')?.status === 'done')
   })
 
+  it('start 启动补装：旧版本装的 Claude hooks（缺 StopFailure、命令缺 --noproxy）按当前版本重建；没装 hooks 的 Codex 文件不新建', async () => {
+    const claudeFile = join(dir, 'claude-settings.json')
+    const codexFile = join(dir, 'codex-hooks.json')
+    const old = 'curl.exe -s -m 3 -X POST -T - http://127.0.0.1:40000/tagterm/hook/claude'
+    writeFileSync(
+      claudeFile,
+      JSON.stringify({ model: 'opus', hooks: { Stop: [{ hooks: [{ command: old }] }] } }),
+    )
+    const upgraded = new AgentSubsystem(baseOptions)
+    try {
+      await upgraded.start()
+      const text = readFileSync(claudeFile, 'utf8')
+      expect(text).toContain('StopFailure')
+      expect(text).toContain('--noproxy')
+      expect(text).toContain(`127.0.0.1:${upgraded.port}/`)
+      expect(JSON.parse(text).model).toBe('opus')
+      expect(existsSync(codexFile)).toBe(false)
+    } finally {
+      await upgraded.stop()
+    }
+  })
+
   it('首选端口被占 → 顺延，启动前装好的 hooks 命令被静默改成实际端口；全部端口都失败 → port 为 0、start 不抛、已装文件不改写', async () => {
     const blocker = createServer()
     await new Promise<void>((r) => blocker.listen(0, '127.0.0.1', () => r()))

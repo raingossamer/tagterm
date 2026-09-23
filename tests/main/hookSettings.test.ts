@@ -5,7 +5,7 @@ import {
   hasOurHooks,
   isOurHook,
   mergeHooks,
-  rewritePort,
+  rebuildHooks,
   stripHooks,
 } from '../../src/main/agent/hookSettings'
 
@@ -137,12 +137,63 @@ describe('hookSettings（hooks 配置的纯函数）', () => {
     })
   })
 
-  it('rewritePort：只改我们命令里的端口，其他一律不动；端口相同返回等价对象', () => {
-    const merged = mergeHooks('claude', { hooks: { Stop: [{ hooks: [{ command: 'x' }] }] } }, PORT)
-    const moved = rewritePort(merged, 60000)
-    expect(hasOurHooks(moved)).toEqual({ installed: true, port: 60000 })
-    expect(JSON.stringify(moved).includes(String(PORT))).toBe(false)
-    expect(stripHooks(moved)).toEqual(stripHooks(merged))
-    expect(rewritePort(merged, PORT)).toEqual(merged)
+  it('rebuildHooks：旧版本装的条目按当前契约整体重建 —— 补缺失事件、升级旧命令、换成本次端口、清掉废弃事件里我们的条目；别人的条目原样、已有事件原位不动；重建两次结果不变', () => {
+    // 缺 --noproxy 的旧命令、旧端口；契约里早已没有的 PreCompact 事件；没有 StopFailure
+    const old = 'curl.exe -s -m 3 -X POST -T - http://127.0.0.1:40000/tagterm/hook/claude'
+    const settings = {
+      model: 'opus',
+      hooks: {
+        Stop: [
+          { hooks: [{ type: 'command', command: 'echo mine' }] },
+          { hooks: [{ type: 'command', command: old, timeout: 5, async: true }] },
+        ],
+        PreCompact: [
+          { hooks: [{ type: 'command', command: old }] },
+          { hooks: [{ type: 'command', command: 'echo keep' }] },
+        ],
+        Notification: [
+          { matcher: 'permission_prompt', hooks: [{ type: 'command', command: old }] },
+        ],
+      },
+    }
+    const rebuilt = rebuildHooks('claude', settings, PORT) as {
+      model: string
+      hooks: Record<string, Array<{ hooks: Array<Record<string, unknown>> }>>
+    }
+
+    // 语义上 = 只留别人的条目，再按当前契约装一遍
+    expect(rebuilt).toEqual(mergeHooks('claude', stripHooks(settings), PORT))
+    expect(rebuilt.model).toBe('opus')
+    expect(rebuilt.hooks['PreCompact']).toEqual([
+      { hooks: [{ type: 'command', command: 'echo keep' }] },
+    ])
+    expect(rebuilt.hooks['Stop']![0]).toEqual(settings.hooks.Stop[0])
+    for (const spec of CLAUDE_HOOK_EVENTS) {
+      expect(rebuilt.hooks[spec.event], spec.event).toBeDefined()
+    }
+    expect(JSON.stringify(rebuilt)).not.toContain('40000')
+    expect(hasOurHooks(rebuilt)).toEqual({ installed: true, port: PORT })
+    // 已有事件在文件里的位置不变（Claude Code 自己改写文件时的顺序要尊重，否则每次启动都会被判成「变了」）
+    expect(Object.keys(rebuilt.hooks).slice(0, 3)).toEqual(['Stop', 'PreCompact', 'Notification'])
+    // 幂等：已是当前版本 → 等价且键顺序不变
+    const again = rebuildHooks('claude', rebuilt, PORT)
+    expect(again).toEqual(rebuilt)
+    expect(JSON.stringify(again)).toBe(JSON.stringify(rebuilt))
+  })
+
+  it('rebuildHooks：Codex 的条目同样带 commandWindows；废弃事件里只剩我们的条目时整个事件键删掉', () => {
+    const old = 'curl.exe -s -m 3 -X POST -T - http://127.0.0.1:40000/tagterm/hook/codex'
+    const rebuilt = rebuildHooks(
+      'codex',
+      { hooks: { Legacy: [{ hooks: [{ type: 'command', command: old, commandWindows: old }] }] } },
+      PORT,
+    ) as { hooks: Record<string, Array<{ hooks: Array<Record<string, unknown>> }>> }
+    expect(rebuilt.hooks['Legacy']).toBeUndefined()
+    expect(Object.keys(rebuilt.hooks).sort()).toEqual(CODEX_HOOK_EVENTS.map((e) => e.event).sort())
+    for (const entries of Object.values(rebuilt.hooks)) {
+      const hook = entries[0]!.hooks[0]!
+      expect(hook['commandWindows']).toBe(hook['command'])
+      expect(hook['command']).toContain(`127.0.0.1:${PORT}/`)
+    }
   })
 })
