@@ -1,5 +1,5 @@
 /**
- * 纯函数：Claude Code（~/.claude/settings.json）与 Codex（~/.codex/hooks.json）hooks 配置的合并 / 剥离 / 识别 / 换端口。
+ * 纯函数：Claude Code（~/.claude/settings.json）与 Codex（~/.codex/hooks.json）hooks 配置的合并 / 剥离 / 识别 / 整体重建（启动补装：补新事件、升级旧命令、换端口）。
  * 两个文件形态相同：顶层 `hooks` 下按事件名挂条目数组，条目 `{ matcher?, hooks: [{ type: 'command', command, timeout, async }] }`，
  * Codex 的每条多一个 `commandWindows`。装哪些事件来自 hookContract 的契约表；我们的条目靠 command 里的 `/tagterm/hook/` 识别；
  * 别人的条目与其他键一律不动。
@@ -46,7 +46,6 @@ function entriesOf(value: unknown): unknown[] {
   return Array.isArray(value) ? value : []
 }
 
-/** 某事件的条目数组里是否已有我们的命令 */
 /** 这个条目是我们装的吗（条目里任一命令带 `/tagterm/hook/`）：合并时按当前命令串重建它、剥离时删掉它 */
 function isOurEntry(entry: unknown): boolean {
   return (
@@ -75,6 +74,18 @@ export function mergeHooks(agent: HookAgent, settings: unknown, port: number): u
   return base
 }
 
+/** 某事件的条目数组里只删我们的命令：别人的命令原样，条目删空了连条目一起删 */
+function stripOurEntries(entries: readonly unknown[]): unknown[] {
+  return entries
+    .map((entry) => {
+      if (!isObject(entry) || !Array.isArray(entry['hooks'])) return entry
+      const inner = entry['hooks'].filter((h) => !(isObject(h) && isOurHook(h['command'])))
+      if (inner.length === entry['hooks'].length) return entry
+      return inner.length === 0 ? null : { ...entry, hooks: inner }
+    })
+    .filter((entry) => entry !== null)
+}
+
 /** 只删我们的命令；条目、事件数组、hooks 表空了就一并删；返回新对象 */
 export function stripHooks(settings: unknown): unknown {
   if (!isObject(settings)) return settings
@@ -86,19 +97,32 @@ export function stripHooks(settings: unknown): unknown {
       hooks[event] = value
       continue
     }
-    const kept = value
-      .map((entry) => {
-        if (!isObject(entry) || !Array.isArray(entry['hooks'])) return entry
-        const inner = entry['hooks'].filter((h) => !(isObject(h) && isOurHook(h['command'])))
-        if (inner.length === entry['hooks'].length) return entry
-        return inner.length === 0 ? null : { ...entry, hooks: inner }
-      })
-      .filter((entry) => entry !== null)
+    const kept = stripOurEntries(value)
     if (kept.length > 0) hooks[event] = kept
   }
   if (Object.keys(hooks).length > 0) base['hooks'] = hooks
   else delete base['hooks']
   return base
+}
+
+/**
+ * 按当前契约整体重建我们的条目（打开开关与启动补装共用）：契约里的事件原位换成当前命令串（补缺失事件、升级旧命令、换端口），
+ * 契约里已经没有的事件只删我们的条目、别人的留着，删空了连事件键一起删；其余键与别人的条目不动。
+ * 已有事件在文件里的位置保持不变 —— Claude Code 自己保存设置时的顺序要尊重，否则每次启动都会被判成「变了」而改写、备份
+ */
+export function rebuildHooks(agent: HookAgent, settings: unknown, port: number): unknown {
+  const merged = mergeHooks(agent, settings, port) as Json
+  const current = new Set(HOOK_CONTRACTS[agent].events.map((spec) => spec.event))
+  const hooks: Record<string, unknown> = {}
+  for (const [event, value] of Object.entries(hooksTableOf(merged))) {
+    if (current.has(event) || !Array.isArray(value)) {
+      hooks[event] = value
+      continue
+    }
+    const kept = stripOurEntries(value)
+    if (kept.length > 0) hooks[event] = kept
+  }
+  return { ...merged, hooks }
 }
 
 /** 遍历我们的每条命令 */
@@ -123,35 +147,4 @@ export function hasOurHooks(settings: unknown): { installed: boolean; port: numb
   if (commands.length === 0) return { installed: false, port: null }
   const m = PORT_IN_COMMAND.exec(commands[0]!)
   return { installed: true, port: m ? Number(m[1]) : null }
-}
-
-/** 只把我们命令里的端口改成 port（启动时端口顺延了才用得上）；返回新对象 */
-export function rewritePort(settings: unknown, port: number): unknown {
-  if (!isObject(settings) || !isObject(settings['hooks'])) return settings
-  const hooks: Record<string, unknown> = {}
-  for (const [event, value] of Object.entries(settings['hooks'])) {
-    hooks[event] = !Array.isArray(value)
-      ? value
-      : value.map((entry) => {
-          if (!isObject(entry) || !Array.isArray(entry['hooks'])) return entry
-          return {
-            ...entry,
-            hooks: entry['hooks'].map((h) =>
-              isObject(h) && isOurHook(h['command'])
-                ? rewriteCommandPort(
-                    h,
-                    (h['command'] as string).replace(PORT_IN_COMMAND, `127.0.0.1:${port}/`),
-                  )
-                : h,
-            ),
-          }
-        })
-  }
-  return { ...settings, hooks }
-}
-
-function rewriteCommandPort(hook: Json, command: string): Json {
-  const next: Json = { ...hook, command }
-  if (typeof hook['commandWindows'] === 'string') next['commandWindows'] = command
-  return next
 }

@@ -206,11 +206,13 @@ export class AgentSubsystem {
       console.error('[agent] hooks 端点启动失败，Claude / Codex hooks 不可用', err)
       return
     }
+    // 启动补装：已装 hooks 的目标按当前版本整体重建我们的条目（补新事件、升级旧命令、换成本次端口）；没装的不碰
     for (const [agent, installer] of Object.entries(this.installers)) {
       try {
-        await installer.syncPort(this.hookPort)
+        if (await installer.refresh(this.hookPort))
+          console.log(`[agent] ${agent} hooks 已按当前版本更新`)
       } catch (err) {
-        console.warn(`[agent] 同步 ${agent} hooks 端口失败`, err)
+        console.warn(`[agent] 更新 ${agent} hooks 失败，文件未改动`, err)
       }
     }
   }
