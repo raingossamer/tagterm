@@ -979,6 +979,7 @@ interface KeyboardState {
 
 /** 去掉 ConPTY 输出里的控制序列：它会把连续空格换成「擦除 + 光标前移」，不去掉就匹配不到行内文字 */
 function stripAnsi(text: string): string {
+  // eslint-disable-next-line no-control-regex -- 要匹配的正是 ESC / BEL 这两个控制字符
   return text.replace(/\x1b\][^\x07]*\x07/g, '').replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
 }
 

@@ -138,6 +138,7 @@ export class HookInstaller {
     } catch (err) {
       throw new Error(
         `${TARGET_LABEL[this.target.agent]} 配置文件不是合法 JSON：${this.target.settingsPath}（${err instanceof Error ? err.message : String(err)}）`,
+        { cause: err },
       )
     }
     if (parsed === null) return null

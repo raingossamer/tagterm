@@ -41,8 +41,8 @@ import type { TagStore } from './store/TagStore'
 import type { Updater } from './updater/Updater'
 
 export interface IpcMainLike {
-  handle(channel: string, listener: (event: unknown, ...args: any[]) => unknown): void
-  on(channel: string, listener: (event: unknown, ...args: any[]) => void): void
+  handle(channel: string, listener: (event: unknown, ...args: unknown[]) => unknown): void
+  on(channel: string, listener: (event: unknown, ...args: unknown[]) => void): void
 }
 
 export interface IpcDeps {

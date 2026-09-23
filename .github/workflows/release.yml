@@ -37,6 +37,11 @@ jobs:
 
       - run: pnpm typecheck
 
+      # 代码检查（ESLint 不读类型的推荐集）与格式检查，任何告警都拒发
+      - run: pnpm lint
+
+      - run: pnpm format:check
+
       - run: pnpm test
 
       - name: Read version

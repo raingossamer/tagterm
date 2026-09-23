@@ -9,7 +9,7 @@
  * hooks 没有这种事件，所以这条路不受抑制窗约束（用户 2026-09-21 判定）。
  */
 import type { HookAgent, OutputReport } from '@shared/ipc'
-import type { AgentKind, SessionRuntime } from '@shared/models'
+import type { SessionRuntime } from '@shared/models'
 import { HOOK_CONTRACTS } from './hookContract'
 import type { ProcessState } from './ProcessTreeProbe'
 import {
