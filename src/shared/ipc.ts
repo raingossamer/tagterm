@@ -123,7 +123,7 @@ export interface IpcInvokeMap {
   'session-tag:detach': { args: [sessionId: string, tagId: string]; result: void }
   'pty:open': { args: [sessionId: string, size: PtySize]; result: PtyOpenResult } // 幂等
   'pty:resize': { args: [sessionId: string, size: PtySize]; result: void }
-  'pty:kill': { args: [sessionId: string]; result: void }
+  'pty:kill': { args: [sessionId: string]; result: void } // 等进程退出（pty:exit 已广播）才返回；没在跑立即返回
   'pty:is-alive': { args: [sessionId: string]; result: boolean }
   // ---- agent 状态（M3）----
   'agent:list': { args: []; result: SessionRuntime[] } // 全部会话的运行时记录（启动时镜像）

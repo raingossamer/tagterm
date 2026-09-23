@@ -220,9 +220,12 @@ describe('IPC 接口层', () => {
     await waitFor(() => (output[s.id] ?? '').includes('via-ipc'))
     await ipc.invoke('pty:resize', s.id, { cols: 100, rows: 30 })
 
+    // pty:kill 等进程真正退出才返回：返回时退出事件已广播出去（重启终端靠这一点，否则新终端会被迟到的退出标成已退出）
     await ipc.invoke('pty:kill', s.id)
-    await waitFor(() => exits.some((e) => e.sessionId === s.id))
+    expect(exits.filter((e) => e.sessionId === s.id)).toHaveLength(1)
     await expect(ipc.invoke('pty:is-alive', s.id)).resolves.toBe(false)
+    await ipc.invoke('pty:kill', s.id) // 已经没在跑：立即返回，不再有退出事件
+    expect(exits.filter((e) => e.sessionId === s.id)).toHaveLength(1)
   })
 
   it('pty:open 不存在的会话报错', async () => {

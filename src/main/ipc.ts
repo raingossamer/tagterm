@@ -205,7 +205,8 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
     const { cols, rows } = assertSize(size)
     deps.pty.resize(assertId(id), cols, rows)
   })
-  handle('pty:kill', (id) => deps.pty.kill(assertId(id)))
+  // 等进程真正退出才返回：pty:exit 先广播出去，渲染进程随后重开（重启终端）不会被这条迟到的退出标成已退出
+  handle('pty:kill', (id) => deps.pty.killAndWait(assertId(id)))
   handle('pty:is-alive', (id) => deps.pty.has(assertId(id)))
   on('pty:write', (id, data) => {
     if (typeof id === 'string' && typeof data === 'string') deps.pty.write(id, data)

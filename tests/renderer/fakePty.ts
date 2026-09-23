@@ -1,5 +1,5 @@
 /**
- * 剧本式假 pty：实现 window.tagterm.pty 的结构子集（open / write / resize / onData / onExit），
+ * 剧本式假 pty：实现 window.tagterm.pty 的结构子集（open / write / resize / kill / isAlive / onData / onExit），
  * 语义与主进程 PtyManager 一致 —— 退出即删条目，之后再 open 是新 spawn（created: true）。
  * 测试用 emitData / emitExit 推动事件；manualOpen 让 open 挂起，resolveOpens 后才 resolve（测竞态）。
  */
@@ -8,7 +8,7 @@ import type { TagTermApi, Unsubscribe } from '@shared/api'
 
 export type FakePtyPort = Pick<
   TagTermApi['pty'],
-  'open' | 'write' | 'resize' | 'onData' | 'onExit' | 'isAlive'
+  'open' | 'write' | 'resize' | 'kill' | 'onData' | 'onExit' | 'isAlive'
 >
 
 export interface FakePtyOptions {
@@ -27,6 +27,8 @@ export class FakePty implements FakePtyPort {
   readonly opens: FakeOpenRecord[] = []
   readonly written: Array<[sessionId: string, data: string]> = []
   readonly resizes: Array<[sessionId: string, size: PtySize]> = []
+  /** 每次 kill 的会话 id，按调用顺序 */
+  readonly kills: string[] = []
   private readonly running = new Map<string, number>()
   private readonly dataHandlers: Array<(sessionId: string, data: string) => void> = []
   private readonly exitHandlers: Array<(e: PtyExitEvent) => void> = []
@@ -57,6 +59,13 @@ export class FakePty implements FakePtyPort {
 
   write(sessionId: string, data: string): void {
     this.written.push([sessionId, data])
+  }
+
+  /** 与主进程 pty:kill 一致：在跑就先发退出事件（代码 1）再返回；没在跑立即返回 */
+  kill(sessionId: string): Promise<void> {
+    this.kills.push(sessionId)
+    if (this.running.has(sessionId)) this.emitExit(sessionId, 1)
+    return Promise.resolve()
   }
 
   /** 与主进程 pty:is-alive 一致：条目还在即存活 */
