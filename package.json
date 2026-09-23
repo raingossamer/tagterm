@@ -9,6 +9,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build && electron-builder --publish never",
     "build:dir": "electron-vite build && electron-builder --dir --publish never",
+    "screenshots": "electron-vite build && electron scripts/screenshots/main.cjs",
     "typecheck": "vue-tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json",
     "test": "vitest run",
     "format": "prettier --write ."
