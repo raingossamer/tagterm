@@ -47,4 +47,11 @@ onUnmounted(() => {
   inset: 0;
   padding: 4px 0 0 8px;
 }
+/* xterm 6 自带的 xterm.css 给铺满终端区的 .xterm-viewport 写死了 background-color: #000（注释说是给 macOS 滚动条用的），
+   它垫在画布下面，终端文字区因此永远纯黑、透不出全局背景（与渲染器无关，WebGL / DOM 都一样）。
+   覆盖成透明后底色只剩 .term-wrap 的 --t-bg-soft：不设背景是 #0C0C0C，设了背景随面板不透明度半透明。
+   :deep 让特异性高过 xterm.css 的同名规则；烟测取真实像素核查（termBackground） */
+.term :deep(.xterm .xterm-viewport) {
+  background-color: transparent;
+}
 </style>
