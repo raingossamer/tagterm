@@ -31,7 +31,7 @@ win:
 # 发布方式：把 dist 里的 latest.yml、TagTerm-Setup-x.y.z.exe、.exe.blockmap 三个文件传到对应 Release（tag vx.y.z）
 publish:
   provider: github
-  owner: nujabes226
+  owner: raingossamer
   repo: tagterm
 nsis:
   oneClick: false
