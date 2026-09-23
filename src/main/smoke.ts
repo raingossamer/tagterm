@@ -15,6 +15,7 @@ import type { PtyManager } from './pty/PtyManager'
 import type { AgentSubsystem, BadgeCounts } from './agent/AgentSubsystem'
 import type { SessionStore } from './store/SessionStore'
 import type { TagStore } from './store/TagStore'
+import { judgeSmoke } from './smokeVerdict'
 
 export interface SmokeDeps {
   store: SessionStore
@@ -186,6 +187,8 @@ const SMOKE_SCRIPT = `(async () => {
   $('[data-test=strip-add-tag]')?.click()
   await sleep(50)
   const popOptions = $$('[data-test=tag-pop-opt]').map((o) => [o.textContent.replace('✓', ''), !!o.querySelector('[data-test=tag-pop-check]')])
+  // s2 刚去掉 B、只剩 A：A 打勾、B 不打勾（选项数据本身不进门槛，这条核查进）
+  const popChecksRight = popOptions.some(([n, c]) => n === 'smoke-标签A' && c) && popOptions.some(([n, c]) => n === 'smoke-标签B' && !c)
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
   await sleep(50)
   const popClosed = !$('[data-test=tag-pop]')
@@ -308,7 +311,7 @@ const SMOKE_SCRIPT = `(async () => {
     sessionDrag: { namesBeforeDrag, dragApplied, namesAfterDrag, globalOrderChanged },
     tags: {
       gotTagged, s1Groups, rowTagDots, statusDotLast, nameAlignedTagged, nameAlignedUntagged, groupsTagged, s2Tooltip, chipCounts, groupsAny, groupsAll, rowsAll, groupsCleared,
-      rowsWhenSearching, emptyText, pillsBefore, pillRemoved, popOptions, popClosed, pathChip, tagsCleared, groupsAfterRemove,
+      rowsWhenSearching, emptyText, pillsBefore, pillRemoved, popOptions, popChecksRight, popClosed, pathChip, tagsCleared, groupsAfterRemove,
       groupsBeforeReorder, reorderApplied, groupsAfterReorder, chipsAfterReorder,
       hiddenApplied, rowsWhenAHidden, untaggedWhenAHidden, searchFindsHidden, sessionsKeptWhenHidden,
       mixedShown, groupsWhenMixed, shownAgain,
@@ -558,6 +561,30 @@ const PNG_1X1 = Buffer.from(
 )
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/** 托盘角标计数是否正好是这三个数（角标数据改写成布尔核查，才进得了发布门） */
+function countsAre(
+  counts: BadgeCounts | null,
+  blocked: number,
+  working: number,
+  done: number,
+): boolean {
+  return (
+    counts !== null &&
+    counts.blocked === blocked &&
+    counts.working === working &&
+    counts.done === done
+  )
+}
+
+/**
+ * 打出烟测结果与结论两行：`[smoke]` 是全部数据（排查用），`[smoke-verdict]` 是 smokeVerdict 的判定 ——
+ * 发布流水线只认后者的 "ok":true；异常分支同样打印，结论必然是失败
+ */
+function report(result: Record<string, unknown>): void {
+  console.log('[smoke] ' + JSON.stringify(result))
+  console.log('[smoke-verdict] ' + JSON.stringify(judgeSmoke(result)))
+}
 
 /** 渲染进程脚本卡住时也要退出并留下线索 */
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
@@ -888,6 +915,8 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         codexIdle,
         badgeWhenBlocked,
         badgeWhenIdle,
+        badgeBlockedCounted: countsAre(badgeWhenBlocked, 1, 0, 0),
+        badgeIdleCleared: countsAre(badgeWhenIdle, 0, 0, 0),
         selectedByBroadcast,
       }
 
@@ -961,6 +990,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         const statusAfterDone = statusOf()
         deps.pty.write(s1, '\x03') // Ctrl+C 停掉假 agent
         const agentGone = await waitUntil(() => agentOf() === null, 8000)
+        const badgeAfterAll = deps.badgeCounts()
         heuristic = {
           recordSeen,
           agentSeen,
@@ -978,7 +1008,10 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
           leftWorking,
           statusAfterDone,
           agentGone,
-          badgeAfterAll: deps.badgeCounts(),
+          badgeAfterAll,
+          badgeWorkingCounted: countsAre(badgeWhenWorking, 0, 1, 0),
+          badgeRetryingCounted: countsAre(badgeWhenRetrying, 1, 0, 0),
+          badgeClearedAfterAll: countsAre(badgeAfterAll, 0, 0, 0),
         }
       } catch (err) {
         heuristic = { error: String(err) }
@@ -993,28 +1026,25 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         exists: existsSync(join(app.getPath('userData'), 'tags.json')),
         remaining: deps.tags.list(),
       }
-      console.log(
-        '[smoke] ' +
-          JSON.stringify({
-            ...result,
-            clipboard,
-            search,
-            rightClick,
-            settings,
-            sidebar,
-            termOverflow,
-            lifecycle,
-            restore,
-            heuristic,
-            processTree,
-            hooks,
-            remaining,
-            tagsFile,
-            consoleErrors,
-          }),
-      )
+      report({
+        ...result,
+        clipboard,
+        search,
+        rightClick,
+        settings,
+        sidebar,
+        termOverflow,
+        lifecycle,
+        restore,
+        heuristic,
+        processTree,
+        hooks,
+        remaining,
+        tagsFile,
+        consoleErrors,
+      })
     } catch (err) {
-      console.log('[smoke] ' + JSON.stringify({ error: String(err), ...result, consoleErrors }))
+      report({ error: String(err), ...result, consoleErrors })
     }
     deps.quit()
   })

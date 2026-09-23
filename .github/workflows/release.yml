@@ -52,8 +52,11 @@ jobs:
           TAGTERM_SMOKE: '1'
         run: |
           ./dist/win-unpacked/TagTerm.exe > smoke.log 2>&1 || true
-          grep -E '^\[smoke\]' smoke.log || { echo "no smoke output"; cat smoke.log; exit 1; }
-          grep -E '^\[smoke\]' smoke.log | grep -q '"consoleErrors":\[\]' || { echo "smoke reported console errors"; exit 1; }
+          grep -E '^\[smoke\] ' smoke.log || { echo "no smoke output"; cat smoke.log; exit 1; }
+          # 发布门只认烟测自己的结论（src/main/smokeVerdict.ts）：任一核查不符、任一段出错、控制台报错都拒发；失败不自动重跑
+          verdict=$(grep -E '^\[smoke-verdict\] ' smoke.log) || { echo "no smoke verdict"; cat smoke.log; exit 1; }
+          echo "$verdict"
+          echo "$verdict" | grep -q '"ok":true' || { echo "smoke failed, see failures above"; exit 1; }
 
       - name: Publish release v${{ steps.ver.outputs.version }}
         uses: softprops/action-gh-release@v2
