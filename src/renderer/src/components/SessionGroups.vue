@@ -3,7 +3,8 @@
 //（分组头 = 三角 + 色点 + 名称 + 数量，点击折叠 / 展开，折叠状态记在 filter store）；
 // 组内无会话显示「这个标签下还没有会话」，整体无匹配显示「没有匹配的会话…」。
 // 移除会话的唯一入口在这里（右键菜单「移除会话」）：confirm 后只调 sessions.remove，关标签页靠主进程广播；
-// 右键菜单唯一实例挂在这里（usePopover 管点外部关闭），「编辑会话」上抛 edit 由 App 开弹窗
+// 右键菜单唯一实例挂在这里（usePopover 管点外部关闭），「编辑会话」上抛 edit 由 App 开弹窗；
+// 「重启终端」在这里确认（终端里有程序在跑时写出程序名）后交生命周期核心重启并切过去
 import { computed, onUnmounted, ref } from 'vue'
 import SessionMenu from './SessionMenu.vue'
 import SessionRow from './SessionRow.vue'
@@ -57,6 +58,26 @@ function removeFromMenu(): void {
   if (id) void removeSession(id)
 }
 
+function restartFromMenu(): void {
+  const id = menuTarget.value?.id
+  dismissMenu()
+  if (id) void restartTerminal(id)
+}
+
+/**
+ * 重启终端：有程序在跑先确认（与唤起区置灰看同一份镜像，进程树每 2 s 一轮）；已退出的终端里肯定没程序，不问。
+ * 结束、重开、切页都在生命周期核心里；失败（结束终端的调用被拒）在左栏顶部红字
+ */
+async function restartTerminal(id: string): Promise<void> {
+  const running = workspace.phaseOf(id) === 'running' ? agent.runningNameOf(id) : null
+  if (running && !window.confirm(`终端里有程序在运行（${running}），重启会结束它。继续？`)) return
+  try {
+    await workspace.restart(id)
+  } catch (err) {
+    flashError(err instanceof Error ? err.message : String(err))
+  }
+}
+
 /** 移除只走主进程广播这一条路：session:changed 到达后由生命周期核心销毁实例并关标签页 */
 async function removeSession(id: string): Promise<void> {
   const s = sessions.byId(id)
@@ -78,8 +99,7 @@ const groups = computed(() =>
 // 与原型一致：没有分组或所有分组都为空 → 整体空态
 const isEmpty = computed(() => groups.value.every((g) => g.sessions.length === 0))
 
-// ---- 组内拖拽排序 ----
-
+// 列表顶部的失败红字 1.2 s（组内拖拽排序、重启终端共用）
 const ERROR_FLASH_MS = 1200
 const error = ref('')
 let errorTimer: ReturnType<typeof setTimeout> | null = null
@@ -93,6 +113,8 @@ function flashError(message: string): void {
 onUnmounted(() => {
   if (errorTimer) clearTimeout(errorTimer)
 })
+
+// ---- 组内拖拽排序 ----
 
 // 搜索时组内只剩子集，拖了容易误以为改的是完整顺序 —— 直接禁用
 const canDrag = computed(() => !filter.search.trim())
@@ -180,7 +202,9 @@ function onDrop(group: SessionGroup, targetId: string): void {
       <SessionMenu
         :x="menuTarget.x"
         :y="menuTarget.y"
+        :can-restart="workspace.phaseOf(menuTarget.id) !== 'closed'"
         @edit="editFromMenu"
+        @restart="restartFromMenu"
         @remove="removeFromMenu"
         @close="dismissMenu"
       />

@@ -109,6 +109,106 @@ describe('SessionGroups', () => {
     wrapper.unmount()
   })
 
+  describe('右键菜单「重启终端」', () => {
+    const s = makeSession({ name: 'simba-api', sortOrder: 1 })
+    const t = makeSession({ name: 'simba-web', sortOrder: 2 })
+    /** 右键 id 对应的那一行（「未打标签」组里按 sortOrder：s 在前、t 在后） */
+    async function rightClick(wrapper: ReturnType<typeof mount>, id: string): Promise<void> {
+      wrapper.findAll('[data-test=session-row]')[[s.id, t.id].indexOf(id)]!.element.dispatchEvent(
+        new MouseEvent('contextmenu', {
+          bubbles: true,
+          cancelable: true,
+          clientX: 5,
+          clientY: 5,
+        }),
+      )
+      await nextTick()
+    }
+
+    it('排在「编辑会话」与「移除会话」之间；终端还没打开时置灰（悬停「终端还没打开」）点了不动；打开后空闲直接重启并切过去', async () => {
+      installFakeApi()
+      const { pty, workspace } = installFakeWorkspace([s, t])
+      const wrapper = mount(SessionGroups, { attachTo: document.body })
+
+      await rightClick(wrapper, s.id)
+      const items = wrapper.findAll('[data-test=session-menu] button')
+      expect(items.map((b) => b.text())).toEqual(['编辑会话', '重启终端', '移除会话'])
+      const restart = wrapper.find('[data-test=menu-restart]')
+      expect(restart.attributes('aria-disabled')).toBe('true')
+      expect(restart.attributes('title')).toBe('终端还没打开')
+      await restart.trigger('click')
+      await flushPromises()
+      expect(pty.kills).toEqual([])
+
+      await workspace.select(s.id)
+      await workspace.select(t.id)
+      const confirm = stubConfirm(true)
+      await rightClick(wrapper, s.id)
+      expect(wrapper.find('[data-test=menu-restart]').attributes('aria-disabled')).toBeUndefined()
+      await wrapper.find('[data-test=menu-restart]').trigger('click')
+      await flushPromises()
+      expect(confirm).not.toHaveBeenCalled() // 空闲：不问
+      expect(pty.kills).toEqual([s.id])
+      expect(pty.spawnCount(s.id)).toBe(2)
+      expect(workspace.activeId).toBe(s.id)
+      expect(wrapper.find('[data-test=session-menu]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('有程序在跑：确认框写出程序名（认出的工具用正式名称），取消不动、确定才重启；已退出的终端直接重启不问；重启失败左栏顶部红字', async () => {
+      installFakeApi()
+      const { pty, workspace } = installFakeWorkspace([s, t])
+      const agent = useAgentStore()
+      const wrapper = mount(SessionGroups, { attachTo: document.body })
+      await workspace.select(s.id)
+      agent.runtime = {
+        [s.id]: { sessionId: s.id, alive: true, agent: null, status: 'idle', program: 'node' },
+      }
+
+      let confirm = stubConfirm(false)
+      await rightClick(wrapper, s.id)
+      await wrapper.find('[data-test=menu-restart]').trigger('click')
+      await flushPromises()
+      expect(confirm).toHaveBeenCalledWith('终端里有程序在运行（node），重启会结束它。继续？')
+      expect(pty.kills).toEqual([])
+
+      agent.runtime = {
+        [s.id]: {
+          sessionId: s.id,
+          alive: true,
+          agent: 'claude',
+          status: 'working',
+          program: 'claude',
+        },
+      }
+      confirm = stubConfirm(true)
+      await rightClick(wrapper, s.id)
+      await wrapper.find('[data-test=menu-restart]').trigger('click')
+      await flushPromises()
+      expect(confirm).toHaveBeenCalledWith(
+        '终端里有程序在运行（Claude Code），重启会结束它。继续？',
+      )
+      expect(pty.kills).toEqual([s.id])
+
+      // 已退出（显示「[进程已退出]」）：镜像里就算还残留程序名也不问
+      pty.emitExit(s.id, 0)
+      confirm = stubConfirm(true)
+      await rightClick(wrapper, s.id)
+      await wrapper.find('[data-test=menu-restart]').trigger('click')
+      await flushPromises()
+      expect(confirm).not.toHaveBeenCalled()
+      expect(pty.spawnCount(s.id)).toBe(3)
+
+      vi.spyOn(pty, 'kill').mockRejectedValueOnce(new Error('结束终端失败'))
+      agent.runtime = {}
+      await rightClick(wrapper, s.id)
+      await wrapper.find('[data-test=menu-restart]').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-test=groups-error]').text()).toBe('结束终端失败')
+      wrapper.unmount()
+    })
+  })
+
   it('按 sortOrder 平铺每个会话：名称 + 路径末两段；active 行高亮；点击行发出 select', async () => {
     const a = makeSession({ name: 'simba-api', cwd: 'D:\\Projects\\simba\\api', sortOrder: 2 })
     const b = makeSession({ name: 'iot', cwd: 'C:\\work\\iot\\', sortOrder: 1 })
