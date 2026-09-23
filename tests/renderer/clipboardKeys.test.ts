@@ -31,6 +31,13 @@ describe('terminalKeyAction（Windows 终端习惯 + 全局搜索键）', () => 
     expect(terminalKeyAction(key({ key: 'c', ctrlKey: true }), false)).toBeNull()
   })
 
+  it('Ctrl+0（主键盘或小键盘）归 font-reset：字号回到默认；不带 Ctrl 的 0 照常输入', () => {
+    expect(terminalKeyAction(key({ key: '0', ctrlKey: true }), false)).toBe('font-reset')
+    expect(terminalKeyAction(key({ key: '0', ctrlKey: true }), true)).toBe('font-reset')
+    expect(terminalKeyAction(key({ key: '0' }), false)).toBeNull()
+    expect(terminalKeyAction(key({ key: '0', ctrlKey: true, altKey: true }), false)).toBeNull()
+  })
+
   it('其他按键、带 Alt 的组合、非 keydown 事件都不处理', () => {
     expect(terminalKeyAction(key({ key: 'v' }), false)).toBeNull()
     expect(terminalKeyAction(key({ key: 'v', ctrlKey: true, altKey: true }), false)).toBeNull()
