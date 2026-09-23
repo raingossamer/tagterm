@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { AgentKind } from '@shared/models'
 import { afterEach } from 'vitest'
 import { existsSync } from 'node:fs'
-import { ProcessTreeProbe } from '../../src/main/agent/ProcessTreeProbe'
+import {
+  ProcessTreeProbe,
+  type AgentSnapshot,
+  type ProcessState,
+} from '../../src/main/agent/ProcessTreeProbe'
 import type { ProcessNode } from '../../src/main/agent/processMatch'
 import { listSubtree } from '../../src/main/agent/windowsProcessTree'
 import { PtyManager } from '../../src/main/pty/PtyManager'
@@ -13,7 +16,7 @@ describe('ProcessTreeProbe（pty 子树查询）', () => {
   /** 假子树：pid → 子进程列表；假定时器：手动触发 */
   let subtrees: Map<number, ProcessNode[]>
   let pending: Array<() => void>
-  let snapshots: Array<Map<string, AgentKind | null>>
+  let snapshots: AgentSnapshot[]
   let probe: ProcessTreeProbe
 
   const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0))
@@ -64,9 +67,9 @@ describe('ProcessTreeProbe（pty 子树查询）', () => {
     failing.watch('s2', 200)
     await tick()
     expect(snapshots[0]).toEqual(
-      new Map<string, AgentKind | null>([
-        ['s1', null],
-        ['s2', 'claude'],
+      new Map<string, ProcessState>([
+        ['s1', { agent: null, program: null }],
+        ['s2', { agent: 'claude', program: 'claude' }],
       ]),
     )
   })

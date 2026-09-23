@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { SessionRuntime } from '@shared/models'
+import type { AgentKind, SessionRuntime } from '@shared/models'
 import { AgentDetector } from '../../src/main/agent/AgentDetector'
 import { HOOK_CONTRACTS } from '../../src/main/agent/hookContract'
 
@@ -28,6 +28,12 @@ const retrying = (
   silentMs,
 })
 const retryHint = (s: number): string => `Connection error. · Retrying in ${s}s · attempt 2/10`
+
+/** 进程树快照里的一个会话：工具（认不出为 null）与 shell 下在跑的程序名（缺省 null：多数用例只关心 agent） */
+const inTree = (
+  agent: AgentKind | null,
+  program: string | null = null,
+): { agent: AgentKind | null; program: string | null } => ({ agent, program })
 
 describe('AgentDetector（运行时状态机）', () => {
   let changes: SessionRuntime[]
@@ -81,17 +87,17 @@ describe('AgentDetector（运行时状态机）', () => {
 
     detector.processSnapshot(
       new Map([
-        ['s1', 'claude'],
-        ['ghost', 'pi'],
+        ['s1', inTree('claude', null)],
+        ['ghost', inTree('pi')],
       ]),
     )
     expect(changes).toEqual([{ sessionId: 's1', alive: true, agent: 'claude', status: 'idle' }])
     expect(detector.list().find((r) => r.sessionId === 's2')?.agent).toBeNull()
 
-    detector.processSnapshot(new Map([['s1', 'claude']]))
+    detector.processSnapshot(new Map([['s1', inTree('claude', null)]]))
     expect(changes).toHaveLength(1)
 
-    detector.processSnapshot(new Map([['s1', null]]))
+    detector.processSnapshot(new Map([['s1', inTree(null)]]))
     expect(changes).toHaveLength(2)
     expect(changes[1]).toEqual({ sessionId: 's1', alive: true, agent: null, status: 'idle' })
     expect(changes[1]).not.toHaveProperty('pendingHint')
@@ -109,7 +115,7 @@ describe('AgentDetector（运行时状态机）', () => {
       { sessionId: 's1', alive: true, agent: null, status: 'idle', cwdNow: 'C:\\Windows' },
     ])
 
-    detector.processSnapshot(new Map([['s1', 'gemini']]))
+    detector.processSnapshot(new Map([['s1', inTree('gemini')]]))
     changes.length = 0
     // 欢迎画面 / 在工具里打字：屏幕在动但没有计时器 → 不算运行中
     detector.reportOutput('s1', { tail: ['Welcome to Gemini CLI', '> 正在打字'], silentMs: 0 })
@@ -151,7 +157,7 @@ describe('AgentDetector（运行时状态机）', () => {
 
   it('有 agent 的静默报告：末行命中提示 → blocked + pendingHint（屏幕在动时不判，重绘中途的一帧不算等人）；计时器还在走 → 仍 working（不算跑完）；计时器停了且此前 working / blocked → 未被查看 done（清提示）、正被查看 idle；idle 永不变 done；done 被查看 → idle', () => {
     detector.ptySpawned('s1')
-    detector.processSnapshot(new Map([['s1', 'pi']]))
+    detector.processSnapshot(new Map([['s1', inTree('pi')]]))
     changes.length = 0
 
     // 空闲的 agent 静默不会变成「已完成」
@@ -220,7 +226,7 @@ describe('AgentDetector（运行时状态机）', () => {
 
   it('重试横幅：有 agent 且倒数在走 → blocked、提示 = 横幅那一行（两种报告都认，从 working / idle 都转）；同屏计时器也在走时倒数优先；静态引用的横幅不转移；倒数还在屏上时不放行；倒数消失后计时器走起来 → working（清提示）、静默 → done / idle', () => {
     detector.ptySpawned('s1')
-    detector.processSnapshot(new Map([['s1', 'claude']]))
+    detector.processSnapshot(new Map([['s1', inTree('claude')]]))
     changes.length = 0
 
     // 静态引用：聊天里印着一句横幅，两份采样读数一样 → 不是在倒数

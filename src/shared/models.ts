@@ -34,6 +34,7 @@ export interface SessionRuntime {
   status: AgentStatus
   cwdNow?: string // 从提示符解析到的当前目录
   pendingHint?: string // 等你确认时的那一行提示
+  program?: string // shell 下正在跑的程序名（进程树为准，认不出的程序也有；没有程序在跑时不带这个键）
 }
 
 export const SESSIONS_FILE_VERSION = 1

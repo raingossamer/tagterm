@@ -201,6 +201,39 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
     expect(runtimeOf('s1')).toEqual({ sessionId: 's1', alive: true, agent: null, status: 'idle' })
   })
 
+  it('进程树里认不出的程序只记 program（agent 仍 null、状态点不动，计时器在走也不算运行中）；换了程序才广播；认出的工具同时记 program；子树清空 → 两者都清', async () => {
+    const wrapped = agent.wrapPty({ onData: () => {}, onExit: () => {}, isFile: existsSync })
+    wrapped.onSpawn?.('s1', 100)
+    subtrees.set(100, [{ pid: 101, ppid: 100, name: 'PING.EXE' }])
+    await tick()
+    expect(runtimeOf('s1')).toEqual({
+      sessionId: 's1',
+      alive: true,
+      agent: null,
+      status: 'idle',
+      program: 'ping',
+    })
+    reportWorking('s1') // 构建脚本也会打出「(12s)」：认不出的程序不走屏幕判定
+    expect(runtimeOf('s1')).toMatchObject({ agent: null, status: 'idle' })
+
+    const count = changes.length
+    await tick() // 同一个程序：不重复广播
+    expect(changes).toHaveLength(count)
+
+    subtrees.set(100, [{ pid: 102, ppid: 100, name: 'node.exe', commandLine: 'node build.js' }])
+    await tick()
+    expect(changes).toHaveLength(count + 1)
+    expect(changes.at(-1)).toMatchObject({ agent: null, program: 'node' })
+
+    subtrees.set(100, [{ pid: 103, ppid: 100, name: 'claude.exe' }])
+    await tick()
+    expect(runtimeOf('s1')).toMatchObject({ agent: 'claude', program: 'claude', status: 'idle' })
+
+    subtrees.set(100, [])
+    await tick()
+    expect(runtimeOf('s1')).toEqual({ sessionId: 's1', alive: true, agent: null, status: 'idle' })
+  })
+
   it('静默末尾报告不再带 shell：无 agent 只更新 cwdNow；有 agent 末行提示 → blocked + 提示；跑完 → done，被查看 → idle；会话移除 → 墓碑', async () => {
     const wrapped = agent.wrapPty({ onData: () => {}, onExit: () => {}, isFile: existsSync })
     wrapped.onSpawn?.('s1', 100)
