@@ -1,31 +1,26 @@
 <script setup lang="ts">
 // 路径条：当前会话的当前目录（终端里 cd 之后追踪到的 cwdNow，没有则是固定目录；chip 本身是按钮，点击 = 在资源管理器打开它）、复制、
-// 标签胶囊（× 直接 detach）、「+ 标签」弹出层、唤起区（settings.json 里的命令：pinned 平铺、其余收进「更多 ▾」、「编辑」）、清屏。
+// 标签胶囊（× 直接 detach）、「+ 标签」弹出层、右侧唤起区（LaunchBar：唤起命令、「编辑」、清屏）。
 // 移除会话的入口在左栏会话行的右键菜单
 import { computed, onUnmounted, ref } from 'vue'
 import { useAgentStore } from '../stores/agent'
 import { useSessionsStore } from '../stores/sessions'
-import { useSettingsStore } from '../stores/settings'
 import { useTagsStore } from '../stores/tags'
 import { useWorkspaceStore } from '../stores/workspace'
 import { createCooldown } from '../composables/cooldown'
 import { pathHead } from '../composables/path'
 import { useCopy } from '../composables/useCopy'
 import { usePopover } from '../composables/usePopover'
-import LaunchCommandsModal from './LaunchCommandsModal.vue'
+import LaunchBar from './LaunchBar.vue'
 import TagPopover from './TagPopover.vue'
 
 const sessions = useSessionsStore()
-const settings = useSettingsStore()
 const tags = useTagsStore()
 const workspace = useWorkspaceStore()
 const agent = useAgentStore()
 const { isCopied, copy } = useCopy()
-const isEditOpen = ref(false)
-// 两个点击式弹出层：点击容器（按钮 + 弹出层）外部即关闭；TagPopover 的 Esc 由它自己 emit close
-const moreEl = ref<HTMLElement | null>(null)
+// 「+ 标签」弹出层：点击容器（按钮 + 弹出层）外部即关闭；TagPopover 的 Esc 由它自己 emit close
 const tagPopEl = ref<HTMLElement | null>(null)
-const { isOpen: isMoreOpen, toggle: toggleMore, close: closeMore } = usePopover(moreEl)
 const { isOpen: isTagPopOpen, toggle: toggleTagPop, close: closeTagPop } = usePopover(tagPopEl)
 
 // 路径条内的失败提示（打不开目录等）：红字 1.2 s（规范：失败必须出现在用户看得见的地方）
@@ -60,17 +55,6 @@ const pathTitle = computed(() => {
   return `${where}\n点击在资源管理器中打开`
 })
 
-/** 唤起按钮本质是向终端写入 `<cmd>\r` */
-function runCommand(cmd: string): void {
-  if (!session.value) return
-  window.tagterm.pty.write(session.value.id, `${cmd}\r`)
-}
-
-function runFromMore(cmd: string): void {
-  closeMore()
-  runCommand(cmd)
-}
-
 // 点路径 chip = 在资源管理器打开当前目录（与「复制」同一个路径）；路径由主进程从真相源解析，这里只传会话 id。
 // 500 ms 冷却：shell.openPath 每调一次多开一个资源管理器窗口，沿原型「单击全选」旧习惯双击 chip 的人不该得到两个窗口
 const canOpenDirectory = createCooldown(500)
@@ -79,11 +63,6 @@ function openDirectory(): void {
   window.tagterm.session
     .openDirectory(session.value.id)
     .catch((err) => flashError(err instanceof Error ? err.message : String(err)))
-}
-
-function clearScreen(): void {
-  if (!session.value) return
-  runCommand(session.value.shell === 'cmd.exe' ? 'cls' : 'clear')
 }
 </script>
 
@@ -119,44 +98,7 @@ function clearScreen(): void {
       <button class="btn sm" data-test="strip-add-tag" @click="toggleTagPop">+ 标签</button>
       <TagPopover v-if="isTagPopOpen" :session-id="session.id" @close="closeTagPop" />
     </span>
-    <span class="launch">
-      <span class="lab" data-test="launch-label">唤起</span>
-      <button
-        v-for="c in settings.pinnedCommands"
-        :key="c.id"
-        class="btn sm mono"
-        :title="c.command"
-        data-test="launch-cmd"
-        @click="runCommand(c.command)"
-      >
-        {{ c.label }}
-      </button>
-      <span v-if="settings.moreCommands.length" ref="moreEl" class="more">
-        <button class="btn sm" data-test="launch-more" @click="toggleMore">更多 ▾</button>
-        <div v-if="isMoreOpen" class="pop" data-test="launch-more-pop">
-          <button
-            v-for="c in settings.moreCommands"
-            :key="c.id"
-            class="item mono"
-            :title="c.command"
-            data-test="launch-more-item"
-            @click="runFromMore(c.command)"
-          >
-            {{ c.label }}
-          </button>
-        </div>
-      </span>
-      <button
-        class="btn sm"
-        title="编辑唤起命令"
-        data-test="launch-edit"
-        @click="isEditOpen = true"
-      >
-        编辑
-      </button>
-      <button class="btn sm" data-test="strip-clear" @click="clearScreen">清屏</button>
-    </span>
-    <LaunchCommandsModal v-if="isEditOpen" @close="isEditOpen = false" />
+    <LaunchBar :session="session" />
   </div>
 </template>
 
@@ -209,49 +151,5 @@ function clearScreen(): void {
 }
 .tagadd {
   position: relative;
-}
-.launch {
-  margin-left: auto;
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-.launch .lab {
-  font-size: 12px;
-  color: var(--muted);
-  margin-right: 2px;
-}
-.more {
-  position: relative;
-}
-/* 「更多 ▾」弹出层：紧贴按钮左缘向下展开，至少与按钮同宽、随内容撑开、不超过 160px（超长省略） */
-.pop {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  min-width: 100%;
-  max-width: 160px;
-  max-height: 60vh;
-  overflow: auto;
-  background: #fff;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  padding: 4px;
-  z-index: 10;
-}
-.pop .item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 4px 10px;
-  border-radius: 4px;
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.pop .item:hover {
-  background: #f0f2f5;
 }
 </style>

@@ -5,7 +5,7 @@
  */
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import type { AgentStatus, SessionRuntime } from '@shared/models'
+import { AGENT_LABELS, type AgentStatus, type SessionRuntime } from '@shared/models'
 import type { Unsubscribe } from '@shared/api'
 
 export const useAgentStore = defineStore('agent', () => {
@@ -27,6 +27,15 @@ export const useAgentStore = defineStore('agent', () => {
   }
 
   const runtimeOf = (id: string): SessionRuntime | undefined => runtime.value[id]
+  /**
+   * 终端里正在跑的程序怎么称呼：认出的工具用正式名称，认不出的用进程名；回到提示符（没有程序在跑）为 null。
+   * 唤起区置灰与「重启终端」的确认都看它（进程树每 2 s 一轮，最多慢这么久）
+   */
+  const runningNameOf = (id: string): string | null => {
+    const r = runtime.value[id]
+    if (!r) return null
+    return r.agent ? AGENT_LABELS[r.agent] : (r.program ?? null)
+  }
   const statusOf = (id: string): AgentStatus => runtime.value[id]?.status ?? 'idle'
   const countBy = (status: AgentStatus): number =>
     Object.values(runtime.value).filter((r) => r.status === status).length
@@ -34,5 +43,5 @@ export const useAgentStore = defineStore('agent', () => {
 
   const setViewed = (id: string | null): Promise<void> => window.tagterm.agent.setViewed(id)
 
-  return { runtime, load, runtimeOf, statusOf, countBy, blockedCount, setViewed }
+  return { runtime, load, runtimeOf, runningNameOf, statusOf, countBy, blockedCount, setViewed }
 })
