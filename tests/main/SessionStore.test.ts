@@ -98,21 +98,39 @@ describe('SessionStore', () => {
     expect(received.map((l) => l.map((s) => s.name))).toEqual([['a'], ['a2'], []])
   })
 
-  it('get 按 id 取会话，不存在则报错；touchOpened 写入 lastOpenedAt 并落盘', async () => {
+  it('读入时丢掉已废弃的 lastOpenedAt / lastAgent / startupCmd，下一次保存即从文件消失；其他不认识的键照旧保留', async () => {
+    const legacy = {
+      id: 'a',
+      name: 'api',
+      cwd: 'D:\\x',
+      shell: 'cmd.exe',
+      sortOrder: 1,
+      createdAt: '2026-09-10T08:00:00.000Z',
+      lastOpenedAt: '2026-09-23T15:00:00.000Z',
+      lastAgent: 'claude',
+      startupCmd: 'claude',
+      futureField: 'kept', // 更新的版本写下的键：降级再升级也不能丢
+    }
+    const file = join(dir, 'sessions.json')
+    writeFileSync(file, JSON.stringify({ version: 1, sessions: [legacy] }), 'utf8')
+    const { lastOpenedAt: _opened, lastAgent: _agent, startupCmd: _cmd, ...kept } = legacy
+
+    const store = new SessionStore(dir)
+    await store.load()
+    expect(store.list()).toEqual([kept])
+    // 只读不写：文件要等下一次变更落盘才清掉
+    expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([legacy])
+
+    await store.update('a', { name: 'api-2' })
+    expect(JSON.parse(readFileSync(file, 'utf8')).sessions).toEqual([{ ...kept, name: 'api-2' }])
+  })
+
+  it('get 按 id 取会话，不存在则报错', async () => {
     const store = new SessionStore(dir)
     await store.load()
     const a = await store.create({ cwd: 'D:\\a' })
     expect(store.get(a.id)).toEqual(a)
     expect(() => store.get('missing')).toThrow('会话不存在')
-
-    await store.touchOpened(a.id)
-    const opened = store.get(a.id).lastOpenedAt
-    expect(opened).toBeDefined()
-    expect(new Date(opened!).toISOString()).toBe(opened)
-
-    const reloaded = new SessionStore(dir)
-    await reloaded.load()
-    expect(reloaded.get(a.id).lastOpenedAt).toBe(opened)
   })
 
   it('文件版本高于程序支持的版本时拒绝加载并提示升级', async () => {

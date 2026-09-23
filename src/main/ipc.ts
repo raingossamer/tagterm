@@ -205,8 +205,8 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   handle('update:download', () => deps.updater.download())
   handle('update:install', () => deps.updater.install())
 
-  // 幂等：无 pty 则按会话 cwd / shell spawn，有则复用；每次打开都更新 lastOpenedAt
-  handle('pty:open', async (id, size) => {
+  // 幂等：无 pty 则按会话 cwd / shell spawn，有则复用；只读会话记录，不落盘、不广播
+  handle('pty:open', (id, size) => {
     const sessionId = assertId(id)
     const { cols, rows } = assertSize(size)
     const session = deps.store.get(sessionId)
@@ -215,13 +215,6 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
     if (pid === null) {
       pid = deps.pty.spawn(sessionId, { cwd: session.cwd, shell: session.shell, cols, rows }).pid
       created = true
-    }
-    // pty 已经起来了，这一步再失败也不能让 pty:open 失败：渲染进程会把「打开失败」记成已退出，
-    // 于是按键被吞、界面成了假死，而那条 pty 其实活得好好的。lastOpenedAt 只是展示用字段，丢一次无妨
-    try {
-      await deps.store.touchOpened(sessionId)
-    } catch (err) {
-      console.warn(`[store] 更新 lastOpenedAt 失败 session=${sessionId}`, err)
     }
     return { created, pid }
   })
@@ -329,14 +322,6 @@ function assertPatch(patch: unknown): SessionPatch {
     if (!isShellKind(o.shell)) throw new Error(`不支持的 shell：${String(o.shell)}`)
     out.shell = o.shell
   }
-  if (o.startupCmd !== undefined) {
-    if (typeof o.startupCmd !== 'string') throw new Error('启动命令必须是字符串')
-    out.startupCmd = o.startupCmd
-  }
-  if (o.sortOrder !== undefined) {
-    if (!Number.isInteger(o.sortOrder)) throw new Error('排序值必须是整数')
-    out.sortOrder = o.sortOrder as number
-  }
   return out
 }
 
@@ -417,10 +402,6 @@ function assertTagPatch(patch: unknown): TagPatch {
   const out: TagPatch = {}
   if (o.name !== undefined) out.name = assertTagName(o.name)
   if (o.color !== undefined) out.color = assertTagColor(o.color)
-  if (o.sortOrder !== undefined) {
-    if (!Number.isInteger(o.sortOrder)) throw new Error('排序值必须是整数')
-    out.sortOrder = o.sortOrder as number
-  }
   if (o.hidden !== undefined) {
     if (typeof o.hidden !== 'boolean') throw new Error('hidden 必须是布尔值')
     out.hidden = o.hidden
