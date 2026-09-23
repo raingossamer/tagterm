@@ -10,7 +10,7 @@
 
 同时在好几个项目里用 AI 编程工具时，每次都要找到项目文件夹、在地址栏敲 `cmd`、再敲 `claude`；开了一堆终端窗口后，又分不清哪个窗口里的工具停下来在等你批准。TagTerm 把这两件事收进一个窗口：会话即路径，状态一眼可见。
 
-## 功能（v0.3.5）
+## 功能（v0.3.6）
 
 ### 会话与终端
 
@@ -50,7 +50,7 @@
 
 ### 外观、托盘与更新
 
-- **全局背景**：一张图片铺满整个窗口，侧栏与标签栏半透明透出背景；显示方式、背景不透明度、面板不透明度、模糊都可调，改动实时预览，「保存设置」才生效。
+- **全局背景**：一张图片铺满整个窗口，侧栏、标签栏和终端都半透明透出背景；显示方式、背景不透明度、面板不透明度、模糊都可调，改动实时预览，「保存设置」才生效。
 
   ![全局背景](docs/screenshots/background.png)
 
@@ -64,19 +64,28 @@
 
 到 [Releases](https://github.com/raingossamer/tagterm/releases) 下载 `TagTerm-Setup-x.y.z.exe` 运行即可。要求 Windows 10 1809 及以上。安装包未签名，首次运行 SmartScreen 会提示。
 
-装好后建议到「设置 → Agent」打开 Claude Code / Codex 的 hooks 开关，状态点会准确很多。
+装好后建议到「设置 → Agent」打开 Claude Code / Codex 的 hooks 开关，状态点会准确很多。以后升级到新版本时，已打开的 hooks 会在启动时自动更新到新版本，不用再手动开关。
+
+### 换电脑迁移
+
+1. 在旧电脑上从托盘「退出」TagTerm，确保数据已写盘。
+2. 把 `%APPDATA%\TagTerm\` 下的 `sessions.json`、`settings.json`、`tags.json` 拷到新电脑的同一位置，再启动 TagTerm。
+3. 在新电脑上到「设置 → Agent」重新打开 hooks 开关，它们改的是新电脑上的 `~/.claude` / `~/.codex`。
+4. 背景图只记了路径：把图片一并拷过去，在「设置 → 外观」里重新选一次。
+
+会话目录如果在新电脑上不存在，会话照样保留，打开终端时会提示打不开。
 
 ## 数据与隐私
 
 - 应用自己的数据只有三个 JSON 文件，都在 `%APPDATA%\TagTerm\`：`sessions.json`（会话）、`settings.json`（唤起命令与背景）、`tags.json`（标签与关联）。卸载不会删除它们。
 - 打开 hooks 开关会改动 `~/.claude/settings.json` 或 `~/.codex/hooks.json`：写前先备份为 `<文件>.tagterm-bak-<时间戳>`，只增删带 TagTerm 标识的条目，关掉开关即删除。hooks 只把事件发到本机 `127.0.0.1` 上的端口。
-- 终端输出与键入内容不落盘、不记日志。除「检查更新」访问 GitHub Releases 外，应用不联网。
+- 日志只记事件与错误，写在 `%APPDATA%\TagTerm\logs\`，单个文件 1 MB 轮转、保留 3 份；「设置 → 关于」可以一键打开日志目录，遇到问题时把它发给开发者即可。
+- 终端输出与键入内容不落盘、不进日志。除「检查更新」访问 GitHub Releases 外，应用不联网。
 
 ## 已知限制
 
 - 没装 hooks 时，状态只能靠屏幕信号判断：Claude Code 的权限对话框期间可能仍显示「运行中」，回合因 API 出错终止与正常结束分不清。
-- 升级到新版本后，如果新版本的 hooks 多了事件，需要在「设置 → Agent」把开关关一次再打开才会装上。
-- 设了全局背景后，终端文字区域仍是黑底，不透出背景。原因是终端组件 xterm.js 自带样式里的一层黑底，待修复。
+- 设了全局背景图时，终端改用兼容透明背景的 DOM 渲染（WebGL 会给灰色暗淡字垫黑底），输出特别多时刷新会比不设背景时慢一些。
 - 应用退出后终端进程随之结束，下次启动不恢复进程与输出。
 - 安装包未签名。
 
@@ -92,7 +101,7 @@ pnpm build:dir    :: 只出 dist/win-unpacked，不打安装包
 pnpm screenshots  :: 重新生成 docs/screenshots/ 下的 README 截图
 ```
 
-无人值守烟测：真实启动 Electron，跑完自动退出，结果以 `[smoke] {...}` JSON 打到 stdout。它使用独立的 userData、数据目录与假主目录，不碰真实数据，也不改你的 hooks 配置。烟测要在前台单独运行，窗口拿不到焦点时剪贴板相关步骤会失败。
+无人值守烟测：真实启动 Electron，跑完自动退出，结果以 `[smoke] {...}` JSON 打到 stdout，最后一行 `[smoke-verdict]` 是判定结论，发布流水线只认这一行的 `"ok":true`。它使用独立的 userData、数据目录与假主目录，不碰真实数据，也不改你的 hooks 配置。烟测要在前台单独运行，窗口拿不到焦点时剪贴板相关步骤会失败。
 
 ```bat
 set TAGTERM_SMOKE=1 && pnpm dev
@@ -134,4 +143,4 @@ scripts/        README 截图脚本
 
 ## 许可
 
-待定。
+[MIT](LICENSE)
