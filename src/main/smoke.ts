@@ -26,6 +26,8 @@ export interface SmokeDeps {
   agent: AgentSubsystem
   /** 托盘当前的角标计数（等你确认 / 运行中）；托盘还没建为 null */
   badgeCounts: () => BadgeCounts | null
+  /** 全局快捷键按下时的动作（唤出 / 隐藏窗口）：烟测不注册系统热键，直接调用它核查 */
+  summon: () => void
   quit: () => void
 }
 
@@ -948,6 +950,226 @@ async function runLaunchBarChecks(
   }
 }
 
+/**
+ * 第三批「键盘」核查用：搜索框、焦点、字号与小牌。字号取核心快照落到本机偏好的值（没存过即 14）——
+ * xterm 6 在 Electron 里用 canvas 量字宽，DOM 上没有能读字号的元素；字号「真的生效」由 mode con 读到的 pty 列数证明
+ */
+const KEYBOARD_STATE = `(() => {
+  const host = [...document.querySelectorAll('[data-test=terminal-pane] > div')].find((h) => h.style.display === 'block')
+  const input = document.querySelector('[data-test=terminal-search-input]')
+  const active = document.activeElement
+  return {
+    searchOpen: !!document.querySelector('[data-test=terminal-search]'),
+    searchFocused: !!input && active === input,
+    count: document.querySelector('[data-test=terminal-search-count]')?.textContent ?? '',
+    terminalFocused: !!host && !!active && host.contains(active) && active.tagName === 'TEXTAREA',
+    fontSize: Number(localStorage.getItem('tagterm.terminalFontSize') || 14),
+    badge: document.querySelector('[data-test=font-size-badge]')?.textContent ?? '',
+  }
+})()`
+
+interface KeyboardState {
+  searchOpen: boolean
+  searchFocused: boolean
+  count: string
+  terminalFocused: boolean
+  fontSize: number
+  badge: string
+}
+
+/** 去掉 ConPTY 输出里的控制序列：它会把连续空格换成「擦除 + 光标前移」，不去掉就匹配不到行内文字 */
+function stripAnsi(text: string): string {
+  return text.replace(/\x1b\][^\x07]*\x07/g, '').replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+}
+
+/** 在搜索框里输入查找词：发 input 事件，与打字一样走「输入即搜」 */
+const TYPE_SEARCH = (query: string): string => `(() => {
+  const input = document.querySelector('[data-test=terminal-search-input]')
+  if (!input) return false
+  input.value = ${JSON.stringify(query)}
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  return true
+})()`
+
+/** 在可见终端上合成 Ctrl+滚轮（只用于 finally 里把字号还原成烟测前的值；核查用的是 sendInputEvent 的真实滚轮） */
+const SYNTH_CTRL_WHEEL = (steps: number): string => `(() => {
+  const host = [...document.querySelectorAll('[data-test=terminal-pane] > div')].find((h) => h.style.display === 'block')
+  const target = host?.querySelector('.xterm-screen')
+  if (!target) return false
+  for (let i = 0; i < ${Math.abs(steps)}; i += 1)
+    target.dispatchEvent(new WheelEvent('wheel', { deltaY: ${steps > 0 ? -100 : 100}, ctrlKey: true, bubbles: true, cancelable: true }))
+  return true
+})()`
+
+/** 设置「启动」段的全局快捷键：打开弹窗 → 读键位框 → 关掉（烟测实例不注册系统热键，dryRun 下应显示已注册、无红字） */
+const SHORTCUT_SETTINGS_SCRIPT = `(async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  document.querySelector('[data-test=open-settings]')?.click()
+  await sleep(300)
+  document.querySelector('[data-test=settings-nav-startup]')?.click()
+  await sleep(200)
+  const key = document.querySelector('[data-test=global-shortcut-key]')?.textContent?.trim() ?? ''
+  const enabled = document.querySelector('[data-test=global-shortcut-enabled]')?.checked === true
+  const hasError = !!document.querySelector('[data-test=global-shortcut-error]')
+  document.querySelector('[data-test=settings-close]')?.click()
+  await sleep(200)
+  return { key, enabled, hasError, closed: !document.querySelector('[data-test=settings-modal]') }
+})()`
+
+/**
+ * 第三批「键盘」（keyboard-search-hotkey-zoom）：真实按键 / 滚轮走一遍 ——
+ * 终端内搜索（Ctrl+Shift+F 不进 shell、计数、Esc 焦点回终端）、Ctrl+滚轮改字号（小牌、偏好落 localStorage、
+ * 终端里 mode con 读到的列数跟着变 = pty 尺寸真的同步了）、Ctrl+0 复位、全局快捷键的唤出 / 隐藏逻辑（烟测不注册系统热键，
+ * 直接调用）、设置「启动」段的键位显示。s1 是唤起区段最后重启过、正显示着的空闲会话。字号在 finally 里还原
+ */
+async function runKeyboardChecks(
+  win: BrowserWindow,
+  deps: SmokeDeps,
+  s1: string,
+): Promise<Record<string, unknown>> {
+  const js = (code: string): Promise<unknown> => win.webContents.executeJavaScript(code)
+  const state = async (): Promise<KeyboardState> => (await js(KEYBOARD_STATE)) as KeyboardState
+  const press = (keyCode: string, modifiers: Array<'control' | 'shift'> = []): void => {
+    win.webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
+    win.webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers })
+  }
+  // 这一段自己订阅 s1 的输出：前面「标签页恢复」核查重载过页面，渲染脚本开头装的 __smokeOutputs 已经没了
+  await js(
+    `(() => { if (window.__keyboardOutput === undefined) { window.__keyboardOutput = ''; window.tagterm.pty.onData((id, d) => { if (id === ${JSON.stringify(s1)}) window.__keyboardOutput += d }) } return true })()`,
+  )
+  const output = async (): Promise<string> => (await js(`window.__keyboardOutput ?? ''`)) as string
+  /** 终端里跑 mode con，读 ConPTY 报告的列数（中文系统「列:」、英文系统「Columns:」）；读不到为 0 */
+  const consoleCols = async (): Promise<number> => {
+    const from = (await output()).length
+    deps.pty.write(s1, 'mode con\r')
+    const start = Date.now()
+    while (Date.now() - start < 5000) {
+      const match = /(?:Columns|列)\s*:\s*(\d+)/.exec(stripAnsi((await output()).slice(from)))
+      if (match) return Number(match[1])
+      await sleep(100)
+    }
+    return 0
+  }
+  /** 输出里（去掉控制序列后）出现了几次 */
+  const occurrences = async (text: string, from: number): Promise<number> =>
+    stripAnsi((await output()).slice(from)).split(text).length - 1
+
+  win.show()
+  win.focus()
+  await sleep(300)
+  const before = await state()
+  try {
+    // 1 终端内搜索：写一个唯一的词（提示符行 + 输出行 = 2 处），真实 Ctrl+Shift+F 打开，小写查（不区分大小写）
+    const token = `KbdFind${Date.now().toString(36)}`
+    const echoFrom = (await output()).length
+    deps.pty.write(s1, `echo ${token}\r`)
+    let echoed = false
+    for (const start = Date.now(); !echoed && Date.now() - start < 5000; await sleep(100))
+      echoed = (await occurrences(token, echoFrom)) >= 2
+    await sleep(300)
+    await js(FOCUS_TERMINAL)
+    const lengthBeforeFind = (await output()).length
+    press('F', ['control', 'shift'])
+    const opened = await pollJs(win, `${KEYBOARD_STATE}.searchOpen`, 3000)
+    const afterOpen = await state()
+    await js(TYPE_SEARCH(token.toLowerCase()))
+    const counted = await pollJs(win, `${KEYBOARD_STATE}.count.endsWith('共 2 处')`, 3000)
+    const afterType = await state()
+    await sleep(300)
+    const notSentToShell = (await output()).length === lengthBeforeFind
+    press('Escape')
+    const closed = await pollJs(win, `!${KEYBOARD_STATE}.searchOpen`, 3000)
+    const afterClose = await state()
+    const search = {
+      echoed,
+      opened,
+      inputFocused: afterOpen.searchFocused,
+      counted,
+      count: afterType.count,
+      notSentToShell,
+      closed,
+      focusBackToTerminal: afterClose.terminalFocused,
+    }
+
+    // 2 字号：真实 Ctrl+滚轮三格 → 字号 +3、小牌、偏好落盘、pty 列数变少；终端里 Ctrl+0 → 回 14
+    const colsBefore = await consoleCols()
+    const center = (await js(TERMINAL_CENTER)) as { x: number; y: number } | null
+    for (let i = 0; i < 3 && center; i += 1)
+      win.webContents.sendInputEvent({
+        type: 'mouseWheel',
+        x: center.x,
+        y: center.y,
+        deltaX: 0,
+        deltaY: 100,
+        wheelTicksY: 1,
+        canScroll: true,
+        modifiers: ['control'],
+      })
+    const zoomed = await pollJs(win, `${KEYBOARD_STATE}.fontSize !== ${before.fontSize}`, 3000)
+    const afterZoom = await state()
+    await sleep(300)
+    const colsAfter = await consoleCols()
+    await js(FOCUS_TERMINAL)
+    press('0', ['control'])
+    const reset = await pollJs(win, `${KEYBOARD_STATE}.fontSize === 14`, 3000)
+    const fontSize = {
+      sizeBefore: before.fontSize,
+      sizeAfterWheel: afterZoom.fontSize,
+      zoomed,
+      grewByThree: afterZoom.fontSize === before.fontSize + 3,
+      badgeShown: afterZoom.badge === `字号 ${afterZoom.fontSize}`,
+      colsBefore,
+      colsAfter,
+      colsShrank: colsBefore > 0 && colsAfter > 0 && colsAfter < colsBefore,
+      resetByCtrl0: reset,
+    }
+
+    // 3 全局快捷键的唤出 / 隐藏（烟测不注册系统热键，直接调用按下时的那个函数）：
+    // 前台 → 藏到托盘；藏着 → 唤出且焦点交给当前终端（先把焦点挪到左栏搜索框，证明是广播挪回来的）；最小化 → 还原
+    await js(`document.querySelector('[data-test=search-input]')?.focus(); true`)
+    win.show()
+    win.focus()
+    await sleep(300)
+    const focusedBeforeHide = win.isFocused()
+    deps.summon()
+    const hidden = await pollUntil(() => !win.isVisible(), 3000)
+    deps.summon()
+    const shown = await pollUntil(() => win.isVisible(), 3000)
+    const terminalFocused = await pollJs(win, `${KEYBOARD_STATE}.terminalFocused`, 3000)
+    win.minimize()
+    await pollUntil(() => win.isMinimized(), 3000)
+    deps.summon()
+    const restoredFromMinimized = await pollUntil(() => win.isVisible() && !win.isMinimized(), 3000)
+    const summon = {
+      focusedBeforeHide,
+      hidden,
+      shown,
+      terminalFocused,
+      restoredFromMinimized,
+    }
+
+    // 4 设置「启动」段：键位框显示缺省 Ctrl+Alt+T、开关开着、没有「被占用」红字
+    const shown4 = (await js(SHORTCUT_SETTINGS_SCRIPT)) as {
+      key: string
+      enabled: boolean
+      hasError: boolean
+      closed: boolean
+    }
+    const settingsShortcut = {
+      keyShown: shown4.key === 'Ctrl+Alt+T',
+      enabled: shown4.enabled,
+      noOccupiedError: !shown4.hasError,
+      closed: shown4.closed,
+    }
+
+    return { search, fontSize, summon, settingsShortcut }
+  } finally {
+    // 字号还原成烟测前的值（数据目录跨次保留）；此时应已是 14
+    const now = await state()
+    if (now.fontSize !== before.fontSize) await js(SYNTH_CTRL_WHEEL(before.fontSize - now.fontSize))
+  }
+}
+
 export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
   const consoleErrors: string[] = []
   win.webContents.on('console-message', (event) => {
@@ -1362,6 +1584,18 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         launchBar = { error: String(err) }
       }
 
+      // 第三批「键盘」：终端内搜索、Ctrl+滚轮字号与 Ctrl+0、全局快捷键唤出 / 隐藏、设置里的键位显示
+      let keyboard: Record<string, unknown> = {}
+      try {
+        keyboard = await withTimeout(
+          runKeyboardChecks(win, deps, sessionIds[0]!),
+          60000,
+          '键盘烟测',
+        )
+      } catch (err) {
+        keyboard = { error: String(err) }
+      }
+
       // 清理烟测会话（正常退出路径由 before-quit killAll 结束 pty）；tags.json 应已落盘且只剩空集合
       for (const id of sessionIds) await deps.store.remove(id)
       const remaining = deps.store.list().length
@@ -1397,6 +1631,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         restore,
         heuristic,
         launchBar,
+        keyboard,
         processTree,
         termBackground,
         hooks,
