@@ -22,6 +22,14 @@ export interface Session {
 export const DEFAULT_AGENTS = ['claude', 'gemini', 'codex', 'pi'] as const
 export type AgentKind = (typeof DEFAULT_AGENTS)[number]
 
+/** 工具的正式名称（界面上称呼它时用，如唤起区置灰时的「当前在 Claude Code 里」） */
+export const AGENT_LABELS: Record<AgentKind, string> = {
+  claude: 'Claude Code',
+  codex: 'Codex',
+  gemini: 'Gemini CLI',
+  pi: 'pi',
+}
+
 // ---- 会话运行时状态（M3，不落盘；主进程 AgentDetector 拥有，渲染进程只镜像）----
 
 /** 空闲 / 运行中 / 等你确认 / 已完成未查看（原型状态点四态） */
