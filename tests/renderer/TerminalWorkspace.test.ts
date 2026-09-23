@@ -67,6 +67,15 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
     expect(pty.spawnCount(a.id)).toBe(1)
   })
 
+  it('setWebglAllowed 透传给实例池：设了背景图（不允许）时当前终端退回 DOM 渲染，新选中的也不开 WebGL', async () => {
+    await core.select(a.id)
+    expect(terminals[0]!.isWebgl).toBe(true)
+    core.setWebglAllowed(false)
+    expect(terminals[0]!.isWebgl).toBe(false)
+    await core.select(b.id)
+    expect(terminals[1]!.isWebgl).toBe(false)
+  })
+
   it('3 opening 期间重复 select、已运行再 select：不重复 pty.open、不重复加标签页，只切显示', async () => {
     setup({ manualOpen: true })
     const first = core.select(a.id)

@@ -33,6 +33,8 @@ export class TerminalPool {
   private readonly entries = new Map<string, Entry>()
   private container: HTMLElement | null = null
   private activeId: string | null = null
+  /** 可见实例是否用 WebGL：设了全局背景图时关掉（WebGL 会给暗淡字垫不透明黑底，DOM 渲染器不会） */
+  private isWebglAllowed = true
   private readonly raf: (fn: () => void) => void
 
   constructor(private readonly deps: TerminalPoolDeps) {
@@ -94,12 +96,22 @@ export class TerminalPool {
       if (!isTarget) entry.term.setWebgl(false)
     }
     this.activeId = sessionId
-    target.term.setWebgl(true)
+    target.term.setWebgl(this.isWebglAllowed)
     this.raf(() => {
       if (this.activeId !== sessionId) return
       if (this.container) target.term.fit() // 未接管容器时 host 不在 DOM 里，量不到尺寸
       target.term.focus()
     })
+  }
+
+  /**
+   * 允不允许可见实例用 WebGL（装配层按「有没有全局背景图」设置）：变化时可见实例立即切换渲染器，之后的 show 照此办。
+   * WebGL 渲染器在背景透明时会给暗淡字（SGR 2）画不透明黑底，透出背景图时一块块黑很扎眼；DOM 渲染器暗淡字与框线都正常
+   */
+  setWebglAllowed(allowed: boolean): void {
+    if (this.isWebglAllowed === allowed) return
+    this.isWebglAllowed = allowed
+    if (this.activeId) this.entries.get(this.activeId)?.term.setWebgl(allowed)
   }
 
   /** 没有活动会话（空状态） */
