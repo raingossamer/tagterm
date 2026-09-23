@@ -10,6 +10,8 @@ import { Updater } from '../../src/main/updater/Updater'
 import { FakeAutoUpdater } from './fakeAutoUpdater'
 import { PtyManager } from '../../src/main/pty/PtyManager'
 import { AgentSubsystem } from '../../src/main/agent/AgentSubsystem'
+import { GlobalShortcut } from '../../src/main/shortcut/GlobalShortcut'
+import { FakeShortcutPort } from './fakeShortcutPort'
 import type { AutoLaunchStatus, PtyExitEvent, PtyOpenResult, TagListResult } from '@shared/ipc'
 import type { Session, SessionRuntime, Settings, Tag, UpdateStatus } from '@shared/models'
 import { createFakeIpcMain, type FakeIpcMain } from './fakeIpcMain'
@@ -38,6 +40,9 @@ describe('IPC 接口层', () => {
   /** 假 shell.openPath：记下要打开的路径；openPathError 非空即模拟打开失败（electron 语义：返回错误说明） */
   const opened: string[] = []
   let openPathError = ''
+  /** 假的系统热键表：全局快捷键服务注册到这里 */
+  let shortcutPort: FakeShortcutPort
+  let shortcut: GlobalShortcut
 
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), 'tagterm-ipc-'))
@@ -85,6 +90,9 @@ describe('IPC 接口层', () => {
         isFile: existsSync,
       }),
     )
+    shortcutPort = new FakeShortcutPort()
+    shortcut = new GlobalShortcut({ port: shortcutPort, onPress: () => {} })
+    shortcut.start(settings.getGlobalShortcut())
     ipc = createFakeIpcMain()
     autoUpdater = new FakeAutoUpdater()
     const updater = new Updater({
@@ -102,6 +110,7 @@ describe('IPC 接口层', () => {
       updater,
       pty,
       agent,
+      shortcut,
       dataDir: dir,
       logsDir: join(dir, 'logs'),
       pickImage: async () => join(dir, 'picked.png'),
@@ -290,6 +299,66 @@ describe('IPC 接口层', () => {
       blockedBySystem: false,
     })
     await expect(ipc.invoke('app:set-auto-launch', 'yes')).rejects.toThrow('开机自启参数必须是布尔')
+  })
+
+  it('app:get-global-shortcut 返回全局快捷键状态（缺省开启 + Ctrl+Alt+T，已注册）', async () => {
+    await expect(ipc.invoke('app:get-global-shortcut')).resolves.toEqual({
+      enabled: true,
+      accelerator: 'Ctrl+Alt+T',
+      registered: true,
+    })
+  })
+
+  it('app:set-global-shortcut：先注册新键位，成功才落盘（settings:changed 带上它）并返回新状态；被占用 reject、旧键位照旧、不落盘', async () => {
+    await expect(
+      ipc.invoke('app:set-global-shortcut', { enabled: true, accelerator: 'Ctrl+Alt+Y' }),
+    ).resolves.toEqual({ enabled: true, accelerator: 'Ctrl+Alt+Y', registered: true })
+    expect([...shortcutPort.registered.keys()]).toEqual(['Ctrl+Alt+Y'])
+    expect(settings.getGlobalShortcut()).toEqual({ enabled: true, accelerator: 'Ctrl+Alt+Y' })
+
+    shortcutPort.occupied.add('Alt+F9')
+    await expect(
+      ipc.invoke('app:set-global-shortcut', { enabled: true, accelerator: 'Alt+F9' }),
+    ).rejects.toThrow('该快捷键已被其他程序占用')
+    expect([...shortcutPort.registered.keys()]).toEqual(['Ctrl+Alt+Y'])
+    expect(settings.getGlobalShortcut()).toEqual({ enabled: true, accelerator: 'Ctrl+Alt+Y' })
+
+    await expect(
+      ipc.invoke('app:set-global-shortcut', { enabled: false, accelerator: 'Ctrl+Alt+Y' }),
+    ).resolves.toEqual({ enabled: false, accelerator: 'Ctrl+Alt+Y', registered: false })
+    expect(shortcutPort.registered.size).toBe(0)
+  })
+
+  it('app:set-global-shortcut 守卫：键位串不合法 / enabled 不是布尔 / 不是对象 → reject，不注册不落盘', async () => {
+    for (const bad of [
+      { enabled: true, accelerator: 'Shift+T' },
+      { enabled: 'yes', accelerator: 'Ctrl+Alt+Y' },
+      'Ctrl+Alt+Y',
+      null,
+    ])
+      await expect(ipc.invoke('app:set-global-shortcut', bad)).rejects.toThrow(
+        '快捷键设置格式不正确',
+      )
+    expect([...shortcutPort.registered.keys()]).toEqual(['Ctrl+Alt+T'])
+    expect(settings.get().globalShortcut).toBeUndefined()
+  })
+
+  it('settings:update 不接受 globalShortcut（只能走专用通道，保证落盘的键位一定注册过）', async () => {
+    await ipc.invoke('settings:update', {
+      launchCommands: [],
+      globalShortcut: { enabled: false, accelerator: 'Ctrl+Alt+Y' },
+    })
+    expect(settings.getGlobalShortcut()).toEqual({ enabled: true, accelerator: 'Ctrl+Alt+T' })
+  })
+
+  it('app:pause-global-shortcut：true 暂停（录新键位期间）、false 恢复；非布尔被拒绝', async () => {
+    await ipc.invoke('app:pause-global-shortcut', true)
+    expect(shortcutPort.registered.size).toBe(0)
+    await ipc.invoke('app:pause-global-shortcut', false)
+    expect([...shortcutPort.registered.keys()]).toEqual(['Ctrl+Alt+T'])
+    await expect(ipc.invoke('app:pause-global-shortcut', 'yes')).rejects.toThrow(
+      '暂停参数必须是布尔',
+    )
   })
 
   it('session:remove 同时结束其 pty', async () => {

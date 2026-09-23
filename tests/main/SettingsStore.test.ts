@@ -127,4 +127,62 @@ describe('SettingsStore', () => {
     await reloaded.load()
     expect(reloaded.get()).toEqual(store.get())
   })
+
+  describe('全局快捷键（可选字段 globalShortcut，settings.json 仍为 v2）', () => {
+    const readFile = () => JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'))
+
+    it('缺省（文件里没有这个键）= 开启 + Ctrl+Alt+T', async () => {
+      const store = new SettingsStore(dir, { seedCommands: [] })
+      await store.load()
+      expect(store.getGlobalShortcut()).toEqual({ enabled: true, accelerator: 'Ctrl+Alt+T' })
+      expect('globalShortcut' in readFile()).toBe(false)
+      expect(readFile().version).toBe(2)
+    })
+
+    it('setGlobalShortcut 落盘并回调全量设置，重启后仍在；改回缺省值时删掉这个键；改唤起命令不动它', async () => {
+      const received: Settings[] = []
+      const store = new SettingsStore(dir, {
+        seedCommands: ['claude'],
+        onChanged: (settings) => received.push(settings),
+      })
+      await store.load()
+
+      await store.setGlobalShortcut({ enabled: false, accelerator: 'Ctrl+Shift+F9' })
+      expect(readFile().globalShortcut).toEqual({ enabled: false, accelerator: 'Ctrl+Shift+F9' })
+      expect(received.at(-1)?.globalShortcut).toEqual({
+        enabled: false,
+        accelerator: 'Ctrl+Shift+F9',
+      })
+
+      await store.update({ launchCommands: [] })
+      expect(store.getGlobalShortcut()).toEqual({ enabled: false, accelerator: 'Ctrl+Shift+F9' })
+
+      const reloaded = new SettingsStore(dir, { seedCommands: [] })
+      await reloaded.load()
+      expect(reloaded.getGlobalShortcut()).toEqual({
+        enabled: false,
+        accelerator: 'Ctrl+Shift+F9',
+      })
+
+      await reloaded.setGlobalShortcut({ enabled: true, accelerator: 'Ctrl+Alt+T' })
+      expect('globalShortcut' in readFile()).toBe(false)
+      expect(reloaded.get().globalShortcut).toBeUndefined()
+    })
+
+    it('文件里的 globalShortcut 不合法（键位串不对、enabled 不是布尔）：当缺省处理，不拒绝加载', async () => {
+      for (const bad of [
+        { enabled: true, accelerator: 'T' },
+        { enabled: 'yes', accelerator: 'Ctrl+Alt+T' },
+        'Ctrl+Alt+T',
+      ]) {
+        writeFileSync(
+          join(dir, 'settings.json'),
+          JSON.stringify({ version: 2, launchCommands: [], globalShortcut: bad }),
+        )
+        const store = new SettingsStore(dir, { seedCommands: [] })
+        await store.load()
+        expect(store.getGlobalShortcut()).toEqual({ enabled: true, accelerator: 'Ctrl+Alt+T' })
+      }
+    })
+  })
 })

@@ -27,11 +27,14 @@ import {
   TAG_COLORS,
   type AppBackground,
   type BackgroundFit,
+  type GlobalShortcutConfig,
   type ShellKind,
   type TagColor,
 } from '@shared/models'
+import { isValidAccelerator } from '@shared/accelerator'
 import type { PtyManager } from './pty/PtyManager'
 import type { AgentSubsystem } from './agent/AgentSubsystem'
+import type { GlobalShortcut } from './shortcut/GlobalShortcut'
 import type { SessionStore } from './store/SessionStore'
 import type { SettingsStore } from './store/SettingsStore'
 import type { TagStore } from './store/TagStore'
@@ -54,6 +57,8 @@ export interface IpcDeps {
   pty: PtyManager
   /** agent 运行时子系统：运行时记录、正被查看、静默报告、hooks 开关与端口、shell 空闲核对 */
   agent: AgentSubsystem
+  /** 全局快捷键服务（唤出 / 隐藏窗口）：注册与暂停；配置落 settings.json 由这里编排 */
+  shortcut: GlobalShortcut
   /** 数据目录（设置「关于」显示） */
   dataDir: string
   /** 日志目录（装配层给定，= 数据目录下的 logs）；「打开日志目录」用 */
@@ -95,6 +100,25 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   handle('app:pick-image', () => deps.pickImage())
   handle('app:get-auto-launch', () => deps.getAutoLaunch())
   handle('app:set-auto-launch', (enabled) => deps.setAutoLaunch(assertAutoLaunch(enabled)))
+  handle('app:get-global-shortcut', () => deps.shortcut.status())
+  // 编排：先注册新键位（被占用 reject，旧的保留、不落盘）→ 成功才写 settings.json；落盘失败把注册换回去再抛，
+  // 保证文件里的键位一定注册过
+  handle('app:set-global-shortcut', async (config) => {
+    const next = assertGlobalShortcut(config)
+    const previous = deps.settings.getGlobalShortcut()
+    if (!deps.shortcut.apply(next)) throw new Error('该快捷键已被其他程序占用')
+    try {
+      await deps.settings.setGlobalShortcut(next)
+    } catch (err) {
+      deps.shortcut.apply(previous)
+      throw err
+    }
+    return deps.shortcut.status()
+  })
+  handle('app:pause-global-shortcut', (paused) => {
+    if (assertPaused(paused)) deps.shortcut.pause()
+    else deps.shortcut.resume()
+  })
 
   handle('session:list', () => deps.store.list())
   // 编排：建会话 → 逐个 attach 标签；attach 抛错原样 reject（会话已创建，不回滚）
@@ -352,6 +376,19 @@ function assertLaunchCommand(item: unknown): LaunchCommandInput {
 function assertAutoLaunch(enabled: unknown): boolean {
   if (typeof enabled !== 'boolean') throw new Error('开机自启参数必须是布尔')
   return enabled
+}
+
+function assertGlobalShortcut(config: unknown): GlobalShortcutConfig {
+  const o = (typeof config === 'object' && config !== null ? config : {}) as Record<string, unknown>
+  if (typeof o.enabled !== 'boolean' || !isValidAccelerator(o.accelerator)) {
+    throw new Error('快捷键设置格式不正确')
+  }
+  return { enabled: o.enabled, accelerator: o.accelerator }
+}
+
+function assertPaused(paused: unknown): boolean {
+  if (typeof paused !== 'boolean') throw new Error('暂停参数必须是布尔')
+  return paused
 }
 
 function assertTagId(id: unknown): string {
