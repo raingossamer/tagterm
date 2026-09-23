@@ -168,4 +168,150 @@ describe('LaunchBar（路径条右侧的唤起区）', () => {
     await wrapper.find('[data-test=launch-cmd]').trigger('click')
     expect(api.pty.write).toHaveBeenCalledWith(session.id, 'claude\r')
   })
+
+  describe('在路径条上直接拖动唤起按钮（像浏览器收藏夹栏）', () => {
+    /** 路径条上：常用 a b 平铺，「更多」里 c */
+    function setup(commands = ['a', 'b', '-c']): ReturnType<typeof installFakeApi> {
+      const api = installFakeApi()
+      useSettingsStore().settings = makeSettings({
+        launchCommands: commands.map((name, i) =>
+          makeCommand({
+            command: name.replace('-', ''),
+            pinned: !name.startsWith('-'),
+            sortOrder: i + 1,
+          }),
+        ),
+      })
+      return api
+    }
+    /** 保存出去的列表写成「常用 | 更多」两段 */
+    function saved(api: ReturnType<typeof installFakeApi>): string {
+      const rows = vi.mocked(api.settings.update).mock.calls.at(-1)![0].launchCommands!
+      const part = (pinned: boolean): string =>
+        rows
+          .filter((r) => r.pinned === pinned)
+          .map((r) => r.command)
+          .join(' ')
+      return `${part(true)} | ${part(false)}`
+    }
+
+    it('平铺按钮可拖（置灰的也可以）；拖到另一个按钮右半边出现落点标记，松手按新顺序保存（常用在前、排序号 1..n）', async () => {
+      const api = setup()
+      useAgentStore().runtime = {
+        [session.id]: {
+          sessionId: session.id,
+          alive: true,
+          agent: null,
+          status: 'idle',
+          program: 'node',
+        },
+      }
+      const wrapper = mount(LaunchBar, { props: { session } })
+      const [a, b] = wrapper.findAll('[data-test=launch-cmd]')
+      expect(a!.attributes('draggable')).toBe('true')
+
+      await a!.trigger('dragstart')
+      await b!.trigger('dragover', { clientX: 5 }) // happy-dom 的按钮宽 0：x > 中线 = 右半边
+      expect(b!.attributes('data-drop')).toBe('after')
+      await b!.trigger('drop')
+      await flushPromises()
+      expect(saved(api)).toBe('b a | c')
+      const rows = vi.mocked(api.settings.update).mock.calls[0]![0].launchCommands!
+      expect(rows.map((r) => r.sortOrder)).toEqual([1, 2, 3])
+      expect(api.pty.write).not.toHaveBeenCalled()
+    })
+
+    it('拖到「更多 ▾」上：按钮高亮，停半秒自动展开；松在列表项上插到那里，松在「更多 ▾」按钮上放到末尾', async () => {
+      vi.useFakeTimers()
+      const api = setup(['a', 'b', '-c', '-d'])
+      const wrapper = mount(LaunchBar, { props: { session }, attachTo: document.body })
+      const more = wrapper.find('[data-test=launch-more]')
+
+      await wrapper.findAll('[data-test=launch-cmd]')[0]!.trigger('dragstart')
+      await more.trigger('dragenter')
+      await more.trigger('dragover')
+      expect(more.attributes('data-drop')).toBe('into')
+      expect(wrapper.find('[data-test=launch-more-pop]').exists()).toBe(false)
+      await vi.advanceTimersByTimeAsync(500)
+      expect(wrapper.find('[data-test=launch-more-pop]').exists()).toBe(true)
+
+      const items = wrapper.findAll('[data-test=launch-more-item]')
+      await items[1]!.trigger('dragover', { clientY: 0 }) // 上半边 = 插在它前面
+      expect(items[1]!.attributes('data-drop')).toBe('before')
+      await items[1]!.trigger('drop')
+      await flushPromises()
+      expect(saved(api)).toBe('b | c a d')
+      expect(wrapper.find('[data-test=launch-more-pop]').exists()).toBe(false) // 松手后收起
+
+      await wrapper.findAll('[data-test=launch-cmd]')[1]!.trigger('dragstart')
+      await more.trigger('dragover')
+      await more.trigger('drop')
+      await flushPromises()
+      expect(saved(api)).toBe('a | c d b')
+      wrapper.unmount()
+    })
+
+    it('从「更多」里拖回路径条：落到「唤起」小字上 = 最前面的常用按钮', async () => {
+      const api = setup()
+      const wrapper = mount(LaunchBar, { props: { session } })
+      await wrapper.find('[data-test=launch-more]').trigger('click')
+
+      await wrapper.find('[data-test=launch-more-item]').trigger('dragstart')
+      await wrapper.find('[data-test=launch-label]').trigger('dragover')
+      await wrapper.find('[data-test=launch-label]').trigger('drop')
+      await flushPromises()
+      expect(saved(api)).toBe('c a b | ')
+    })
+
+    it('没有「更多」时，拖动期间临时出现一个「更多 ▾」落点，松手后按是否还有非常用命令决定去留', async () => {
+      const api = setup(['a', 'b'])
+      const wrapper = mount(LaunchBar, { props: { session } })
+      expect(wrapper.find('[data-test=launch-more]').exists()).toBe(false)
+
+      const a = wrapper.findAll('[data-test=launch-cmd]')[0]!
+      await a.trigger('dragstart')
+      expect(wrapper.find('[data-test=launch-more]').exists()).toBe(true)
+      await a.trigger('dragend') // 没放下
+      expect(wrapper.find('[data-test=launch-more]').exists()).toBe(false)
+      expect(api.settings.update).not.toHaveBeenCalled()
+
+      await a.trigger('dragstart')
+      await wrapper.find('[data-test=launch-more]').trigger('dragover')
+      await wrapper.find('[data-test=launch-more]').trigger('drop')
+      await flushPromises()
+      expect(saved(api)).toBe('b | a')
+    })
+
+    it('拖出路径条松手：原样弹回、不删除、不保存；松在自己原位也不保存', async () => {
+      const api = setup()
+      const wrapper = mount(LaunchBar, { props: { session } })
+      const [a, b] = wrapper.findAll('[data-test=launch-cmd]')
+
+      await a!.trigger('dragstart')
+      await b!.trigger('dragover', { clientX: 5 })
+      await b!.trigger('dragleave')
+      await a!.trigger('dragend')
+      expect(b!.attributes('data-drop')).toBeUndefined()
+      expect(api.settings.update).not.toHaveBeenCalled()
+
+      await a!.trigger('dragstart')
+      await a!.trigger('dragover')
+      await a!.trigger('drop')
+      await flushPromises()
+      expect(api.settings.update).not.toHaveBeenCalled()
+    })
+
+    it('保存失败：把原因上抛给路径条显示（emit error）', async () => {
+      const api = setup()
+      vi.mocked(api.settings.update).mockRejectedValueOnce(new Error('写入设置失败'))
+      const wrapper = mount(LaunchBar, { props: { session } })
+      const [a, b] = wrapper.findAll('[data-test=launch-cmd]')
+
+      await a!.trigger('dragstart')
+      await b!.trigger('dragover', { clientX: 5 })
+      await b!.trigger('drop')
+      await flushPromises()
+      expect(wrapper.emitted('error')).toEqual([['写入设置失败']])
+    })
+  })
 })
