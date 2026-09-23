@@ -17,6 +17,14 @@ files:
   - '!**/node_modules/@vscode/windows-process-tree/build/Release/obj/**'
   - '!**/node_modules/@vscode/windows-process-tree/build/Release/*.{iobj,ipdb,exp,lib,lastcodeanalysissucceeded}'
   - '!**/node_modules/@vscode/windows-process-tree/{src,typings,binding.gyp,tsconfig.json,tslint.json}'
+  # node-pty 运行时只用 lib/ 与 prebuilds/win32-x64（加载器只找 build/Release、build/Debug、prebuilds/<平台>-<架构>，
+  # conpty.dll 只从 prebuilds/<平台>/conpty/ 取）：源码、winpty 源码、conpty 副本与其他平台的预编译都不进包
+  - '!**/node_modules/node-pty/{build,deps,src,scripts,third_party,typings}/**'
+  - '!**/node_modules/node-pty/binding.gyp'
+  - '!**/node_modules/node-pty/prebuilds/{darwin-arm64,darwin-x64,win32-arm64}/**'
+  # windows-process-tree 编译期用的头文件库，运行时用不到
+  - '!**/node_modules/node-addon-api/**'
+  # 渲染进程的库（vue / pinia / @xterm）放 devDependencies：Vite 已打进 out/renderer，不再作为依赖进包
 asarUnpack:
   - node_modules/node-pty/**
   - node_modules/@vscode/windows-process-tree/** # 原生 .node 必须在 asar 外（M3 进程树）
