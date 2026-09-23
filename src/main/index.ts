@@ -28,6 +28,13 @@ import { electronBadge, electronNotifications } from './platform/agentPorts'
 import { Updater } from './updater/Updater'
 import { detectAvailableShells, findOnPath } from './pathProbe'
 import { IMAGE_EXTENSIONS } from './store/backgroundImage'
+import { LogFile } from './log/LogFile'
+import { teeConsole } from './log/consoleTee'
+
+// 日志落文件：控制台照常输出，同时抄一份进 <数据目录>\logs\main.log（1 MB 轮转、保留 3 份）；
+// 数据目录在 whenReady 里才解析出来，在那之前的日志先缓冲。只收事件与错误，终端输出与键入内容从不经过 console
+const logFile = new LogFile({ maxBytes: 1024 * 1024, keep: 3 })
+teeConsole(console, (level, message) => logFile.write(level, message))
 
 // 顶层异常：记录日志 + 弹框，不静默
 process.on('uncaughtException', (err) => {
@@ -172,6 +179,9 @@ app.whenReady().then(async () => {
     working: nativeImage.createFromPath(overlayWorkingIconPath),
   }
   const dataDir = isSmoke ? app.getPath('userData') : resolveDataDir(app.getPath('appData'))
+  const logsDir = join(dataDir, 'logs')
+  logFile.open(logsDir)
+  console.log(`[main] TagTerm v${app.getVersion()} 启动${isSmoke ? '（烟测）' : ''}`)
   const pathEnv = process.env['PATH'] ?? ''
   const availableShells = detectAvailableShells(pathEnv, existsSync)
   const availableAgents = findOnPath(DEFAULT_AGENTS, pathEnv, existsSync)
@@ -245,6 +255,7 @@ app.whenReady().then(async () => {
     pty,
     agent: subsystem,
     dataDir,
+    logsDir,
     pickDirectory,
     openPath: (path) => shell.openPath(path), // 路径条「打开」：在资源管理器里打开目录，返回空串成功 / 错误说明
     pickImage,
@@ -257,6 +268,11 @@ app.whenReady().then(async () => {
   mainWindow = createMainWindow({
     shouldHideOnClose: () => !isQuitting,
     showOnReady: !isHiddenStart,
+  })
+  // 渲染进程的警告与错误也进日志（主进程监听窗口的控制台消息，不新增通道）；普通 log 不收
+  mainWindow.webContents.on('console-message', (event) => {
+    if (event.level === 'warning' || event.level === 'error')
+      logFile.write(event.level === 'error' ? 'ERROR' : 'WARN', `[renderer] ${event.message}`)
   })
   tray = createTray({ onShow: showWindow, onOpenSettings: openSettings, onQuit: quitApp })
   if (isSmoke)

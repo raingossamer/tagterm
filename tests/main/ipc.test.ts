@@ -103,6 +103,7 @@ describe('IPC 接口层', () => {
       pty,
       agent,
       dataDir: dir,
+      logsDir: join(dir, 'logs'),
       pickImage: async () => join(dir, 'picked.png'),
       pickDirectory: async () => 'D:\\picked',
       openPath: async (path) => {
@@ -184,6 +185,19 @@ describe('IPC 接口层', () => {
     openPathError = 'Failed to open path'
     await expect(ipc.invoke('session:open-directory', s.id)).rejects.toThrow(
       '打不开目录：Failed to open path',
+    )
+  })
+
+  it('app:open-logs-dir：日志目录由主进程给定（渲染进程不传路径），不存在先建，再交注入的 openPath；打不开 → reject「打不开日志目录：…」', async () => {
+    const logsDir = join(dir, 'logs')
+    expect(existsSync(logsDir)).toBe(false)
+    await expect(ipc.invoke('app:open-logs-dir')).resolves.toBeUndefined()
+    expect(existsSync(logsDir)).toBe(true)
+    expect(opened).toEqual([logsDir])
+
+    openPathError = 'Access is denied'
+    await expect(ipc.invoke('app:open-logs-dir')).rejects.toThrow(
+      '打不开日志目录：Access is denied',
     )
   })
 

@@ -294,4 +294,35 @@ describe('SettingsModal', () => {
       'C:/Users/test/AppData/Roaming/TagTerm',
     )
   })
+
+  it('「关于」的「打开日志目录」调 app.openLogsDir（不传路径，由主进程定）；500 ms 内连点只打开一次；打不开时弹窗内红字', async () => {
+    vi.useFakeTimers()
+    try {
+      const api = installFakeApi()
+      const wrapper = mount(SettingsModal)
+      await flushPromises()
+      await wrapper.find('[data-test=settings-nav-about]').trigger('click')
+
+      const button = wrapper.find('[data-test=about-open-logs]')
+      expect(button.text()).toBe('打开日志目录')
+      await button.trigger('click')
+      await button.trigger('click') // 双击：资源管理器只该开一个窗口
+      await flushPromises()
+      expect(api.app.openLogsDir).toHaveBeenCalledTimes(1)
+      expect(api.app.openLogsDir).toHaveBeenCalledWith()
+      expect(wrapper.find('[data-test=settings-error]').exists()).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(500)
+      vi.mocked(api.app.openLogsDir).mockRejectedValueOnce(
+        new Error('打不开日志目录：Access is denied'),
+      )
+      await button.trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-test=settings-error]').text()).toBe(
+        '打不开日志目录：Access is denied',
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

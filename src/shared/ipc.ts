@@ -96,6 +96,7 @@ export interface IpcInvokeMap {
   'app:get-os-build': { args: []; result: number } // Windows 构建号，供 xterm windowsPty 选项
   'app:list-shells': { args: []; result: ShellKind[] } // 本机可用 shell（PATH 探测）
   'app:get-data-dir': { args: []; result: string } // 数据目录（设置「关于」显示）
+  'app:open-logs-dir': { args: []; result: void } // 在资源管理器打开日志目录：路径由主进程定，不存在先建；打不开 reject
   'app:pick-image': { args: []; result: string | null } // 系统文件对话框选图片
   'app:get-auto-launch': { args: []; result: AutoLaunchStatus } // 登录项当前状态（未打包恒 false）
   'app:set-auto-launch': { args: [enabled: boolean]; result: AutoLaunchStatus } // 写登录项并返回实际状态；未打包 reject

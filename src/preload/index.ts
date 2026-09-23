@@ -41,6 +41,7 @@ const api: TagTermApi = {
     getOsBuild: () => invoke('app:get-os-build'),
     listShells: () => invoke('app:list-shells'),
     getDataDir: () => invoke('app:get-data-dir'),
+    openLogsDir: () => invoke('app:open-logs-dir'),
     pickImage: () => invoke('app:pick-image'),
     getAutoLaunch: () => invoke('app:get-auto-launch'),
     setAutoLaunch: (enabled) => invoke('app:set-auto-launch', enabled),

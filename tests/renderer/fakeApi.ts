@@ -33,6 +33,7 @@ export function createFakeApi(overrides: Overrides = {}): TagTermApi {
       getOsBuild: vi.fn(async () => 26200),
       listShells: vi.fn(async (): Promise<ShellKind[]> => ['cmd.exe', 'powershell.exe']),
       getDataDir: vi.fn(async () => 'C:/Users/test/AppData/Roaming/TagTerm'),
+      openLogsDir: vi.fn(async () => {}),
       pickImage: vi.fn(async () => null),
       getAutoLaunch: vi.fn(async () => ({ enabled: false, blockedBySystem: false })),
       setAutoLaunch: vi.fn(async (enabled: boolean) => ({ enabled, blockedBySystem: false })),
