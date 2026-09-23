@@ -4,6 +4,7 @@
  */
 import type {
   AppBackground,
+  GlobalShortcutConfig,
   LaunchCommand,
   Session,
   SessionRuntime,
@@ -31,6 +32,11 @@ export type SessionPatch = Partial<
 export interface AutoLaunchStatus {
   enabled: boolean // 登录项存在（openAtLogin）
   blockedBySystem: boolean // 登录项存在但被用户在任务管理器「启动应用」里禁用
+}
+
+/** 全局快捷键当前状态：配置 + 这次启动有没有注册上（被别的程序占着时为假，设置里显示红字） */
+export interface GlobalShortcutStatus extends GlobalShortcutConfig {
+  registered: boolean
 }
 
 /** 新命令可不带 id，由主进程分配 */
@@ -100,6 +106,9 @@ export interface IpcInvokeMap {
   'app:pick-image': { args: []; result: string | null } // 系统文件对话框选图片
   'app:get-auto-launch': { args: []; result: AutoLaunchStatus } // 登录项当前状态（未打包恒 false）
   'app:set-auto-launch': { args: [enabled: boolean]; result: AutoLaunchStatus } // 写登录项并返回实际状态；未打包 reject
+  'app:get-global-shortcut': { args: []; result: GlobalShortcutStatus } // 全局快捷键配置与是否注册上
+  'app:set-global-shortcut': { args: [config: GlobalShortcutConfig]; result: GlobalShortcutStatus } // 先注册新的，被占用 reject 且旧的保留、不落盘；成功才写 settings.json
+  'app:pause-global-shortcut': { args: [paused: boolean]; result: void } // 设置里录新键位期间暂停当前热键（只在内存）
   'session:list': { args: []; result: Session[] }
   'session:create': { args: [input: CreateSessionInput]; result: Session }
   'session:update': { args: [id: string, patch: SessionPatch]; result: Session } // 含 cwd / shell 时：有程序在跑 reject，空闲先 kill 再改
@@ -149,6 +158,7 @@ export interface IpcEventMap {
   'tag:changed': [result: TagListResult] // 标签或关联变更后全量广播（启动清理不广播）
   'agent:status': [runtime: SessionRuntime] // 某会话运行时记录变化；记录删除时发 alive: false 的空闲记录
   'app:select-session': [sessionId: string] // 系统通知被点击：显示窗口并切到该会话
+  'app:focus-terminal': [] // 全局快捷键唤出窗口后：把焦点交给当前终端，可直接打字
 }
 
 export type SendChannel = keyof IpcSendMap

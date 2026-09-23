@@ -5,6 +5,7 @@
 import type {
   AutoLaunchStatus,
   CreateSessionInput,
+  GlobalShortcutStatus,
   HookAgent,
   HooksStatus,
   HooksStatusMap,
@@ -18,6 +19,7 @@ import type {
   TagPatch,
 } from './ipc'
 import type {
+  GlobalShortcutConfig,
   Session,
   SessionRuntime,
   Settings,
@@ -40,6 +42,14 @@ export interface TagTermApi {
     pickImage(): Promise<string | null>
     getAutoLaunch(): Promise<AutoLaunchStatus>
     setAutoLaunch(enabled: boolean): Promise<AutoLaunchStatus>
+    /** 全局快捷键（唤出 / 隐藏窗口）的配置与这次启动有没有注册上 */
+    getGlobalShortcut(): Promise<GlobalShortcutStatus>
+    /** 改全局快捷键：先注册新的，被占用 reject「该快捷键已被其他程序占用」（旧的保留）；成功才落盘 */
+    setGlobalShortcut(config: GlobalShortcutConfig): Promise<GlobalShortcutStatus>
+    /** 设置里录新键位期间暂停当前热键（true）/ 恢复（false） */
+    pauseGlobalShortcut(paused: boolean): Promise<void>
+    /** 全局快捷键唤出窗口后：把焦点交给当前终端 */
+    onFocusTerminal(cb: () => void): Unsubscribe
     onOpenSettings(cb: () => void): Unsubscribe
     /** 系统通知被点击 → 切到该会话 */
     onSelectSession(cb: (sessionId: string) => void): Unsubscribe

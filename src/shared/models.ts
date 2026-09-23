@@ -88,9 +88,19 @@ export const DEFAULT_BACKGROUND: AppBackground = {
   blurPx: 4,
 }
 
+/**
+ * 全局快捷键（唤出 / 隐藏窗口）：settings.json 的可选字段，缺省（不写键）= 开启 + Ctrl+Alt+T（shared/accelerator）。
+ * 只经 app:set-global-shortcut 写入（先注册成功才落盘），settings:update 不收它
+ */
+export interface GlobalShortcutConfig {
+  enabled: boolean
+  accelerator: string // Electron accelerator 写法，如 Ctrl+Alt+T
+}
+
 export interface Settings {
   launchCommands: LaunchCommand[]
   background: AppBackground
+  globalShortcut?: GlobalShortcutConfig
 }
 
 /** v2：terminalBackground（终端局部背景 + 黑色遮罩）整体换成全局 background */

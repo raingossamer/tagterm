@@ -46,6 +46,7 @@ const isSettingsOpen = ref(false)
 const isManageTagsOpen = ref(false)
 let unsubscribeOpenSettings: Unsubscribe | null = null
 let unsubscribeSelectSession: Unsubscribe | null = null
+let unsubscribeFocusTerminal: Unsubscribe | null = null
 const loadError = ref('')
 
 // 工厂惰性读取：终端只会在会话列表加载之后创建，而列表加载在 getOsBuild 之后
@@ -88,6 +89,8 @@ onMounted(async () => {
   unsubscribeSelectSession = window.tagterm.app.onSelectSession((id) => {
     void workspace.select(id)
   })
+  // 全局快捷键唤出窗口 → 主进程已显示并聚焦窗口 → 焦点交给当前终端，可直接打字
+  unsubscribeFocusTerminal = window.tagterm.app.onFocusTerminal(() => core.focusActive())
   try {
     osBuild = await window.tagterm.app.getOsBuild()
     await settings.load()
@@ -104,6 +107,7 @@ onUnmounted(() => {
   document.removeEventListener('keydown', onKeydown)
   unsubscribeOpenSettings?.()
   unsubscribeSelectSession?.()
+  unsubscribeFocusTerminal?.()
   detachCore()
   core.dispose()
 })

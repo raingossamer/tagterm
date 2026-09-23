@@ -37,6 +37,17 @@ export function createFakeApi(overrides: Overrides = {}): TagTermApi {
       pickImage: vi.fn(async () => null),
       getAutoLaunch: vi.fn(async () => ({ enabled: false, blockedBySystem: false })),
       setAutoLaunch: vi.fn(async (enabled: boolean) => ({ enabled, blockedBySystem: false })),
+      getGlobalShortcut: vi.fn(async () => ({
+        enabled: true,
+        accelerator: 'Ctrl+Alt+T',
+        registered: true,
+      })),
+      setGlobalShortcut: vi.fn(async (config: { enabled: boolean; accelerator: string }) => ({
+        ...config,
+        registered: config.enabled,
+      })),
+      pauseGlobalShortcut: vi.fn(async () => {}),
+      onFocusTerminal: vi.fn(() => () => {}),
       onOpenSettings: vi.fn(() => () => {}),
       onSelectSession: vi.fn(() => () => {}),
       ...overrides.app,

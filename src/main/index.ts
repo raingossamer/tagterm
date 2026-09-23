@@ -25,6 +25,9 @@ import { PtyManager } from './pty/PtyManager'
 import type { AgentSubsystem } from './agent/AgentSubsystem'
 import { createProductionAgent } from './agent/production'
 import { electronBadge, electronNotifications } from './platform/agentPorts'
+import { electronShortcuts } from './platform/shortcutPort'
+import { GlobalShortcut } from './shortcut/GlobalShortcut'
+import { decideSummon } from './shortcut/summon'
 import { Updater } from './updater/Updater'
 import { detectAvailableShells, findOnPath } from './pathProbe'
 import { IMAGE_EXTENSIONS } from './store/backgroundImage'
@@ -154,6 +157,30 @@ function showWindow(): void {
   if (mainWindow && !mainWindow.isDestroyed()) showMainWindow(mainWindow)
 }
 
+/**
+ * 全局快捷键按下：窗口在前台就藏到托盘，否则还原、显示、聚焦，并让渲染进程把焦点交给当前终端（可直接打字）
+ */
+function summonWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  const action = decideSummon({
+    isVisible: mainWindow.isVisible(),
+    isMinimized: mainWindow.isMinimized(),
+    isFocused: mainWindow.isFocused(),
+  })
+  if (action === 'hide') {
+    mainWindow.hide()
+    return
+  }
+  showMainWindow(mainWindow)
+  broadcast('app:focus-terminal')
+}
+
+// 全局快捷键（唤出 / 隐藏窗口）：烟测实例不碰系统热键（dryRun），见 platform/shortcutPort
+const shortcut = new GlobalShortcut({
+  port: electronShortcuts({ dryRun: isSmoke }),
+  onPress: summonWindow,
+})
+
 function quitApp(): void {
   isQuitting = true
   app.quit()
@@ -254,6 +281,7 @@ app.whenReady().then(async () => {
     updater,
     pty,
     agent: subsystem,
+    shortcut,
     dataDir,
     logsDir,
     pickDirectory,
@@ -279,6 +307,8 @@ app.whenReady().then(async () => {
       logFile.write(event.level === 'error' ? 'ERROR' : 'WARN', `[renderer] ${event.message}`)
   })
   tray = createTray({ onShow: showWindow, onOpenSettings: openSettings, onQuit: quitApp })
+  // 窗口就绪后再注册：按下时要操作它；被别的程序占着只记日志，设置「启动」段显示红字
+  shortcut.start(settings.getGlobalShortcut())
   if (isSmoke)
     runSmokeCheck(mainWindow, {
       store,
@@ -298,6 +328,7 @@ app.on('second-instance', () => showWindow())
 app.on('before-quit', () => {
   isQuitting = true
   ptyManager?.killAll()
+  shortcut.dispose()
   void agent?.stop()
   agent = null
   tray?.destroy()

@@ -10,14 +10,22 @@ import {
   DEFAULT_BACKGROUND,
   SETTINGS_FILE_VERSION,
   type AppBackground,
+  type GlobalShortcutConfig,
   type LaunchCommand,
   type Settings,
   type SettingsFile,
 } from '@shared/models'
+import { DEFAULT_GLOBAL_SHORTCUT, isValidAccelerator } from '@shared/accelerator'
 import { readJson, writeJsonAtomic } from './jsonFile'
 import { readImageAsDataUrl, type ShrinkImage } from './backgroundImage'
 
 const SETTINGS_FILE = 'settings.json'
+
+/** 全局快捷键缺省：开启 + Ctrl+Alt+T（文件里不写这个键） */
+const DEFAULT_GLOBAL_SHORTCUT_CONFIG: GlobalShortcutConfig = {
+  enabled: true,
+  accelerator: DEFAULT_GLOBAL_SHORTCUT,
+}
 
 export interface SettingsStoreDeps {
   /** 首次运行的唤起命令来源（已安装的工具名） */
@@ -57,7 +65,10 @@ export class SettingsStore {
       console.log(`[store] 已生成默认设置：${this.file}`)
       return
     }
-    const file = raw as Partial<SettingsFile> & { terminalBackground?: unknown }
+    const file = raw as Partial<SettingsFile> & {
+      terminalBackground?: unknown
+      globalShortcut?: unknown
+    }
     if (typeof file.version !== 'number' || !Array.isArray(file.launchCommands)) {
       throw new Error(`设置文件格式不正确：${this.file}`)
     }
@@ -80,16 +91,40 @@ export class SettingsStore {
       launchCommands,
       background: { ...DEFAULT_BACKGROUND, ...(file.background ?? {}) },
     }
+    // 可选字段：不合法（手改坏了）按缺省处理、下次写入时丢掉，不因它拒绝加载整份设置
+    if (file.globalShortcut !== undefined) {
+      if (isGlobalShortcutConfig(file.globalShortcut))
+        this.settings.globalShortcut = { ...file.globalShortcut }
+      else console.warn(`[store] 设置里的全局快捷键格式不正确，按缺省处理：${this.file}`)
+    }
     console.log(
       `[store] 已加载设置（${this.settings.launchCommands.length} 条唤起命令）：${this.file}`,
     )
   }
 
   get(): Settings {
+    const { globalShortcut } = this.settings
     return {
       launchCommands: [...this.settings.launchCommands],
       background: { ...this.settings.background },
+      ...(globalShortcut ? { globalShortcut: { ...globalShortcut } } : {}),
     }
+  }
+
+  /** 全局快捷键配置（文件里没有即缺省：开启 + Ctrl+Alt+T） */
+  getGlobalShortcut(): GlobalShortcutConfig {
+    return { ...(this.settings.globalShortcut ?? DEFAULT_GLOBAL_SHORTCUT_CONFIG) }
+  }
+
+  /** 写全局快捷键配置（接口层在注册成功后才调）：等于缺省值时删键；落盘后回调全量设置 */
+  async setGlobalShortcut(config: GlobalShortcutConfig): Promise<void> {
+    const isDefault =
+      config.enabled === DEFAULT_GLOBAL_SHORTCUT_CONFIG.enabled &&
+      config.accelerator === DEFAULT_GLOBAL_SHORTCUT_CONFIG.accelerator
+    if (isDefault) delete this.settings.globalShortcut
+    else this.settings.globalShortcut = { ...config }
+    await this.save()
+    this.onChanged(this.get())
   }
 
   /** 补丁合并：给出的字段整体替换；新命令（无 id）分配 uuid */
@@ -116,6 +151,12 @@ export class SettingsStore {
     const data: SettingsFile = { version: SETTINGS_FILE_VERSION, ...this.settings }
     await writeJsonAtomic(this.file, data)
   }
+}
+
+function isGlobalShortcutConfig(value: unknown): value is GlobalShortcutConfig {
+  if (typeof value !== 'object' || value === null) return false
+  const o = value as Record<string, unknown>
+  return typeof o.enabled === 'boolean' && isValidAccelerator(o.accelerator)
 }
 
 /** v1 → v2：只继承图片路径；dimOpacity 是终端上方的黑色遮罩，在全局背景模型里没有对应物，丢弃 */
