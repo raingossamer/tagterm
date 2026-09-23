@@ -1,12 +1,18 @@
 /**
  * 服务层：进程树探针。只在至少有一个被 watch 的 pty 时每 intervalMs 跑一轮：对每个 pty 的 shell pid 取递归子树
- *（listSubtree 由装配层用 @vscode/windows-process-tree 注入，不含 shell 自己），经 detectAgent 映射成 AgentKind | null，
- * 整体快照与上一轮不同才回调。也回答 session:update 的「shell 是否空闲」（hasChildren）。定时器可注入，不 import electron。
+ *（listSubtree 由装配层用 @vscode/windows-process-tree 注入，不含 shell 自己），经 detectAgent 映射成 AgentKind | null、
+ * 经 foregroundProgram 取 shell 下在跑的程序名，整体快照与上一轮不同才回调。也回答 session:update 的「shell 是否空闲」（hasChildren）。定时器可注入，不 import electron。
  */
 import type { AgentKind } from '@shared/models'
-import { detectAgent, type ProcessNode } from './processMatch'
+import { detectAgent, foregroundProgram, type ProcessNode } from './processMatch'
 
-export type AgentSnapshot = Map<string, AgentKind | null>
+/** 一个会话这一轮看到的进程情况：在哪个工具里（认不出为 null）、shell 下在跑的程序名（没有为 null） */
+export interface ProcessState {
+  agent: AgentKind | null
+  program: string | null
+}
+
+export type AgentSnapshot = Map<string, ProcessState>
 
 export interface ProcessTreeProbeDeps {
   /** 某 pid 的全部后代进程（不含它自己）；进程已不存在时可抛错或返回空 */
@@ -80,7 +86,12 @@ export class ProcessTreeProbe {
         } catch {
           subtree = [] // 进程已不存在或查询失败：按没有 agent 处理，pty 退出事件随后会 unwatch
         }
-        if (this.watched.has(sessionId)) next.set(sessionId, detectAgent(subtree))
+        if (this.watched.has(sessionId)) {
+          next.set(sessionId, {
+            agent: detectAgent(subtree),
+            program: foregroundProgram(subtree, pid),
+          })
+        }
       }
       if (!isSameSnapshot(this.last, next)) {
         this.last = next
@@ -97,6 +108,9 @@ export class ProcessTreeProbe {
 
 function isSameSnapshot(a: AgentSnapshot, b: AgentSnapshot): boolean {
   if (a.size !== b.size) return false
-  for (const [id, agent] of a) if (!b.has(id) || b.get(id) !== agent) return false
+  for (const [id, state] of a) {
+    const other = b.get(id)
+    if (!other || other.agent !== state.agent || other.program !== state.program) return false
+  }
   return true
 }

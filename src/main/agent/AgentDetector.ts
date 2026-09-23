@@ -11,6 +11,7 @@
 import type { HookAgent, OutputReport } from '@shared/ipc'
 import type { AgentKind, SessionRuntime } from '@shared/models'
 import { HOOK_CONTRACTS } from './hookContract'
+import type { ProcessState } from './ProcessTreeProbe'
 import {
   classify,
   hasCountedDown,
@@ -119,19 +120,26 @@ export class AgentDetector {
   }
 
   /**
-   * 进程树快照（sessionId → 工具 | null）：agent 以它为准；快照里没有的会话不动。
-   * 工具消失（退出 / Ctrl+C）→ 一律回空闲并清掉提示，不留幽灵状态
+   * 进程树快照（sessionId → 工具 | null 与 shell 下在跑的程序名）：agent 与 program 以它为准；快照里没有的会话不动。
+   * 工具消失（退出 / Ctrl+C）→ 一律回空闲并清掉提示，不留幽灵状态。
+   * 认不出的程序只记 program，不设 agent —— 状态点与屏幕判定仍只对四个工具生效（构建脚本打出的「(12s)」不该算运行中）
    */
-  processSnapshot(agents: ReadonlyMap<string, AgentKind | null>): void {
-    for (const [sessionId, agent] of agents) {
+  processSnapshot(snapshot: ReadonlyMap<string, ProcessState>): void {
+    for (const [sessionId, { agent, program }] of snapshot) {
       const current = this.runtimes.get(sessionId)
-      if (!current || current.agent === agent) continue
-      if (agent === null) {
-        const { pendingHint: _hint, ...rest } = current
-        this.commit({ ...rest, agent: null, status: 'idle' })
-      } else {
-        this.commit({ ...current, agent })
+      if (!current) continue
+      const { program: _program, ...rest } = current
+      let next: SessionRuntime = rest
+      if (agent !== current.agent) {
+        if (agent === null) {
+          const { pendingHint: _hint, ...withoutHint } = rest
+          next = { ...withoutHint, agent: null, status: 'idle' }
+        } else {
+          next = { ...rest, agent }
+        }
       }
+      if (program !== null) next = { ...next, program }
+      if (!isSameRuntime(current, next)) this.commit(next)
     }
   }
 
@@ -216,6 +224,7 @@ function isSameRuntime(a: SessionRuntime, b: SessionRuntime): boolean {
     a.agent === b.agent &&
     a.status === b.status &&
     a.cwdNow === b.cwdNow &&
-    a.pendingHint === b.pendingHint
+    a.pendingHint === b.pendingHint &&
+    a.program === b.program
   )
 }
