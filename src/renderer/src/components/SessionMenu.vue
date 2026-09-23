@@ -1,11 +1,12 @@
 <script setup lang="ts">
-// 会话右键菜单：fixed 定位在鼠标位置（挂载后按实际尺寸与视口用 placeMenu 翻转），项「编辑会话」「移除会话」；
+// 会话右键菜单：fixed 定位在鼠标位置（挂载后按实际尺寸与视口用 placeMenu 翻转），项「编辑会话」「重启终端」「移除会话」；
+// 终端还没打开时「重启终端」置灰（项数与位置固定，不隐藏）；
 // Esc 在 document 上监听并 emit close；点外部关闭由 SessionGroups 的 usePopover 处理（与「更多 ▾」同一模式）
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { placeMenu } from '../composables/menuPosition'
 
-const props = defineProps<{ x: number; y: number }>()
-const emit = defineEmits<{ edit: []; remove: []; close: [] }>()
+const props = defineProps<{ x: number; y: number; canRestart: boolean }>()
+const emit = defineEmits<{ edit: []; restart: []; remove: []; close: [] }>()
 const el = ref<HTMLElement | null>(null)
 const style = ref({ left: `${props.x}px`, top: `${props.y}px` })
 
@@ -37,6 +38,17 @@ onUnmounted(() => document.removeEventListener('keydown', onDocumentKeydown))
 <template>
   <div ref="el" class="menu" :style="style" data-test="session-menu">
     <button class="item" type="button" data-test="menu-edit" @click="emit('edit')">编辑会话</button>
+    <button
+      class="item"
+      :class="{ off: !canRestart }"
+      type="button"
+      :aria-disabled="canRestart ? undefined : 'true'"
+      :title="canRestart ? undefined : '终端还没打开'"
+      data-test="menu-restart"
+      @click="canRestart && emit('restart')"
+    >
+      重启终端
+    </button>
     <button class="item danger" type="button" data-test="menu-remove" @click="emit('remove')">
       移除会话
     </button>
@@ -65,6 +77,13 @@ onUnmounted(() => document.removeEventListener('keydown', onDocumentKeydown))
 }
 .item:hover {
   background: #f0f2f5;
+}
+.item.off {
+  color: var(--muted);
+  cursor: default;
+}
+.item.off:hover {
+  background: none;
 }
 .item.danger {
   color: #b42318;
