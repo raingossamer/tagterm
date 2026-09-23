@@ -15,6 +15,13 @@ import { readJson, writeJsonAtomic } from './jsonFile'
 
 const SESSIONS_FILE = 'sessions.json'
 
+/** 旧版本写下、现已不用的会话字段（启动命令、最近工具、最近打开时间） */
+interface RetiredSessionKeys {
+  startupCmd?: unknown
+  lastAgent?: unknown
+  lastOpenedAt?: unknown
+}
+
 export interface SessionStoreDeps {
   /** 每次变更落盘后回调全量列表，由装配层广播 session:changed */
   onChanged?: (sessions: Session[]) => void
@@ -46,7 +53,12 @@ export class SessionStore {
         `数据文件版本 ${file.version} 高于本程序支持的版本 ${SESSIONS_FILE_VERSION}，请升级 TagTerm：${this.file}`,
       )
     }
-    this.sessions = file.sessions
+    // 废弃字段读入时丢掉，下一次保存即从文件消失（仍是 v1，不算迁移）；只丢认识的这几个，
+    // 其他不认识的键照旧保留 —— 更新的版本写下的可选字段，降级再升级也不能丢
+    const sessions = file.sessions as (Session & RetiredSessionKeys)[]
+    this.sessions = sessions.map(
+      ({ startupCmd: _cmd, lastAgent: _agent, lastOpenedAt: _opened, ...session }) => session,
+    )
     console.log(`[store] 已加载 ${this.sessions.length} 个会话：${this.file}`)
   }
 
@@ -107,16 +119,6 @@ export class SessionStore {
     const session = this.sessions.find((s) => s.id === id)
     if (!session) throw new Error(`会话不存在：${id}`)
     return session
-  }
-
-  /** 每次打开终端时写 lastOpenedAt */
-  async touchOpened(id: string): Promise<void> {
-    const session = this.get(id)
-    this.sessions[this.sessions.indexOf(session)] = {
-      ...session,
-      lastOpenedAt: new Date().toISOString(),
-    }
-    await this.save()
   }
 
   private nextSortOrder(): number {

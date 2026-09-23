@@ -23,10 +23,11 @@ export interface CreateSessionInput {
   tagIds?: string[] // M2：建会话后逐个 attach；attach 失败不回滚、错误原样 reject
 }
 
-/** 改 cwd / shell 只在 shell 空闲（无子进程）时允许：接口层先结束空闲 pty 再改；有程序在跑则 reject */
-export type SessionPatch = Partial<
-  Pick<Session, 'name' | 'cwd' | 'shell' | 'startupCmd' | 'sortOrder'>
->
+/**
+ * 改 cwd / shell 只在 shell 空闲（无子进程）时允许：接口层先结束空闲 pty 再改；有程序在跑则 reject。
+ * 排序不在这里改，只走 session:reorder（整体重排）
+ */
+export type SessionPatch = Partial<Pick<Session, 'name' | 'cwd' | 'shell'>>
 
 /** 开机自启状态：真相在系统登录项（注册表），不落盘 */
 export interface AutoLaunchStatus {
@@ -49,8 +50,8 @@ export interface SettingsPatch {
 
 // ---- 标签（M2）----
 
-// hidden 走布尔入参：false 表示「取消隐藏」，主进程落盘时删键（可选字段缺省不写）
-export type TagPatch = Partial<Pick<Tag, 'name' | 'color' | 'sortOrder'>> & { hidden?: boolean }
+// hidden 走布尔入参：false 表示「取消隐藏」，主进程落盘时删键（可选字段缺省不写）；排序只走 tag:reorder
+export type TagPatch = Partial<Pick<Tag, 'name' | 'color'>> & { hidden?: boolean }
 
 export interface TagListResult {
   tags: Tag[]

@@ -61,8 +61,8 @@ describe('TagStore', () => {
     await expect(store.update(a.id, { name: ' java ' })).rejects.toThrow('已有同名标签：java')
     await expect(store.update(a.id, { name: '' })).rejects.toThrow('标签名不能为空')
 
-    const recolored = await store.update(b.id, { color: '#D14343', sortOrder: 9 })
-    expect(recolored).toEqual({ ...b, color: '#D14343', sortOrder: 9 })
+    const recolored = await store.update(b.id, { color: '#D14343' })
+    expect(recolored).toEqual({ ...b, color: '#D14343' })
     await expect(store.update(b.id, { color: '#000000' as never })).rejects.toThrow(
       '不支持的颜色：#000000',
     )

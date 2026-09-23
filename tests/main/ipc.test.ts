@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { registerIpc, type IpcDeps } from '../../src/main/ipc'
@@ -43,10 +43,12 @@ describe('IPC 接口层', () => {
   /** 假的系统热键表：全局快捷键服务注册到这里 */
   let shortcutPort: FakeShortcutPort
   let shortcut: GlobalShortcut
+  /** 会话列表广播（session:changed）的次数 */
+  let sessionBroadcasts = 0
 
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), 'tagterm-ipc-'))
-    store = new SessionStore(dir)
+    store = new SessionStore(dir, { onChanged: () => (sessionBroadcasts += 1) })
     await store.load()
     settings = new SettingsStore(dir, { seedCommands: ['claude', 'pi'] })
     await settings.load()
@@ -133,6 +135,7 @@ describe('IPC 接口层', () => {
     await agent.stop()
     hasChildren = false
     childQueries = 0
+    sessionBroadcasts = 0
     autoLaunch = { enabled: false, blockedBySystem: false }
     opened.length = 0
     openPathError = ''
@@ -159,6 +162,23 @@ describe('IPC 接口层', () => {
 
     await ipc.invoke('session:remove', created.id)
     await expect(ipc.invoke('session:list')).resolves.toEqual([])
+  })
+
+  it('session:update 带 startupCmd / sortOrder、tag:update 带 sortOrder 一律忽略：启动命令已不做，排序只走 reorder 通道', async () => {
+    const s = (await ipc.invoke('session:create', { cwd: 'D:\\x' })) as Session
+    const updated = (await ipc.invoke('session:update', s.id, {
+      name: 'n2',
+      startupCmd: 'claude',
+      sortOrder: 99,
+    })) as Session
+    expect(updated).toEqual({ ...s, name: 'n2' })
+    expect(store.get(s.id)).toEqual({ ...s, name: 'n2' })
+
+    const t = (await ipc.invoke('tag:create', 'simba')) as Tag
+    const renamed = (await ipc.invoke('tag:update', t.id, { name: 'simba-2', sortOrder: 9 })) as Tag
+    expect(renamed).toEqual({ ...t, name: 'simba-2' })
+    // 字段已不认识，类型不对也不再报错
+    await expect(ipc.invoke('tag:update', t.id, { sortOrder: 1.5 })).resolves.toEqual(renamed)
   })
 
   it('非法参数在接口层被拒绝', async () => {
@@ -216,6 +236,8 @@ describe('IPC 接口层', () => {
 
   it('pty:open 按会话目录 / shell 起真实终端且幂等；写入 / 是否存活 / kill 经接口层生效', async () => {
     const s = (await ipc.invoke('session:create', { cwd: process.cwd() })) as Session
+    const fileBefore = readFileSync(join(dir, 'sessions.json'), 'utf8')
+    const broadcastsBefore = sessionBroadcasts
 
     const first = (await ipc.invoke('pty:open', s.id, { cols: 80, rows: 24 })) as PtyOpenResult
     expect(first.created).toBe(true)
@@ -223,7 +245,9 @@ describe('IPC 接口层', () => {
     const again = (await ipc.invoke('pty:open', s.id, { cols: 80, rows: 24 })) as PtyOpenResult
     expect(again).toEqual({ created: false, pid: first.pid })
     await expect(ipc.invoke('pty:is-alive', s.id)).resolves.toBe(true)
-    expect(store.get(s.id).lastOpenedAt).toBeDefined()
+    // 打开终端不写 sessions.json、不广播会话列表（原先每次打开都写 lastOpenedAt：没人读，却要整份写盘再广播一次）
+    expect(readFileSync(join(dir, 'sessions.json'), 'utf8')).toBe(fileBefore)
+    expect(sessionBroadcasts).toBe(broadcastsBefore)
 
     ipc.send('pty:write', s.id, 'echo via-ipc\r')
     await waitFor(() => (output[s.id] ?? '').includes('via-ipc'))
@@ -506,9 +530,6 @@ describe('IPC 接口层', () => {
     await expect(ipc.invoke('tag:update', 'id', { name: 7 })).rejects.toThrow('标签名不能为空')
     await expect(ipc.invoke('tag:update', 'id', { color: 'red' })).rejects.toThrow(
       '不支持的颜色：red',
-    )
-    await expect(ipc.invoke('tag:update', 'id', { sortOrder: 1.5 })).rejects.toThrow(
-      '排序值必须是整数',
     )
     await expect(ipc.invoke('tag:update', 'id', { hidden: 'yes' })).rejects.toThrow(
       'hidden 必须是布尔值',

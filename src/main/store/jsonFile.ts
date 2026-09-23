@@ -1,7 +1,7 @@
 /**
  * JSON 文件读写：读不存在的文件返回 null；写入先写同目录 .tmp 再 rename 覆盖（原子写）。
  * 临时文件名每次唯一：固定用 `<文件>.tmp` 时，同一份文件的两次写入会互相覆盖临时文件，
- * 后完成的那次 rename 拿到 ENOENT —— 调用方（如 pty:open 里的 touchOpened）就会莫名其妙地失败。
+ * 后完成的那次 rename 拿到 ENOENT —— 调用方就会莫名其妙地失败（2026-09-14 终端假死排查时撞到过）。
  */
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'

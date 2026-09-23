@@ -93,7 +93,6 @@ export class TagStore {
       next.name = name
     }
     if (patch.color !== undefined) next.color = assertColor(patch.color)
-    if (patch.sortOrder !== undefined) next.sortOrder = patch.sortOrder
     // hidden 是可选字段：true 落盘写键，false 删键（缺省 = 显示，见 sql.md「约定」可选字段缺省不写）
     if (patch.hidden !== undefined) {
       if (patch.hidden) next.hidden = true
