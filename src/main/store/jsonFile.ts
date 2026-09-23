@@ -19,7 +19,7 @@ export async function readJson(file: string): Promise<unknown | null> {
   try {
     return JSON.parse(text) as unknown
   } catch (err) {
-    throw new Error(`数据文件损坏，无法解析：${file}（${(err as Error).message}）`)
+    throw new Error(`数据文件损坏，无法解析：${file}（${(err as Error).message}）`, { cause: err })
   }
 }
 

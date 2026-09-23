@@ -7,6 +7,9 @@ import type { UpdateStatus } from '@shared/models'
 /** electron-updater 的 AppUpdater 子集 */
 export interface AutoUpdaterLike {
   autoDownload: boolean
+  // 各事件的回调参数由注册处自己声明；Node 的 EventEmitter.on 把回调参数定为 any[]，
+  // 写 unknown[] 各回调要自己断言类型、写 never[] 又接不住 EventEmitter（假对象与 electron-updater 都是）
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 见上
   on(event: string, listener: (...args: any[]) => void): unknown
   checkForUpdates(): Promise<unknown>
   downloadUpdate(): Promise<unknown>

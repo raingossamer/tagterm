@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { defineComponent, h } from 'vue'
@@ -36,7 +36,7 @@ describe('useViewedSession（「正被查看」的会话上报）', () => {
 
   it('挂载先上报一次；当前页变化 / 失焦与聚焦 / 隐藏与显示各上报一次（不可见或失焦发 null）；卸载后不再上报', async () => {
     const wrapper = mount(Host)
-    const calls = (): unknown[][] => (api.agent.setViewed as any).mock.calls
+    const calls = (): unknown[][] => vi.mocked(api.agent.setViewed).mock.calls
     expect(calls()).toEqual([[null]])
 
     await fake.workspace.select(a.id)

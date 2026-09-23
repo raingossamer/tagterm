@@ -558,7 +558,7 @@ function onKeydown(e: KeyboardEvent): void {
 
       <footer>
         <label class="check" data-test="live-preview-label">
-          <input type="checkbox" v-model="isLivePreview" data-test="live-preview" />
+          <input v-model="isLivePreview" type="checkbox" data-test="live-preview" />
           实时预览
         </label>
         <span class="spacer"></span>
