@@ -10,7 +10,7 @@
 
 同时在好几个项目里用 AI 编程工具时，每次都要找到项目文件夹、在地址栏敲 `cmd`、再敲 `claude`；开了一堆终端窗口后，又分不清哪个窗口里的工具停下来在等你批准。TagTerm 把这两件事收进一个窗口：会话即路径，状态一眼可见。
 
-## 功能（v0.3.8）
+## 功能（v0.3.9）
 
 ### 会话与终端
 
@@ -106,6 +106,8 @@ pnpm install
 pnpm dev          :: 开发模式（electron-vite，HMR；F12 开关开发者工具）
 pnpm test         :: vitest：main（node，含真实 cmd.exe 集成测试）+ renderer（happy-dom）
 pnpm typecheck    :: vue-tsc + tsc
+pnpm lint         :: ESLint（不读类型的推荐集，任何告警都算失败）
+pnpm format:check :: Prettier 格式检查（src / tests / scripts）
 pnpm build        :: 打 nsis 安装包到 dist/（同时产出 latest.yml 与 .blockmap）
 pnpm build:dir    :: 只出 dist/win-unpacked，不打安装包
 pnpm screenshots  :: 重新生成 docs/screenshots/ 下的 README 截图
@@ -121,7 +123,7 @@ README 截图由 `scripts/screenshots/` 生成：用真实的渲染进程构建�
 
 ### 技术栈
 
-Electron 44 · Vue 3.5 + Pinia · TypeScript 5.9 · electron-vite 5 · node-pty 1.1 · @xterm/xterm 6 · @vscode/windows-process-tree · electron-builder 26 · electron-updater 6 · Vitest 4。
+Electron 44 · Vue 3.5 + Pinia · TypeScript 5.9 · electron-vite 5 · node-pty 1.1 · @xterm/xterm 6 · @vscode/windows-process-tree · electron-builder 26 · electron-updater 6 · Vitest 4 · ESLint 10。
 
 ### 结构
 
