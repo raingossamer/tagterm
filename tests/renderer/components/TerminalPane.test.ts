@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import TerminalPane from '../../../src/renderer/src/components/TerminalPane.vue'
@@ -59,5 +59,48 @@ describe('TerminalPane', () => {
     expect(wrapper.find('[data-test=terminal-bg]').exists()).toBe(false)
     expect(wrapper.find('[data-test=terminal-dim]').exists()).toBe(false)
     expect(wrapper.find('[data-test=terminal-pane]').exists()).toBe(true)
+  })
+
+  describe('字号小牌', () => {
+    afterEach(() => vi.useRealTimers())
+
+    it('Ctrl+滚轮调字号时右上角浮出「字号 N」，停手 1 秒后消失；连续调整从最后一次重新计时', async () => {
+      vi.useFakeTimers()
+      const wrapper = mountPane()
+      await fake.workspace.select(a.id)
+      const badge = () => wrapper.find('[data-test=font-size-badge]')
+      expect(badge().exists()).toBe(false)
+
+      fake.terminals[0]!.emitFontZoom(1)
+      await wrapper.vm.$nextTick()
+      expect(badge().text()).toBe('字号 15')
+
+      vi.advanceTimersByTime(800)
+      fake.terminals[0]!.emitFontZoom(1)
+      await wrapper.vm.$nextTick()
+      expect(badge().text()).toBe('字号 16')
+      vi.advanceTimersByTime(800)
+      await wrapper.vm.$nextTick()
+      expect(badge().exists()).toBe(true)
+
+      vi.advanceTimersByTime(200)
+      await wrapper.vm.$nextTick()
+      expect(badge().exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('到上下限再滚也浮出小牌（显示的就是上限值），让人知道到头了；挂载时（启动恢复字号）不弹', async () => {
+      vi.useFakeTimers()
+      fake.core.setFontSize(32)
+      const wrapper = mountPane()
+      await fake.workspace.select(a.id)
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('[data-test=font-size-badge]').exists()).toBe(false)
+
+      fake.terminals[0]!.emitFontZoom(1)
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('[data-test=font-size-badge]').text()).toBe('字号 32')
+      wrapper.unmount()
+    })
   })
 })

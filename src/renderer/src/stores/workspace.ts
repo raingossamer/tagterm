@@ -5,16 +5,24 @@
  * 会话镜像（sessions store）每次变化都喂给核心 syncSessions —— 移除会话只走主进程广播这一条路。
  * 标签页与当前页在每次快照变化时写入 localStorage 键 tagterm.openTabs（读写包 try / catch，坏数据视为空），
  * 启动时由 App 在会话列表到位后调 restore() 恢复：只填标签页，再 select 上次的当前页 —— 只有它会 spawn。
+ * 终端字号（全部终端共用）同样是本机偏好：键 tagterm.terminalFontSize，attachCore 时读回交给核心，变了才写回。
  */
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef, watch } from 'vue'
 import type { Unsubscribe } from '@shared/api'
 import type { PtyPhase, TerminalWorkspace, WorkspaceSnapshot } from '../terminal/TerminalWorkspace'
+import { DEFAULT_FONT_SIZE, parseFontSize } from '../terminal/fontSize'
 import { useSessionsStore } from './sessions'
 
-const EMPTY_SNAPSHOT: WorkspaceSnapshot = { openTabs: [], activeId: null, runtime: {} }
+const EMPTY_SNAPSHOT: WorkspaceSnapshot = {
+  openTabs: [],
+  activeId: null,
+  runtime: {},
+  fontSize: DEFAULT_FONT_SIZE,
+}
 
 export const OPEN_TABS_STORAGE_KEY = 'tagterm.openTabs'
+export const FONT_SIZE_STORAGE_KEY = 'tagterm.terminalFontSize'
 
 /** 上次退出时的标签页与当前页 */
 interface StoredTabs {
@@ -50,6 +58,22 @@ function writeOpenTabs(snapshot: WorkspaceSnapshot): void {
   }
 }
 
+function readFontSize(): number {
+  try {
+    return parseFontSize(localStorage.getItem(FONT_SIZE_STORAGE_KEY))
+  } catch {
+    return DEFAULT_FONT_SIZE
+  }
+}
+
+function writeFontSize(size: number): void {
+  try {
+    localStorage.setItem(FONT_SIZE_STORAGE_KEY, String(size))
+  } catch (err) {
+    console.warn('[workspace] 终端字号写入 localStorage 失败', err)
+  }
+}
+
 export const useWorkspaceStore = defineStore('workspace', () => {
   const sessions = useSessionsStore()
   const snap = shallowRef<WorkspaceSnapshot>(EMPTY_SNAPSHOT)
@@ -62,6 +86,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const activeId = computed(() => snap.value.activeId)
   const hasActive = computed(() => snap.value.activeId !== null)
   const runtime = computed(() => snap.value.runtime)
+  const fontSize = computed(() => snap.value.fontSize)
   const isOpen = (id: string): boolean => snap.value.openTabs.includes(id)
   /** 没有实例（从未打开或已移除）视为 closed */
   const phaseOf = (id: string): PtyPhase | 'closed' => snap.value.runtime[id]?.phase ?? 'closed'
@@ -73,10 +98,16 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   function attachCore(next: TerminalWorkspace): Unsubscribe {
     core = next
     next.syncSessions(sessions.sessions)
+    next.setFontSize(readFontSize())
     snap.value = next.snapshot()
+    let storedFontSize = snap.value.fontSize
     const unsubscribe = next.subscribe((s) => {
       snap.value = s
       writeOpenTabs(s)
+      if (s.fontSize !== storedFontSize) {
+        storedFontSize = s.fontSize
+        writeFontSize(s.fontSize)
+      }
     })
     const stop = watch(
       () => sessions.sessions,
@@ -126,6 +157,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     activeId,
     hasActive,
     runtime,
+    fontSize,
     sideHidden,
     hoveredId,
     isOpen,

@@ -5,10 +5,12 @@
  */
 import type {
   Disposable,
+  FontZoom,
   TerminalFactory,
   TerminalInstance,
   TerminalSize,
 } from './TerminalInstance'
+import { DEFAULT_FONT_SIZE } from './fontSize'
 
 const FALLBACK_SIZE: TerminalSize = { cols: 80, rows: 24 }
 
@@ -20,6 +22,8 @@ export interface TerminalPoolDeps {
   onInput: (sessionId: string, data: string) => void
   /** 某实例重排后的新尺寸：上层据此同步 pty */
   onResize: (sessionId: string, size: TerminalSize) => void
+  /** 用户在某实例上 Ctrl+滚轮 / Ctrl+0：字号全部终端共用一份，由上层决定后经 setFontSize 下发 */
+  onFontZoom?: (zoom: FontZoom) => void
 }
 
 interface Entry {
@@ -35,6 +39,8 @@ export class TerminalPool {
   private activeId: string | null = null
   /** 可见实例是否用 WebGL：设了全局背景图时关掉（WebGL 会给暗淡字垫不透明黑底，DOM 渲染器不会） */
   private isWebglAllowed = true
+  /** 全部实例共用的字号；新建实例首次 fit 前就换上 */
+  private fontSize = DEFAULT_FONT_SIZE
   private readonly raf: (fn: () => void) => void
 
   constructor(private readonly deps: TerminalPoolDeps) {
@@ -63,6 +69,7 @@ export class TerminalPool {
 
     const term = this.deps.createTerminal()
     term.open(host)
+    term.setFontSize(this.fontSize)
     const entry: Entry = { term, host, disposables: [], size: FALLBACK_SIZE }
     entry.disposables.push(
       term.onData((data) => this.deps.onInput(sessionId, data)),
@@ -70,6 +77,7 @@ export class TerminalPool {
         entry.size = size
         this.deps.onResize(sessionId, size)
       }),
+      term.onFontZoom((zoom) => this.deps.onFontZoom?.(zoom)),
     )
     this.entries.set(sessionId, entry)
     entry.size = term.fit() ?? FALLBACK_SIZE
@@ -112,6 +120,16 @@ export class TerminalPool {
     if (this.isWebglAllowed === allowed) return
     this.isWebglAllowed = allowed
     if (this.activeId) this.entries.get(this.activeId)?.term.setWebgl(allowed)
+  }
+
+  /**
+   * 全部实例换字号：只 fit 可见实例（尺寸变化经 onResize 同步 pty）；隐藏的量不到尺寸，切过去时 show 会 fit。同值不动
+   */
+  setFontSize(size: number): void {
+    if (this.fontSize === size) return
+    this.fontSize = size
+    for (const { term } of this.entries.values()) term.setFontSize(size)
+    this.fitActive()
   }
 
   /** 没有活动会话（空状态） */

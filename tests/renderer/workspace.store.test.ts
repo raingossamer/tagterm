@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
-import { OPEN_TABS_STORAGE_KEY, useWorkspaceStore } from '../../src/renderer/src/stores/workspace'
+import {
+  FONT_SIZE_STORAGE_KEY,
+  OPEN_TABS_STORAGE_KEY,
+  useWorkspaceStore,
+} from '../../src/renderer/src/stores/workspace'
 import { useSessionsStore } from '../../src/renderer/src/stores/sessions'
 import { TerminalWorkspace } from '../../src/renderer/src/terminal/TerminalWorkspace'
 import { FakePty } from './fakePty'
@@ -16,11 +20,18 @@ describe('workspace store（TerminalWorkspace 的薄适配器 + 纯 UI 状态）
 
   const c = makeSession({ name: 'c' })
 
+  let terminals: FakeTerminal[] = []
+
   function makeCore(): TerminalWorkspace {
     pty = new FakePty()
+    terminals = []
     return new TerminalWorkspace({
       pty,
-      createTerminal: () => new FakeTerminal(),
+      createTerminal: () => {
+        const t = new FakeTerminal()
+        terminals.push(t)
+        return t
+      },
       raf: (fn) => fn(),
     })
   }
@@ -171,6 +182,33 @@ describe('workspace store（TerminalWorkspace 的薄适配器 + 纯 UI 状态）
     useSessionsStore().sessions = []
     await nextTick()
     expect(core.snapshot().runtime[a.id]).toEqual({ phase: 'running' })
+  })
+
+  it('终端字号（本机偏好 tagterm.terminalFontSize）：attachCore 时读回并交给核心；调了之后写回；重开后仍是它', async () => {
+    const ws = useWorkspaceStore()
+    ws.attachCore(core)
+    expect(ws.fontSize).toBe(14)
+    await ws.select(a.id)
+
+    terminals[0]!.emitFontZoom(3)
+    expect(ws.fontSize).toBe(17)
+    expect(localStorage.getItem(FONT_SIZE_STORAGE_KEY)).toBe('17')
+
+    setActivePinia(createPinia())
+    useSessionsStore().sessions = [a, b]
+    const fresh = useWorkspaceStore()
+    const freshCore = makeCore()
+    fresh.attachCore(freshCore)
+    expect(fresh.fontSize).toBe(17)
+    await fresh.select(b.id)
+    expect(terminals[0]!.fontSize).toBe(17)
+  })
+
+  it('字号偏好缺失或是坏值：回落 14，不抛', () => {
+    localStorage.setItem(FONT_SIZE_STORAGE_KEY, '大号')
+    const ws = useWorkspaceStore()
+    ws.attachCore(core)
+    expect(ws.fontSize).toBe(14)
   })
 
   it('toggleSide / setHovered 是纯 UI 状态，不经核心', () => {

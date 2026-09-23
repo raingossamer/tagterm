@@ -8,9 +8,10 @@
 import type { Session } from '@shared/models'
 import type { OutputReport, PtyExitEvent } from '@shared/ipc'
 import type { TagTermApi, Unsubscribe } from '@shared/api'
-import type { TerminalFactory } from './TerminalInstance'
+import type { FontZoom, TerminalFactory } from './TerminalInstance'
 import { TerminalPool } from './TerminalPool'
 import { OutputWatcher } from './OutputWatcher'
+import { clampFontSize, DEFAULT_FONT_SIZE } from './fontSize'
 
 /**
  * 静默多久算「屏幕停下来了」、屏幕在动时多久补报一次，以及上报末尾几行。
@@ -33,6 +34,8 @@ export interface WorkspaceSnapshot {
   readonly openTabs: readonly string[]
   readonly activeId: string | null
   readonly runtime: Readonly<Record<string, PtyRuntime>>
+  /** 全部终端共用的字号（Ctrl+滚轮 / Ctrl+0 调，workspace store 存本机偏好） */
+  readonly fontSize: number
 }
 
 /** pty 端口 = window.tagterm.pty 的结构子集；生产直接传 window.tagterm.pty，测试传剧本式 FakePty */
@@ -65,6 +68,9 @@ export class TerminalWorkspace {
   private readonly unsubscribes: Unsubscribe[]
   /** 屏幕末尾上报：pty 数据到达即重置静默计时并排一次补报，读该实例末尾几行交给主进程 */
   private readonly watcher: OutputWatcher
+  private fontSize = DEFAULT_FONT_SIZE
+  /** 用户每调一次字号（含已到上下限、字号没变的那次）都通知：终端区据此浮出「字号 N」小牌 */
+  private readonly zoomListeners = new Set<(size: number) => void>()
 
   /** 构造即订阅 pty.onData / onExit（订阅不随 TerminalPane 挂载摇摆） */
   constructor(private readonly deps: TerminalWorkspaceDeps) {
@@ -73,6 +79,7 @@ export class TerminalWorkspace {
       raf: deps.raf,
       onInput: (id, data) => this.handleInput(id, data),
       onResize: (id, size) => void deps.pty.resize(id, size),
+      onFontZoom: (zoom) => this.handleFontZoom(zoom),
     })
     this.watcher = new OutputWatcher({
       readTail: (id, lines) => this.pool.readTail(id, lines),
@@ -223,11 +230,29 @@ export class TerminalWorkspace {
     this.pool.setWebglAllowed(allowed)
   }
 
+  /** 设字号（启动时恢复本机偏好）：夹到 10–32、坏值回落默认，全部终端一起换；不算用户调整，不通知 onFontZoom */
+  setFontSize(size: number): void {
+    const next = clampFontSize(size)
+    if (next === this.fontSize) return
+    this.fontSize = next
+    this.pool.setFontSize(next)
+    this.emit()
+  }
+
+  /** 订阅「用户调了一次字号」（Ctrl+滚轮 / Ctrl+0），回调拿到调整后的字号 */
+  onFontZoom(listener: (size: number) => void): Unsubscribe {
+    this.zoomListeners.add(listener)
+    return () => {
+      this.zoomListeners.delete(listener)
+    }
+  }
+
   snapshot(): WorkspaceSnapshot {
     return {
       openTabs: [...this.openTabs],
       activeId: this.activeId,
       runtime: Object.fromEntries([...this.runtime].map(([id, rt]) => [id, { ...rt }])),
+      fontSize: this.fontSize,
     }
   }
 
@@ -242,12 +267,19 @@ export class TerminalWorkspace {
   dispose(): void {
     for (const unsubscribe of this.unsubscribes) unsubscribe()
     this.watcher.dispose()
+    this.zoomListeners.clear()
     for (const id of this.pool.sessionIds()) this.pool.dispose(id)
     this.runtime.clear()
     this.pids.clear()
     this.stalePids.clear()
     this.openTabs = []
     this.activeId = null
+  }
+
+  /** 用户在任一终端上 Ctrl+滚轮（步数）/ Ctrl+0（回到默认）：全部终端一起变 */
+  private handleFontZoom(zoom: FontZoom): void {
+    this.setFontSize(zoom === 'reset' ? DEFAULT_FONT_SIZE : this.fontSize + zoom)
+    for (const listener of [...this.zoomListeners]) listener(this.fontSize)
   }
 
   /** 键入：运行中（含打开中）转发；已退出吞掉按键，回车即重启 */
