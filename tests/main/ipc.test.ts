@@ -10,6 +10,7 @@ import { Updater } from '../../src/main/updater/Updater'
 import { FakeAutoUpdater } from './fakeAutoUpdater'
 import { PtyManager } from '../../src/main/pty/PtyManager'
 import { AgentSubsystem } from '../../src/main/agent/AgentSubsystem'
+import { SessionSubsystem } from '../../src/main/session/SessionSubsystem'
 import { GlobalShortcut } from '../../src/main/shortcut/GlobalShortcut'
 import { FakeShortcutPort } from './fakeShortcutPort'
 import type { AutoLaunchStatus, PtyExitEvent, PtyOpenResult, TagListResult } from '@shared/ipc'
@@ -37,7 +38,7 @@ describe('IPC 接口层', () => {
   let childQueries = 0
   /** 假登录项：开机自启状态 */
   let autoLaunch: AutoLaunchStatus = { enabled: false, blockedBySystem: false }
-  /** 假 shell.openPath：记下要打开的路径；openPathError 非空即模拟打开失败（electron 语义：返回错误说明） */
+  /** 假打开目录端口（FolderPort）：记下要打开的路径；openPathError 非空即模拟打开失败（返回原因） */
   const opened: string[] = []
   let openPathError = ''
   /** 假的系统热键表：全局快捷键服务注册到这里 */
@@ -103,24 +104,26 @@ describe('IPC 接口层', () => {
       onStatus: (s) => updateStatuses.push(s),
       beforeInstall: () => autoUpdater.order.push('before'),
     })
+    const folders = {
+      open: async (path: string): Promise<string | null> => {
+        opened.push(path)
+        return openPathError || null
+      },
+    }
     deps = {
       version: '0.1.0',
       osBuild: 26200,
-      store,
+      sessions: new SessionSubsystem({ store, tags, terminals: pty, agent, folders }),
       settings,
       tags,
       updater,
-      pty,
       agent,
       shortcut,
       dataDir: dir,
       logsDir: join(dir, 'logs'),
       pickImage: async () => join(dir, 'picked.png'),
       pickDirectory: async () => 'D:\\picked',
-      openPath: async (path) => {
-        opened.push(path)
-        return openPathError
-      },
+      folders,
       listShells: () => ['cmd.exe', 'powershell.exe'],
       getAutoLaunch: () => autoLaunch,
       setAutoLaunch: (enabled) => {

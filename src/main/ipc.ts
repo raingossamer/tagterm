@@ -1,5 +1,7 @@
 /**
- * 接口层：ipcMain.handle / on 的薄层 —— 校验参数 → 调服务层 → 返回；不写业务逻辑，但跨 store 的级联与运行时前置条件在此顺序编排。
+ * 接口层：ipcMain.handle / on 的薄层 —— 校验参数 → 调服务层 → 返回。会话的跨服务编排（级联、改目录前的空闲核对、
+ * 从真相源解析路径、会话存在核对）都在 SessionSubsystem，这里只守卫与转发；唯一留在这里的编排是全局快捷键
+ * 「先向系统注册、成功才落盘、落盘失败换回」（靠系统资源生效的设置，见 backend.md 规范）。
  * ipcMain 以参数注入（IpcMainLike），测试时可传假对象脱离 Electron 运行。
  */
 import { mkdir } from 'node:fs/promises'
@@ -32,10 +34,9 @@ import {
   type TagColor,
 } from '@shared/models'
 import { isValidAccelerator } from '@shared/accelerator'
-import type { PtyManager } from './pty/PtyManager'
 import type { AgentSubsystem } from './agent/AgentSubsystem'
+import type { FolderPort, SessionSubsystem } from './session/SessionSubsystem'
 import type { GlobalShortcut } from './shortcut/GlobalShortcut'
-import type { SessionStore } from './store/SessionStore'
 import type { SettingsStore } from './store/SettingsStore'
 import type { TagStore } from './store/TagStore'
 import type { Updater } from './updater/Updater'
@@ -50,12 +51,13 @@ export interface IpcDeps {
   version: string
   /** Windows 构建号（os.release 的第三段），供 xterm windowsPty 选项 */
   osBuild: number
-  store: SessionStore
+  /** 会话、会话 ↔ 标签关联与终端的唯一入口（会话的跨服务编排都在里面） */
+  sessions: SessionSubsystem
   settings: SettingsStore
+  /** 标签本身的增删改排（单文件操作，没有编排可藏，直连）；会话 ↔ 标签关联走 sessions */
   tags: TagStore
   updater: Updater
-  pty: PtyManager
-  /** agent 运行时子系统：运行时记录、正被查看、静默报告、hooks 开关与端口、shell 空闲核对 */
+  /** agent 运行时子系统：运行时记录、正被查看、hooks 开关与端口 */
   agent: AgentSubsystem
   /** 全局快捷键服务（唤出 / 隐藏窗口）：注册与暂停；配置落 settings.json 由这里编排 */
   shortcut: GlobalShortcut
@@ -65,8 +67,8 @@ export interface IpcDeps {
   logsDir: string
   /** 系统目录选择框（平台层注入，服务层不 import electron） */
   pickDirectory: () => Promise<string | null>
-  /** 在资源管理器打开一个目录（装配层注入 shell.openPath）：返回空串成功，否则是错误说明 */
-  openPath: (path: string) => Promise<string>
+  /** 在资源管理器打开一个目录（平台层 electronFolders，与会话子系统共用）：打开了为 null，否则是原因 */
+  folders: FolderPort
   /** 系统文件对话框选图片（平台层注入） */
   pickImage: () => Promise<string | null>
   /** 本机可用 shell（启动时探测） */
@@ -91,10 +93,10 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   handle('app:get-os-build', () => deps.osBuild)
   handle('app:list-shells', () => deps.listShells())
   handle('app:get-data-dir', () => deps.dataDir)
-  // 「打开日志目录」：路径由装配层给定，渲染进程不传路径；日志模块打开时已建过目录，这里再建一次兜底（建目录失败也会在 openPath 处报出来）
+  // 「打开日志目录」：路径由装配层给定，渲染进程不传路径；日志模块打开时已建过目录，这里再建一次兜底（建目录失败也会在打开时报出来）
   handle('app:open-logs-dir', async () => {
     await mkdir(deps.logsDir, { recursive: true })
-    const error = await deps.openPath(deps.logsDir)
+    const error = await deps.folders.open(deps.logsDir)
     if (error) throw new Error(`打不开日志目录：${error}`)
   })
   handle('app:pick-image', () => deps.pickImage())
@@ -120,53 +122,15 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
     else deps.shortcut.resume()
   })
 
-  handle('session:list', () => deps.store.list())
-  // 编排：建会话 → 逐个 attach 标签；attach 抛错原样 reject（会话已创建，不回滚）
-  handle('session:create', async (input) => {
-    const { tagIds = [], ...create } = assertCreateInput(input)
-    const session = await deps.store.create(create)
-    for (const tagId of tagIds) await deps.tags.attach(session.id, tagId)
-    return session
-  })
-  // 编排：改目录 / Shell 只在 shell 空闲时允许 —— 有子进程（claude 等在跑）reject 不动；
-  // 空闲则先结束 pty 并等到 exit 广播出去，再改记录，渲染进程收到结果时运行态已是 exited（再选中即按新配置重启）
-  handle('session:update', async (id, patch) => {
-    const sessionId = assertId(id)
-    const p = assertPatch(patch)
-    const current = deps.store.get(sessionId)
-    const isConfigChanged =
-      (p.cwd !== undefined && p.cwd !== current.cwd) ||
-      (p.shell !== undefined && p.shell !== current.shell)
-    const pid = deps.pty.getPid(sessionId)
-    if (isConfigChanged && pid !== null) {
-      if (!(await deps.agent.isShellIdle(pid))) {
-        throw new Error('终端里有程序正在运行，退出后再修改目录或 Shell')
-      }
-      await deps.pty.killAndWait(sessionId)
-    }
-    return deps.store.update(sessionId, p)
-  })
-  // 跨 store 级联在编排层顺序执行：结束 pty → 删会话 → 删其标签关联（两次写、两次广播）→ 清运行时记录
-  //（pty 退出事件也会清，但没开过终端的会话只能靠这里）
-  handle('session:remove', async (id) => {
-    const sessionId = assertId(id)
-    deps.pty.kill(sessionId)
-    await deps.store.remove(sessionId)
-    await deps.tags.detachAllOf(sessionId)
-    deps.agent.sessionRemoved(sessionId)
-  })
+  handle('session:list', () => deps.sessions.list())
+  handle('session:create', (input) => deps.sessions.create(assertCreateInput(input)))
+  handle('session:update', (id, patch) => deps.sessions.update(assertId(id), assertPatch(patch)))
+  handle('session:remove', (id) => deps.sessions.remove(assertId(id)))
   // 排列是否合法（缺 / 多 / 重复 / 不存在）由 SessionStore 判定，它才认识全部会话；接口层只守卫类型
-  handle('session:reorder', (ids) => deps.store.reorder(assertSessionIds(ids)))
+  handle('session:reorder', (ids) => deps.sessions.reorder(assertSessionIds(ids)))
   handle('session:pick-directory', () => deps.pickDirectory())
-  // 「打开」当前目录：路径由主进程从真相源解析（运行时 cwdNow 优先，缺省会话固定目录），渲染进程只传会话 id ——
-  // 不给它「打开任意路径」的能力；shell.openPath 打不开（目录被删等）返回说明，转成中文 reject 让界面显示
-  handle('session:open-directory', async (id) => {
-    const sessionId = assertId(id)
-    const session = deps.store.get(sessionId)
-    const cwdNow = deps.agent.list().find((r) => r.sessionId === sessionId)?.cwdNow
-    const error = await deps.openPath(cwdNow ?? session.cwd)
-    if (error) throw new Error(`打不开目录：${error}`)
-  })
+  // 渲染进程只传会话 id，路径由主进程从真相源解析 —— 不给它「打开任意路径」的能力
+  handle('session:open-directory', (id) => deps.sessions.openDirectory(assertId(id)))
 
   handle('settings:get', () => deps.settings.get())
   handle('settings:update', (patch) => deps.settings.update(assertSettingsPatch(patch)))
@@ -182,15 +146,11 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   // 排列是否合法（缺 / 多 / 重复 / 不存在）由 TagStore 判定，它才认识全部标签；接口层只守卫类型
   handle('tag:reorder', (ids) => deps.tags.reorder(assertTagIds(ids)))
   handle('tag:remove', (id) => deps.tags.remove(assertTagId(id)))
-  // 会话是否存在由编排层核对（TagStore 不认识会话）
-  handle('session-tag:attach', (sessionId, tagId) => {
-    const sid = assertId(sessionId)
-    const tid = assertTagId(tagId)
-    deps.store.get(sid)
-    return deps.tags.attach(sid, tid)
-  })
+  handle('session-tag:attach', (sessionId, tagId) =>
+    deps.sessions.attachTag(assertId(sessionId), assertTagId(tagId)),
+  )
   handle('session-tag:detach', (sessionId, tagId) =>
-    deps.tags.detach(assertId(sessionId), assertTagId(tagId)),
+    deps.sessions.detachTag(assertId(sessionId), assertTagId(tagId)),
   )
 
   handle('agent:list', () => deps.agent.list())
@@ -205,38 +165,21 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   handle('update:download', () => deps.updater.download())
   handle('update:install', () => deps.updater.install())
 
-  // 幂等：无 pty 则按会话 cwd / shell spawn，有则复用；只读会话记录，不落盘、不广播
-  handle('pty:open', (id, size) => {
-    const sessionId = assertId(id)
-    const { cols, rows } = assertSize(size)
-    const session = deps.store.get(sessionId)
-    let created = false
-    let pid = deps.pty.getPid(sessionId)
-    if (pid === null) {
-      pid = deps.pty.spawn(sessionId, { cwd: session.cwd, shell: session.shell, cols, rows }).pid
-      created = true
-    }
-    return { created, pid }
-  })
+  handle('pty:open', (id, size) => deps.sessions.openTerminal(assertId(id), assertSize(size)))
   handle('pty:resize', (id, size) => {
-    const { cols, rows } = assertSize(size)
-    deps.pty.resize(assertId(id), cols, rows)
+    const checked = assertSize(size) // 先尺寸后 id：两个参数都非法时报哪一句，与以前一致
+    deps.sessions.resizeTerminal(assertId(id), checked)
   })
   // 等进程真正退出才返回：pty:exit 先广播出去，渲染进程随后重开（重启终端）不会被这条迟到的退出标成已退出
-  handle('pty:kill', (id) => deps.pty.killAndWait(assertId(id)))
-  handle('pty:is-alive', (id) => deps.pty.has(assertId(id)))
+  handle('pty:kill', (id) => deps.sessions.killTerminal(assertId(id)))
+  handle('pty:is-alive', (id) => deps.sessions.isTerminalAlive(assertId(id)))
   on('pty:write', (id, data) => {
-    if (typeof id === 'string' && typeof data === 'string') deps.pty.write(id, data)
+    if (typeof id === 'string' && typeof data === 'string') deps.sessions.writeTerminal(id, data)
   })
-  // 静默末尾报告（单向）：非法参数与未知会话都静默忽略（提示符两种都认，不按会话 shell 区分）
+  // 静默末尾报告（单向）：非法参数静默忽略；未知会话由子系统静默丢弃
   on('agent:report-output', (id, report) => {
-    if (typeof id !== 'string' || !id || !isOutputReport(report)) return
-    try {
-      deps.store.get(id)
-    } catch {
-      return
-    }
-    deps.agent.reportOutput(id, report)
+    if (typeof id === 'string' && id && isOutputReport(report))
+      deps.sessions.reportOutput(id, report)
   })
 }
 
