@@ -4,7 +4,7 @@
  * 文件里没有的项就是没有（导入时不动本机），未知的顶层键忽略。带的是用户偏好：标签、唤起命令、外观参数、
  * 全局快捷键、开机自启、hooks 开关、终端字号；不带会话、关联与背景图片。
  */
-import type { HookAgent } from '@shared/ipc'
+import type { ConfigItemKey, HookAgent } from '@shared/ipc'
 import {
   TAG_COLORS,
   type AppBackground,
@@ -35,17 +35,17 @@ export type ConfigAppearance = Omit<AppBackground, 'imagePath'>
 
 export type ConfigHooks = Partial<Record<HookAgent, boolean>>
 
-export interface ConfigFileData {
-  tags?: ConfigTag[]
-  launchCommands?: ConfigLaunchCommand[]
-  appearance?: ConfigAppearance
-  globalShortcut?: GlobalShortcutConfig
-  autoLaunch?: boolean
-  hooks?: ConfigHooks
-  terminalFontSize?: number
-}
-
-export type ConfigItemKey = keyof ConfigFileData
+/** 七项与 shared 的 ConfigItemKey 一一对应（键名漂移时这里的类型检查会报错） */
+export type ConfigFileData = Partial<{
+  tags: ConfigTag[]
+  launchCommands: ConfigLaunchCommand[]
+  appearance: ConfigAppearance
+  globalShortcut: GlobalShortcutConfig
+  autoLaunch: boolean
+  hooks: ConfigHooks
+  terminalFontSize: number
+}> &
+  Partial<Record<ConfigItemKey, unknown>>
 
 /** 各项在文件里的先后（组装按此写出） */
 export const CONFIG_ITEM_KEYS: readonly ConfigItemKey[] = [

@@ -179,6 +179,22 @@ const api = {
     setGlobalShortcut: (config) => ok({ ...config, registered: config.enabled }),
     pauseGlobalShortcut: () => ok(undefined),
     exportConfig: () => ok({ path: 'C:\\Users\\demo\\Documents\\tagterm-config-20260924.json' }),
+    importConfig: () =>
+      ok({
+        path: 'C:\\Users\\demo\\Documents\\tagterm-config-20260924.json',
+        backupPath:
+          'C:\\Users\\demo\\AppData\\Roaming\\TagTerm\\backups\\tagterm-config-20260924-080000.json',
+        items: [
+          { key: 'tags', outcome: 'applied', message: '新建 2 个、更新 1 个' },
+          { key: 'launchCommands', outcome: 'applied' },
+          { key: 'appearance', outcome: 'unchanged' },
+          { key: 'globalShortcut', outcome: 'applied' },
+          { key: 'autoLaunch', outcome: 'unchanged' },
+          { key: 'hooks', outcome: 'absent' },
+          { key: 'terminalFontSize', outcome: 'applied' },
+        ],
+        terminalFontSize: 15,
+      }),
     onFocusTerminal: on('app:focus-terminal'),
     onOpenSettings: on('app:open-settings'),
     onSelectSession: on('app:select-session'),

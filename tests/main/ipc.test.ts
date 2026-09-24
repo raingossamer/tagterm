@@ -360,6 +360,57 @@ describe('IPC 接口层', () => {
     expect(file.hooks).toEqual({ claude: false, codex: false })
   })
 
+  it('app:import-config：守卫字号参数；对话框取消返回 null；文件不对 reject 原因且什么都不动；选了文件就逐项应用并返回结果与备份路径', async () => {
+    await expect(ipc.invoke('app:import-config', { terminalFontSize: 0 })).rejects.toThrow(
+      '终端字号参数不正确',
+    )
+    await expect(ipc.invoke('app:import-config', { terminalFontSize: 14 })).resolves.toBeNull()
+
+    const bad = join(dir, 'bad.json')
+    writeFileSync(bad, '{ "format": "tagterm-config", "version": 1, "terminalFontSize": 99 }')
+    configPaths = { save: null, open: bad }
+    await expect(ipc.invoke('app:import-config', { terminalFontSize: 14 })).rejects.toThrow(
+      '配置文件里的终端字号必须是 10 到 32 之间的整数',
+    )
+    expect(existsSync(join(dir, 'backups'))).toBe(false)
+
+    const good = join(dir, 'good.json')
+    writeFileSync(
+      good,
+      JSON.stringify({
+        format: 'tagterm-config',
+        version: 1,
+        tags: [{ name: '甲', color: '#2F6FDB' }],
+        launchCommands: [{ label: 'gemini', command: 'gemini', pinned: false }],
+        terminalFontSize: 18,
+      }),
+    )
+    configPaths = { save: null, open: good }
+    const result = (await ipc.invoke('app:import-config', { terminalFontSize: 14 })) as {
+      path: string
+      backupPath: string
+      items: { key: string; outcome: string }[]
+      terminalFontSize?: number
+    }
+    expect(result.path).toBe(good)
+    expect(result.backupPath.startsWith(join(dir, 'backups'))).toBe(true)
+    expect(existsSync(result.backupPath)).toBe(true)
+    expect(result.terminalFontSize).toBe(18)
+    expect(result.items.map((i) => [i.key, i.outcome])).toEqual([
+      ['tags', 'applied'],
+      ['launchCommands', 'applied'],
+      ['appearance', 'absent'],
+      ['globalShortcut', 'absent'],
+      ['autoLaunch', 'absent'],
+      ['hooks', 'absent'],
+      ['terminalFontSize', 'applied'],
+    ])
+    expect(tags.list().tags.map((t) => t.name)).toEqual(['甲'])
+    expect(settings.get().launchCommands.map((c) => [c.command, c.pinned])).toEqual([
+      ['gemini', false],
+    ])
+  })
+
   it('settings:update 不接受 globalShortcut（只能走专用通道，保证落盘的键位一定注册过）', async () => {
     await ipc.invoke('settings:update', {
       launchCommands: [],

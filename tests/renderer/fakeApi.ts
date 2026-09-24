@@ -80,6 +80,12 @@ export function createFakeApi(overrides: Overrides = {}): TagTermApi {
       })),
       pauseGlobalShortcut: vi.fn(async () => {}),
       exportConfig: vi.fn(async () => ({ path: 'C:/Users/test/Documents/tagterm-config.json' })),
+      importConfig: vi.fn(async () => ({
+        path: 'C:/Users/test/Documents/tagterm-config.json',
+        backupPath:
+          'C:/Users/test/AppData/Roaming/TagTerm/backups/tagterm-config-20260924-080000.json',
+        items: [],
+      })),
       onFocusTerminal: vi.fn(() => () => {}),
       onOpenSettings: vi.fn(() => () => {}),
       onSelectSession: vi.fn(() => () => {}),
