@@ -1,16 +1,11 @@
 /**
- * 终端字号（纯函数）：范围、夹紧、本机偏好的解析，以及 Ctrl+滚轮的步数换算。
- * 字号全部终端共用一份，存 localStorage（只有终端界面用，主进程用不到）；Ctrl+0 回到默认。
+ * 终端字号（纯函数）：本机偏好的解析，以及 Ctrl+滚轮的步数换算。
+ * 字号全部终端共用一份，存 localStorage；Ctrl+0 回到默认。范围与夹紧在 shared/fontSize（主进程校验导入的配置文件也用），
+ * 这里原样再导出给终端侧
  */
-export const DEFAULT_FONT_SIZE = 14
-export const MIN_FONT_SIZE = 10
-export const MAX_FONT_SIZE = 32
+import { clampFontSize, DEFAULT_FONT_SIZE } from '@shared/fontSize'
 
-/** 取整并夹到 10–32；不是有限数回落默认 */
-export function clampFontSize(size: number): number {
-  if (!Number.isFinite(size)) return DEFAULT_FONT_SIZE
-  return Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, Math.round(size)))
-}
+export { clampFontSize, DEFAULT_FONT_SIZE, MAX_FONT_SIZE, MIN_FONT_SIZE } from '@shared/fontSize'
 
 /** localStorage 里存的字号：只认纯数字串，缺失或坏值回落默认 */
 export function parseFontSize(raw: string | null): number {
