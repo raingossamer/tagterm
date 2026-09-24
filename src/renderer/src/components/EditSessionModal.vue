@@ -17,7 +17,10 @@ const workspace = useWorkspaceStore()
 const name = ref(props.session.name)
 const cwd = ref(props.session.cwd)
 const error = ref('')
-const { shell, shells } = useShells(props.session.shell, (message) => (error.value = message))
+// 会话的 Shell 不在本机可用列表里也保留（keepCurrent）：只改名不能连带换 Shell
+const { shell, shells } = useShells(props.session.shell, (message) => (error.value = message), {
+  keepCurrent: true,
+})
 const pathPlaceholder = ref('D:\\Projects\\...')
 const nameInput = ref<HTMLInputElement | null>(null)
 const pathInput = ref<HTMLInputElement | null>(null)

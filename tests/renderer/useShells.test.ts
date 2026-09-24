@@ -26,6 +26,19 @@ describe('useShells', () => {
     expect(fallback.shell.value).toBe('cmd.exe')
   })
 
+  it('keepCurrent（编辑已有会话）：当前值不在列表里也保留，补在列表末尾，不切到第一项', async () => {
+    installFakeApi({ app: { listShells: async () => ['cmd.exe', 'powershell.exe'] } })
+    const { shell, shells } = useShells('pwsh.exe', undefined, { keepCurrent: true })
+    await flushPromises()
+    expect(shells.value).toEqual(['cmd.exe', 'powershell.exe', 'pwsh.exe'])
+    expect(shell.value).toBe('pwsh.exe')
+
+    installFakeApi({ app: { listShells: async () => ['cmd.exe', 'pwsh.exe'] } })
+    const listed = useShells('pwsh.exe', undefined, { keepCurrent: true })
+    await flushPromises()
+    expect(listed.shells.value).toEqual(['cmd.exe', 'pwsh.exe'])
+  })
+
   it('探测失败时回调错误文案，列表保持缺省', async () => {
     installFakeApi({
       app: {
