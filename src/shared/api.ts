@@ -18,6 +18,8 @@ import type {
   SettingsPatch,
   TagListResult,
   TagPatch,
+  ConfigExportResult,
+  ConfigPrefs,
 } from './ipc'
 import type {
   GlobalShortcutConfig,
@@ -49,6 +51,8 @@ export interface TagTermApi {
     setGlobalShortcut(config: GlobalShortcutConfig): Promise<GlobalShortcutStatus>
     /** 设置里录新键位期间暂停当前热键（true）/ 恢复（false） */
     pauseGlobalShortcut(paused: boolean): Promise<void>
+    /** 导出配置（用户偏好）：主进程弹保存对话框，取消为 null；渲染进程只交出终端字号 */
+    exportConfig(prefs: ConfigPrefs): Promise<ConfigExportResult | null>
     /** 全局快捷键唤出窗口后：把焦点交给当前终端 */
     onFocusTerminal(cb: () => void): Unsubscribe
     onOpenSettings(cb: () => void): Unsubscribe

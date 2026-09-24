@@ -20,6 +20,7 @@ import type {
   SessionPatch,
   SettingsPatch,
   TagPatch,
+  ConfigPrefs,
 } from '@shared/ipc'
 import {
   SHELL_KINDS,
@@ -31,6 +32,8 @@ import {
   type TagColor,
 } from '@shared/models'
 import { describeBackgroundParamsError } from '@shared/background'
+import { isValidFontSize } from '@shared/fontSize'
+import type { ConfigService } from './config/ConfigService'
 import { isValidAccelerator } from '@shared/accelerator'
 import type { AgentSubsystem } from './agent/AgentSubsystem'
 import type { FolderPort, SessionSubsystem } from './session/SessionSubsystem'
@@ -60,6 +63,8 @@ export interface IpcDeps {
   agent: AgentSubsystem
   /** 全局快捷键服务（唤出 / 隐藏窗口）：注册与暂停；「先注册成功才落盘」的编排在 shortcut/applyGlobalShortcut */
   shortcut: GlobalShortcut
+  /** 配置导入导出的编排（路径只从主进程的对话框来） */
+  config: ConfigService
   /** 数据目录（设置「关于」显示） */
   dataDir: string
   /** 日志目录（装配层给定，= 数据目录下的 logs）；「打开日志目录」用 */
@@ -110,6 +115,7 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
     if (assertPaused(paused)) deps.shortcut.pause()
     else deps.shortcut.resume()
   })
+  handle('app:export-config', (prefs) => deps.config.exportConfig(assertConfigPrefs(prefs)))
 
   handle('session:list', () => deps.sessions.list())
   handle('session:create', (input) => deps.sessions.create(assertCreateInput(input)))
@@ -306,6 +312,12 @@ function assertGlobalShortcut(config: unknown): GlobalShortcutConfig {
 function assertPaused(paused: unknown): boolean {
   if (typeof paused !== 'boolean') throw new Error('暂停参数必须是布尔')
   return paused
+}
+
+function assertConfigPrefs(prefs: unknown): ConfigPrefs {
+  const o = (prefs ?? {}) as Record<string, unknown>
+  if (!isValidFontSize(o.terminalFontSize)) throw new Error('终端字号参数不正确')
+  return { terminalFontSize: o.terminalFontSize }
 }
 
 function assertTagId(id: unknown): string {

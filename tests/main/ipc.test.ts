@@ -12,6 +12,7 @@ import { PtyManager } from '../../src/main/pty/PtyManager'
 import type { AgentSubsystem } from '../../src/main/agent/AgentSubsystem'
 import { SessionSubsystem } from '../../src/main/session/SessionSubsystem'
 import { GlobalShortcut } from '../../src/main/shortcut/GlobalShortcut'
+import { ConfigService } from '../../src/main/config/ConfigService'
 import { FakeConpty } from './fakeConpty'
 import { FakeShortcutPort } from './fakeShortcutPort'
 import type { AutoLaunchStatus, PtyExitEvent, PtyOpenResult, TagListResult } from '@shared/ipc'
@@ -45,6 +46,8 @@ describe('IPC 接口层', () => {
   let shortcut: GlobalShortcut
   /** 会话列表广播（session:changed）的次数 */
   let sessionBroadcasts = 0
+  /** 假的配置文件对话框给的路径（null = 取消） */
+  let configPaths: { save: string | null; open: string | null } = { save: null, open: null }
 
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), 'tagterm-ipc-'))
@@ -88,6 +91,10 @@ describe('IPC 接口层', () => {
         return openPathError || null
       },
     }
+    const autoLaunchPort = {
+      get: () => autoLaunch,
+      set: (enabled: boolean) => (autoLaunch = { enabled, blockedBySystem: false }),
+    }
     deps = {
       version: '0.1.0',
       osBuild: 26200,
@@ -97,6 +104,20 @@ describe('IPC 接口层', () => {
       updater,
       agent,
       shortcut,
+      // 配置导入导出：假对话框固定给临时目录里的路径（取消由各用例改 configPaths）
+      config: new ConfigService({
+        settings,
+        tags,
+        shortcut,
+        autoLaunch: autoLaunchPort,
+        hooks: agent,
+        dialogs: {
+          pickSavePath: async () => configPaths.save,
+          pickOpenPath: async () => configPaths.open,
+        },
+        appVersion: '0.1.0',
+        dataDir: dir,
+      }),
       dataDir: dir,
       logsDir: join(dir, 'logs'),
       pickImage: async () => join(dir, 'picked.png'),
@@ -112,6 +133,7 @@ describe('IPC 接口层', () => {
     registerIpc(ipc, deps)
   })
   afterEach(async () => {
+    configPaths = { save: null, open: null }
     pty.killAll()
     await agent.stop()
     sessionBroadcasts = 0
@@ -320,6 +342,22 @@ describe('IPC 接口层', () => {
       )
     expect([...shortcutPort.registered.keys()]).toEqual(['Ctrl+Alt+T'])
     expect(settings.get().globalShortcut).toBeUndefined()
+  })
+
+  it('app:export-config：守卫字号参数；保存对话框取消返回 null；选了路径就把偏好写成文件并返回路径', async () => {
+    for (const bad of [undefined, {}, { terminalFontSize: 9 }, { terminalFontSize: '14' }])
+      await expect(ipc.invoke('app:export-config', bad)).rejects.toThrow('终端字号参数不正确')
+    await expect(ipc.invoke('app:export-config', { terminalFontSize: 14 })).resolves.toBeNull()
+
+    configPaths = { save: join(dir, 'exported.json'), open: null }
+    await expect(ipc.invoke('app:export-config', { terminalFontSize: 18 })).resolves.toEqual({
+      path: join(dir, 'exported.json'),
+    })
+    const file = JSON.parse(readFileSync(join(dir, 'exported.json'), 'utf8'))
+    expect(file).toMatchObject({ format: 'tagterm-config', version: 1, terminalFontSize: 18 })
+    expect(file.launchCommands.map((c: { command: string }) => c.command)).toEqual(['claude', 'pi'])
+    expect(file.autoLaunch).toBe(false)
+    expect(file.hooks).toEqual({ claude: false, codex: false })
   })
 
   it('settings:update 不接受 globalShortcut（只能走专用通道，保证落盘的键位一定注册过）', async () => {

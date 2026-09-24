@@ -60,11 +60,11 @@ export const CONFIG_ITEM_KEYS: readonly ConfigItemKey[] = [
 
 const NOT_CONFIG = '不是 TagTerm 配置文件'
 
-/** 组装成文件文本：只写给了的项；2 空格缩进、末尾换行 */
-export function composeConfigFile(
+/** 组装成文件对象：格式标记、版本、导出时间、应用版本在前，各项只写给了的（写盘用 writeJsonAtomic：2 空格缩进、末尾换行） */
+export function buildConfigFile(
   data: ConfigFileData,
   meta: { appVersion: string; now?: Date },
-): string {
+): Record<string, unknown> {
   const out: Record<string, unknown> = {
     format: CONFIG_FORMAT,
     version: CONFIG_FILE_VERSION,
@@ -72,7 +72,15 @@ export function composeConfigFile(
     appVersion: meta.appVersion,
   }
   for (const key of CONFIG_ITEM_KEYS) if (data[key] !== undefined) out[key] = data[key]
-  return JSON.stringify(out, null, 2) + '\n'
+  return out
+}
+
+/** 组装成文件文本（与 writeJsonAtomic 写出的一致） */
+export function composeConfigFile(
+  data: ConfigFileData,
+  meta: { appVersion: string; now?: Date },
+): string {
+  return JSON.stringify(buildConfigFile(data, meta), null, 2) + '\n'
 }
 
 /** 解析文件文本：不是配置文件 / 版本过高 / 任一项不合法都抛中文 message */
