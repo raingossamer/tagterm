@@ -320,7 +320,7 @@ app.whenReady().then(async () => {
   shortcut.start(settings.getGlobalShortcut())
   if (isSmoke)
     runSmokeCheck(mainWindow, {
-      store,
+      sessions,
       tags,
       pty,
       agent: subsystem,
