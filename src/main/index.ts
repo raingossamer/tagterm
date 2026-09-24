@@ -25,7 +25,9 @@ import { PtyManager } from './pty/PtyManager'
 import type { AgentSubsystem } from './agent/AgentSubsystem'
 import { createProductionAgent } from './agent/production'
 import { electronBadge, electronNotifications } from './platform/agentPorts'
+import { electronFolders } from './platform/folderPort'
 import { electronShortcuts } from './platform/shortcutPort'
+import { SessionSubsystem } from './session/SessionSubsystem'
 import { GlobalShortcut } from './shortcut/GlobalShortcut'
 import { decideSummon } from './shortcut/summon'
 import { Updater } from './updater/Updater'
@@ -216,7 +218,7 @@ app.whenReady().then(async () => {
   console.log(`[main] 已安装的唤起工具：${availableAgents.join(', ') || '无'}`)
 
   const store = new SessionStore(dataDir, {
-    onChanged: (sessions) => broadcast('session:changed', sessions),
+    onChanged: (list) => broadcast('session:changed', list),
   })
   // 首次运行时 settings.json 的唤起命令来自 PATH 探测；之后完全以文件为准
   const settings = new SettingsStore(dataDir, {
@@ -227,21 +229,10 @@ app.whenReady().then(async () => {
   const tags = new TagStore(dataDir, {
     onChanged: (result) => broadcast('tag:changed', result),
   })
-  try {
-    await store.load()
-    await settings.load()
-    await tags.load()
-    // 两份文件都加载后再清掉崩溃遗留的悬空关联（此时渲染进程尚未订阅，不广播）
-    await tags.pruneDangling(store.list().map((s) => s.id))
-  } catch (err) {
-    // 坏文件不静默清空：提示后退出，由用户处理文件
-    dialog.showErrorBox('TagTerm 无法加载数据', err instanceof Error ? err.message : String(err))
-    app.exit(1)
-    return
-  }
 
   // agent 运行时子系统：状态机 / 进程树 / hooks 端点与安装器 / 通知 / 角标全在里面，这里只造 Electron 适配器并接线一次；
-  // PtyManager 的三个回调经 wrapPty 串上状态机与探针
+  // PtyManager 的三个回调经 wrapPty 串上状态机与探针。两者的构造都不做 I/O（端点在 start 才起），
+  // 所以能排在数据加载之前 —— 会话子系统要拿它们装配；往这些构造函数里加 I/O 会改变加载失败时的行为
   const subsystem = createProductionAgent({
     dataDir,
     isSmoke, // hooks 目标隔离到数据目录下的假主目录：烟测的端口同步绝不能碰用户真实的 ~/.claude / ~/.codex
@@ -260,7 +251,6 @@ app.whenReady().then(async () => {
       overlays: overlayImages!,
     }),
   })
-  agent = subsystem
   const pty = new PtyManager(
     subsystem.wrapPty({
       onData: (sessionId, data) => broadcast('pty:data', sessionId, data),
@@ -268,8 +258,28 @@ app.whenReady().then(async () => {
       isFile: existsSync, // spawn 前把 shell 名解析成绝对路径：开机自启时工作目录是 System32，相对名会撞 node-pty 的缺陷
     }),
   )
-  ptyManager = pty
   console.log('[pty] node-pty 已加载')
+  // 会话编排子系统：会话记录 / 标签关联 / 终端 / 运行时记录之间的因果都在里面，启动加载顺序也归它
+  const folders = electronFolders()
+  const sessions = new SessionSubsystem({
+    store,
+    tags,
+    terminals: pty,
+    agent: subsystem,
+    folders,
+  })
+  try {
+    // sessions.json → tags.json → 清掉崩溃遗留的悬空关联（此时渲染进程尚未订阅，不广播），再加载设置
+    await sessions.load()
+    await settings.load()
+  } catch (err) {
+    // 坏文件不静默清空：提示后退出，由用户处理文件
+    dialog.showErrorBox('TagTerm 无法加载数据', err instanceof Error ? err.message : String(err))
+    app.exit(1)
+    return
+  }
+  agent = subsystem
+  ptyManager = pty
   await subsystem.start()
 
   registerIpc(ipcMain, {
