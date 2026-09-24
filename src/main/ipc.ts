@@ -37,6 +37,7 @@ import { isValidAccelerator } from '@shared/accelerator'
 import type { AgentSubsystem } from './agent/AgentSubsystem'
 import type { FolderPort, SessionSubsystem } from './session/SessionSubsystem'
 import type { GlobalShortcut } from './shortcut/GlobalShortcut'
+import { applyGlobalShortcut } from './shortcut/applyGlobalShortcut'
 import type { SettingsStore } from './store/SettingsStore'
 import type { TagStore } from './store/TagStore'
 import type { Updater } from './updater/Updater'
@@ -59,7 +60,7 @@ export interface IpcDeps {
   updater: Updater
   /** agent 运行时子系统：运行时记录、正被查看、hooks 开关与端口 */
   agent: AgentSubsystem
-  /** 全局快捷键服务（唤出 / 隐藏窗口）：注册与暂停；配置落 settings.json 由这里编排 */
+  /** 全局快捷键服务（唤出 / 隐藏窗口）：注册与暂停；「先注册成功才落盘」的编排在 shortcut/applyGlobalShortcut */
   shortcut: GlobalShortcut
   /** 数据目录（设置「关于」显示） */
   dataDir: string
@@ -103,20 +104,10 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   handle('app:get-auto-launch', () => deps.getAutoLaunch())
   handle('app:set-auto-launch', (enabled) => deps.setAutoLaunch(assertAutoLaunch(enabled)))
   handle('app:get-global-shortcut', () => deps.shortcut.status())
-  // 编排：先注册新键位（被占用 reject，旧的保留、不落盘）→ 成功才写 settings.json；落盘失败把注册换回旧配置再抛
-  // （设置的内存也没动：SettingsStore 写盘成功才改内存），保证文件里的键位一定注册过
-  handle('app:set-global-shortcut', async (config) => {
-    const next = assertGlobalShortcut(config)
-    const previous = deps.settings.getGlobalShortcut()
-    if (!deps.shortcut.apply(next)) throw new Error('该快捷键已被其他程序占用')
-    try {
-      await deps.settings.setGlobalShortcut(next)
-    } catch (err) {
-      deps.shortcut.revert(previous)
-      throw err
-    }
-    return deps.shortcut.status()
-  })
+  // 「先注册、成功才落盘、落盘失败换回」的编排在 shortcut/applyGlobalShortcut，与配置导入共用
+  handle('app:set-global-shortcut', (config) =>
+    applyGlobalShortcut(deps, assertGlobalShortcut(config)),
+  )
   handle('app:pause-global-shortcut', (paused) => {
     if (assertPaused(paused)) deps.shortcut.pause()
     else deps.shortcut.resume()
