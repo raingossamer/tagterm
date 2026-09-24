@@ -22,6 +22,7 @@ import NewSessionModal from './components/NewSessionModal.vue'
 import EditSessionModal from './components/EditSessionModal.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import ManageTagsModal from './components/ManageTagsModal.vue'
+import ConfirmDialog from './components/ConfirmDialog.vue'
 import { useDocumentVisible } from './composables/useDocumentVisible'
 import { useViewedSession } from './composables/useViewedSession'
 import { useAgentStore } from './stores/agent'
@@ -150,6 +151,8 @@ onUnmounted(() => {
     />
     <SettingsModal v-if="isSettingsOpen" @close="isSettingsOpen = false" />
     <ManageTagsModal v-if="isManageTagsOpen" @close="isManageTagsOpen = false" />
+    <!-- 应用内确认弹窗（取代 window.confirm）：放在最后，压在所有弹窗之上 -->
+    <ConfirmDialog />
   </div>
 </template>
 

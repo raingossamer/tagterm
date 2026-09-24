@@ -12,6 +12,7 @@ import { usePopover } from '../composables/usePopover'
 import { buildSessionGroups, type SessionGroup } from '../composables/useSessionGroups'
 import { reorderWithinGroup } from '../composables/sessionOrder'
 import { useAgentStore } from '../stores/agent'
+import { useConfirmStore } from '../stores/confirm'
 import { useFilterStore } from '../stores/filter'
 import { useSessionsStore } from '../stores/sessions'
 import { useTagsStore } from '../stores/tags'
@@ -22,6 +23,7 @@ const tags = useTagsStore()
 const filter = useFilterStore()
 const workspace = useWorkspaceStore()
 const agent = useAgentStore()
+const confirmDialog = useConfirmStore()
 const emit = defineEmits<{ select: [id: string]; edit: [id: string] }>()
 
 const menuEl = ref<HTMLElement | null>(null)
@@ -70,7 +72,13 @@ function restartFromMenu(): void {
  */
 async function restartTerminal(id: string): Promise<void> {
   const running = workspace.phaseOf(id) === 'running' ? agent.runningNameOf(id) : null
-  if (running && !window.confirm(`终端里有程序在运行（${running}），重启会结束它。继续？`)) return
+  if (
+    running &&
+    !(await confirmDialog.ask(`终端里有程序在运行（${running}），重启会结束它。继续？`, {
+      danger: true,
+    }))
+  )
+    return
   try {
     await workspace.restart(id)
   } catch (err) {
@@ -82,7 +90,8 @@ async function restartTerminal(id: string): Promise<void> {
 async function removeSession(id: string): Promise<void> {
   const s = sessions.byId(id)
   if (!s) return
-  if (!window.confirm(`移除会话 "${s.name}"？终端进程会被结束。`)) return
+  if (!(await confirmDialog.ask(`移除会话 "${s.name}"？终端进程会被结束。`, { danger: true })))
+    return
   try {
     await sessions.remove(s.id)
   } catch (err) {

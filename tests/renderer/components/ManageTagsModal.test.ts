@@ -2,16 +2,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import ManageTagsModal from '../../../src/renderer/src/components/ManageTagsModal.vue'
+import { useConfirmStore } from '../../../src/renderer/src/stores/confirm'
 import { useFilterStore } from '../../../src/renderer/src/stores/filter'
 import { useSessionsStore } from '../../../src/renderer/src/stores/sessions'
 import { useTagsStore } from '../../../src/renderer/src/stores/tags'
 import { installFakeApi, makeSession, makeTag } from '../fakeApi'
 
-// happy-dom 没有 window.confirm，按需要的返回值打桩
+// 确认走应用内确认弹窗（stores/confirm）：替换 ask 按需要的返回值作答；重复打桩复用同一个替身，先清空调用记录
 function stubConfirm(result: boolean) {
-  const fn = vi.fn(() => result)
-  Object.defineProperty(window, 'confirm', { value: fn, configurable: true, writable: true })
-  return fn
+  const confirm = useConfirmStore()
+  const spy = vi.isMockFunction(confirm.ask) ? vi.mocked(confirm.ask) : vi.spyOn(confirm, 'ask')
+  spy.mockReset()
+  spy.mockResolvedValue(result)
+  return spy
 }
 
 describe('ManageTagsModal', () => {
@@ -100,7 +103,7 @@ describe('ManageTagsModal', () => {
     const confirm = stubConfirm(false)
     await wrapper.findAll('[data-test=mt-delete]')[1]!.trigger('click')
     await flushPromises()
-    expect(confirm).toHaveBeenCalledWith('删除标签 "java"？会话本身会保留。')
+    expect(confirm).toHaveBeenCalledWith('删除标签 "java"？会话本身会保留。', { danger: true })
     expect(api.tag.remove).not.toHaveBeenCalled()
     expect(filter.selected.has(java.id)).toBe(true)
 

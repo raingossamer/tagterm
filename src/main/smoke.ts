@@ -296,13 +296,16 @@ const SMOKE_SCRIPT = `(async () => {
   $('[data-test=es-save]')?.click()
   const renamed = await waitFor(() => !!rowOf('smoke-已改名') && !$('[data-test=edit-session-modal]'))
   const s1AliveAfterRename = await api.pty.isAlive(s1.id)
-  // 右键 smoke-2 → 菜单「移除会话」（confirm 打桩为同意）：行消失、pty 结束
-  window.confirm = () => true
+  // 右键 smoke-2 → 菜单「移除会话」→ 应用内确认弹窗点「确定」：行消失、pty 结束；
+  // 弹窗关掉后页面仍有焦点（原生 window.confirm 在 Windows 上关掉后页面丢焦点，输入框点不进去）
   rowOf('smoke-2')?.dispatchEvent(
     new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 60, clientY: 160 }),
   )
   await sleep(50)
   $('[data-test=menu-remove]')?.click()
+  const confirmShown = await waitFor(() => !!$('[data-test=confirm-dialog]'))
+  const confirmText = $('[data-test=confirm-message]')?.textContent?.trim() ?? null
+  $('[data-test=confirm-ok]')?.click()
   const removedByMenu = await waitFor(() => !rowOf('smoke-2'))
   // kill 是同步发出的，但 PtyManager 要等到进程 exit 事件才删条目：轮询到 pty 不再存活
   let s2AliveAfterRemove = true
@@ -322,7 +325,7 @@ const SMOKE_SCRIPT = `(async () => {
     statusVersion: $('[data-test=status-version]')?.textContent ?? null,
     sessionIds: [s1.id],
     sessionRoundTrip: { before: before.length, rowCountAfterCreate: rowCount, statusAfterCreate: statusSessions },
-    edit: { menuShown, editOpened, editPrefilled, renamed, s1AliveAfterRename, removedByMenu, s2AliveAfterRemove, rowsAfterRemove },
+    edit: { menuShown, editOpened, editPrefilled, renamed, s1AliveAfterRename, confirmShown, confirmText, confirmTextRight: confirmText === '移除会话 "smoke-2"？终端进程会被结束。', removedByMenu, s2AliveAfterRemove, rowsAfterRemove },
     terminal: { gotPrompt1, gotEcho, gotRightClickPaste, gotPrompt2, hosts: hosts.length, visibleHosts, hasXterm: !!$('[data-test=terminal-pane] .xterm'), hasCanvas: !!$('[data-test=terminal-pane] canvas'), dataEvents },
     tabs: { tabNames, activeTab, activeAfterSwitch, tabsAfterClose, s2AliveAfterClose, hostsAfterClose },
     strip: { launchers, sideHidden },
@@ -974,8 +977,9 @@ async function runLaunchBarChecks(
     )) as boolean
     await clickTab('smoke-r3')
     await sleep(200)
+    // 确认走应用内确认弹窗：渲染进程里每 30 ms 看一眼，出现就记下问句并点「确定」（收尾 finally 里停掉）
     await js(
-      `window.__smokeConfirms = []; window.confirm = (m) => { window.__smokeConfirms.push(m); return true }; true`,
+      `window.__smokeConfirms = []; clearInterval(window.__smokeAutoConfirm); window.__smokeAutoConfirm = setInterval(() => { const d = document.querySelector('[data-test=confirm-dialog]'); if (!d) return; window.__smokeConfirms.push(d.querySelector('[data-test=confirm-message]')?.textContent?.trim() ?? ''); d.querySelector('[data-test=confirm-ok]')?.click() }, 30); true`,
     )
     const pidBusy = deps.pty.getPid(s1)
     const menuEnabled = (await js(RIGHT_CLICK_RESTART(s1Name))) as boolean
@@ -985,6 +989,10 @@ async function runLaunchBarChecks(
       `({ confirms: window.__smokeConfirms, active: document.querySelector('[data-test=tab].active [data-test=tab-name]')?.textContent ?? '', oldGone: !document.querySelector('[data-smoke-old]') })`,
     )) as { confirms: string[]; active: string; oldGone: boolean }
     const ungreyedAfterRestart = await pollJs(win, `${LAUNCH_STATE}.noneGreyed`, 8000)
+    // 确认弹窗关掉后页面焦点要与窗口焦点一致：原生 window.confirm 在 Windows 上关掉后 win.isFocused() 为真、
+    // document.hasFocus() 却为假（之后点输入框没反应）；用户把别的窗口切到前台时两者都为假，照样一致 —— 焦点在哪只作排查
+    const pageFocusAfterConfirm = (await js('document.hasFocus()')) as boolean
+    const windowFocusedAtSample = win.isFocused()
 
     // 空闲时重启：不弹确认，照样换一条新 pty
     const pidIdle = deps.pty.getPid(s1)
@@ -1017,8 +1025,11 @@ async function runLaunchBarChecks(
       ungreyedAfterRestart,
       idleRestarted,
       idleRestartNotAsked: confirmCount === 1,
+      pageFocusAgreesWithWindow: !windowFocusedAtSample || pageFocusAfterConfirm,
+      focusAtSample: windowFocusedAtSample ? 'window-focused' : 'window-unfocused',
     }
   } finally {
+    await js(`clearInterval(window.__smokeAutoConfirm); true`)
     await js(`window.tagterm.settings.update({ launchCommands: ${JSON.stringify(original)} })`)
   }
 }
