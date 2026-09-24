@@ -156,7 +156,10 @@ export class AgentSubsystem {
     this.detector.reportOutput(sessionId, report)
   }
 
-  /** 会话被移除（没开过终端的会话只能靠这里清记录） */
+  /**
+   * 会话被移除：立即清掉它的运行时记录（有记录才广播墓碑），不等 pty 真正退出 —— 移除时终端只 kill、不等退出，
+   * 之后迟到的 pty 退出对已清掉的记录不再起作用。没开过终端的会话本来就没有记录（记录在 ptySpawned 才建）
+   */
   sessionRemoved(sessionId: string): void {
     this.detector.sessionRemoved(sessionId)
   }
