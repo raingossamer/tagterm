@@ -391,6 +391,8 @@ app.whenReady().then(async () => {
     runSmokeCheck(mainWindow, {
       sessions,
       tags,
+      settings,
+      dataDir,
       pty,
       agent: subsystem,
       badgeCounts: () => tray?.counts() ?? null,
