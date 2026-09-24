@@ -18,6 +18,10 @@ export interface HookServerDeps {
   maxPortAttempts?: number
 }
 
+function messageOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
 /** 路径 → 来源：只认契约表里的 agent */
 function agentOfPath(path: string): HookAgent | null {
   if (!path.startsWith(HOOK_PATH_PREFIX)) return null
@@ -36,23 +40,30 @@ export class HookServer {
     this.maxPortAttempts = deps.maxPortAttempts ?? MAX_PORT_ATTEMPTS
   }
 
-  /** 从 preferredPort 起最多试 MAX_PORT_ATTEMPTS 个端口（0 = 随机）；返回实际端口 */
-  async start(preferredPort: number): Promise<number> {
+  /**
+   * 从 preferredPort 起最多试 maxPortAttempts 个端口；整段都起不来（被占，或整段落进 Windows 的保留端口段 → EACCES）
+   * 再依次换 fallbacks 里的起点，换段时记一行日志。0 = 随机端口，只试一次。返回实际端口，全部失败抛错
+   */
+  async start(preferredPort: number, fallbacks: readonly number[] = []): Promise<number> {
     if (this.server) return this.port
-    const attempts = preferredPort === 0 ? 1 : this.maxPortAttempts
+    const bases = [preferredPort, ...fallbacks]
     let lastError: unknown = null
-    for (let i = 0; i < attempts; i += 1) {
-      const port = preferredPort === 0 ? 0 : preferredPort + i
-      try {
-        this.port = await this.listen(port)
-        return this.port
-      } catch (err) {
-        lastError = err
+    for (const base of bases) {
+      if (lastError !== null)
+        console.warn(
+          `[agent] hooks 端点换一段端口再试（${base === 0 ? '随机端口' : `${base} 起`}）：${messageOf(lastError)}`,
+        )
+      const attempts = base === 0 ? 1 : this.maxPortAttempts
+      for (let i = 0; i < attempts; i += 1) {
+        try {
+          this.port = await this.listen(base === 0 ? 0 : base + i)
+          return this.port
+        } catch (err) {
+          lastError = err
+        }
       }
     }
-    throw new Error(
-      `HookServer 无法监听端口 ${preferredPort} 起的 ${attempts} 个端口：${lastError instanceof Error ? lastError.message : String(lastError)}`,
-    )
+    throw new Error(`HookServer 无法监听端口（起点 ${bases.join('、')}）：${messageOf(lastError)}`)
   }
 
   async stop(): Promise<void> {
