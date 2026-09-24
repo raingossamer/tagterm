@@ -294,7 +294,7 @@ describe('TagStore', () => {
       { name: 'simba', color: '#2F6FDB' },
       { name: 'java', color: '#2A9D5C', hidden: true },
     ])
-    expect(result).toEqual({ created: 1, updated: 1 })
+    expect(result).toEqual({ created: 1, updated: 1, changed: true })
     const { tags, sessionTags } = store.list()
     expect(tags.map((t) => [t.name, t.color, t.hidden ?? false, t.sortOrder])).toEqual([
       ['simba', '#2F6FDB', false, 1],
@@ -325,8 +325,49 @@ describe('TagStore', () => {
         { name: 'a', color: '#2F6FDB' },
         { name: 'b', color: '#2A9D5C' },
       ]),
-    ).resolves.toEqual({ created: 0, updated: 0 })
+    ).resolves.toEqual({ created: 0, updated: 0, changed: false })
     expect(received).toEqual([])
     expect(readFileSync(file, 'utf8')).toBe(before)
+  })
+
+  it('importByName：本机 sortOrder 有空洞（删过标签）时导入同一份内容仍算未变；只有先后不同时写盘、计数为 0 而 changed 为 true；换色计 updated、与位置无关', async () => {
+    const received: TagListResult[] = []
+    const store = new TagStore(dir, { onChanged: (r) => received.push(r) })
+    await store.load()
+    await store.create('a', '#2F6FDB')
+    const b = await store.create('b', '#2A9D5C')
+    await store.create('c', '#C98A0C')
+    await store.remove(b.id) // 本机剩 a(sortOrder 1)、c(3)
+    received.length = 0
+    const file = join(dir, 'tags.json')
+    const before = readFileSync(file, 'utf8')
+
+    await expect(
+      store.importByName([
+        { name: 'a', color: '#2F6FDB' },
+        { name: 'c', color: '#C98A0C' },
+      ]),
+    ).resolves.toEqual({ created: 0, updated: 0, changed: false })
+    expect(received).toEqual([])
+    expect(readFileSync(file, 'utf8')).toBe(before)
+
+    await expect(
+      store.importByName([
+        { name: 'c', color: '#C98A0C' },
+        { name: 'a', color: '#2F6FDB' },
+      ]),
+    ).resolves.toEqual({ created: 0, updated: 0, changed: true })
+    expect(store.list().tags.map((t) => [t.name, t.sortOrder])).toEqual([
+      ['c', 1],
+      ['a', 2],
+    ])
+    expect(received).toHaveLength(1)
+
+    await expect(
+      store.importByName([
+        { name: 'c', color: '#D14343' },
+        { name: 'a', color: '#2F6FDB' },
+      ]),
+    ).resolves.toEqual({ created: 0, updated: 1, changed: true })
   })
 })

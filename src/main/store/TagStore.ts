@@ -28,8 +28,12 @@ export interface TagImportEntry {
 }
 
 export interface TagImportResult {
+  /** 新建的条数 */
   created: number
+  /** 换了颜色或隐藏的条数（先后变了不算） */
   updated: number
+  /** 有没有写盘：只调整了顺序时两个计数都是 0 而这里为 true */
+  changed: boolean
 }
 
 export interface TagStoreDeps {
@@ -206,7 +210,9 @@ export class TagStore {
   /**
    * 配置导入的「按名合并」（一次原子写、一次回调）：给的每一条按名（trim 后精确匹配，与唯一性同一规则）找本机标签，
    * 找到的沿用它的 id（会话关联不动），颜色与隐藏用给的；没找到的新建；给的按顺序排在前（sortOrder 1..k），
-   * 本机独有的按原顺序接在后。不删任何标签或关联。与本机完全一样时不写盘、不回调。返回新建 / 更新的条数
+   * 本机独有的按原顺序接在后。不删任何标签或关联。合并结果与本机的先后、名、色、隐藏都一样时不写盘、不回调
+   * （只比先后，不比 sortOrder 的数值：删过标签后本机的 sortOrder 有空洞，导入同一份内容不算变化）。
+   * 返回新建 / 换了颜色或隐藏的条数与有没有写盘（只调整了顺序时两个计数都是 0 而 changed 为 true）
    */
   importByName(entries: readonly TagImportEntry[]): Promise<TagImportResult> {
     return this.queue.run(async () => {
@@ -232,15 +238,14 @@ export class TagStore {
         merged.push(next)
       }
       const taken = new Set(merged.map((t) => t.id))
-      const rest = [...this.tags]
-        .sort((a, b) => a.sortOrder - b.sortOrder)
-        .filter((t) => !taken.has(t.id))
-      for (const tag of rest) merged.push({ ...tag, sortOrder: merged.length + 1 })
+      const current = [...this.tags].sort((a, b) => a.sortOrder - b.sortOrder)
+      for (const tag of current)
+        if (!taken.has(tag.id)) merged.push({ ...tag, sortOrder: merged.length + 1 })
       const isUnchanged =
-        merged.length === this.tags.length && merged.every((t, i) => isSameTag(t, this.tags[i]!))
-      if (isUnchanged) return { created: 0, updated: 0 }
+        merged.length === current.length && merged.every((t, i) => isSameTag(t, current[i]!))
+      if (isUnchanged) return { created: 0, updated: 0, changed: false }
       await this.commit(merged, this.sessionTags)
-      return { created, updated }
+      return { created, updated, changed: true }
     })
   }
 
@@ -276,14 +281,13 @@ export class TagStore {
   }
 }
 
-/** 两条标签记录完全一样（id、名、色、隐藏、排序） */
+/** 两条标签记录的 id、名、色、隐藏一样（不比 sortOrder：先后由序列比较，数值有空洞不算变化） */
 function isSameTag(a: Tag, b: Tag): boolean {
   return (
     a.id === b.id &&
     a.name === b.name &&
     a.color === b.color &&
-    (a.hidden ?? false) === (b.hidden ?? false) &&
-    a.sortOrder === b.sortOrder
+    (a.hidden ?? false) === (b.hidden ?? false)
   )
 }
 
