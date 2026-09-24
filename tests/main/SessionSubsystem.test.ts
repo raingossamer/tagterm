@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Session, Tag } from '@shared/models'
@@ -210,5 +210,87 @@ describe('SessionSubsystem（主进程会话编排子系统）', () => {
     expect(() => sessions.writeTerminal(b.id, 'x')).not.toThrow()
     expect(() => sessions.resizeTerminal(b.id, { cols: 1, rows: 1 })).not.toThrow()
     expect(conpty.writes).toHaveLength(1)
+  })
+
+  it('create：建会话后按 tagIds 顺序逐个挂标签、各写各播；中途有不存在的标签原样抛，会话与已挂上的关联保留', async () => {
+    const t1 = await tags.create('甲')
+    const t2 = await tags.create('乙')
+    log.length = 0
+
+    const s = await sessions.create({ cwd: 'D:\\a', tagIds: [t1.id, t2.id] })
+    expect(log).toEqual(['session:changed', 'tag:changed', 'tag:changed'])
+    expect(tags.list().sessionTags).toEqual([
+      { sessionId: s.id, tagId: t1.id },
+      { sessionId: s.id, tagId: t2.id },
+    ])
+
+    await expect(
+      sessions.create({ cwd: 'D:\\b', name: 'partial', tagIds: [t1.id, 'ghost'] }),
+    ).rejects.toThrow('标签不存在：ghost')
+    const partial = sessions.list().find((x) => x.name === 'partial')
+    expect(partial).toBeDefined()
+    expect(tags.list().sessionTags).toContainEqual({ sessionId: partial!.id, tagId: t1.id })
+  })
+
+  it('remove：结束终端 → 删记录 → 删关联 → 墓碑，全部先于返回；没有关联不写 tags.json；没开过终端不 kill、无墓碑', async () => {
+    const t = await tags.create('甲')
+    const s = await sessions.create({ cwd: 'D:\\a', tagIds: [t.id] })
+    const { pid } = sessions.openTerminal(s.id, { cols: 80, rows: 24 })
+    log.length = 0
+
+    await sessions.remove(s.id).then(() => log.push('returned'))
+    expect(log).toEqual([`kill:${pid}`, 'session:changed', 'tag:changed', 'tombstone', 'returned'])
+    expect(sessions.list()).toEqual([])
+    expect(tags.list()).toEqual({ tags: [t], sessionTags: [] }) // 标签本身保留
+
+    const plain = await sessions.create({ cwd: 'D:\\b' })
+    log.length = 0
+    await sessions.remove(plain.id)
+    expect(log).toEqual(['session:changed'])
+  })
+
+  it('remove：会话不存在只抛「会话不存在」，别的什么都不动', async () => {
+    log.length = 0
+    await expect(sessions.remove('missing')).rejects.toThrow('会话不存在：missing')
+    expect(log).toEqual([])
+  })
+
+  it('remove：tags.json 写不进去时原样抛，停在删记录之后、不回滚；下次加载清掉残留关联且不广播', async () => {
+    const t = await tags.create('甲')
+    const s = await sessions.create({ cwd: 'D:\\a', tagIds: [t.id] })
+    const tagsFile = join(dir, 'tags.json')
+    chmodSync(tagsFile, 0o444) // 只读：原子写最后一步 rename 覆盖它时 EPERM，原内容保留
+    log.length = 0
+    try {
+      await expect(sessions.remove(s.id)).rejects.toThrow(/EPERM/)
+    } finally {
+      chmodSync(tagsFile, 0o666)
+    }
+    expect(log).toEqual(['session:changed']) // 没有 tag:changed，也没有墓碑
+    expect(sessions.list()).toEqual([])
+
+    log.length = 0
+    await build().load()
+    expect(tags.list().sessionTags).toEqual([])
+    expect(log).toEqual([])
+  })
+
+  it('attachTag 先核对会话存在（不存在抛「会话不存在」且不写 tags.json）；detachTag 不核对会话', async () => {
+    const t = await tags.create('甲')
+    const s = await sessions.create({ cwd: 'D:\\a' })
+    const tagsFile = join(dir, 'tags.json')
+    const fileBefore = readFileSync(tagsFile, 'utf8')
+    log.length = 0
+
+    await expect(sessions.attachTag('missing', t.id)).rejects.toThrow('会话不存在：missing')
+    expect(readFileSync(tagsFile, 'utf8')).toBe(fileBefore)
+    expect(log).toEqual([])
+
+    await sessions.attachTag(s.id, t.id)
+    expect(tags.list().sessionTags).toEqual([{ sessionId: s.id, tagId: t.id }])
+
+    await expect(sessions.detachTag('missing', t.id)).resolves.toBeUndefined()
+    await sessions.detachTag(s.id, t.id)
+    expect(tags.list().sessionTags).toEqual([])
   })
 })

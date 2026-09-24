@@ -4,7 +4,7 @@
  * 不持有状态：真相仍在两个 store、PtyManager 与 AgentDetector。不 import electron：打开目录以命名端口 FolderPort 注入。
  * 标签本身的增删改是单文件操作，不经这里（接口层直连 TagStore）。
  */
-import type { OutputReport, PtyOpenResult, PtySize } from '@shared/ipc'
+import type { CreateSessionInput, OutputReport, PtyOpenResult, PtySize } from '@shared/ipc'
 import type { Session } from '@shared/models'
 import type { AgentSubsystem } from '../agent/AgentSubsystem'
 import type { PtyManager } from '../pty/PtyManager'
@@ -47,6 +47,40 @@ export class SessionSubsystem {
     await this.deps.store.load()
     await this.deps.tags.load()
     await this.deps.tags.pruneDangling(this.deps.store.list().map((s) => s.id))
+  }
+
+  /**
+   * 新建会话：先建记录（广播 session:changed），再按 tagIds 顺序逐个挂标签（各写各播）。
+   * 跨两份文件不做事务：挂标签失败（如标签不存在）原样抛，已建的会话与已挂上的关联不回滚
+   */
+  async create(input: CreateSessionInput): Promise<Session> {
+    const { tagIds = [], ...fields } = input
+    const session = await this.deps.store.create(fields)
+    for (const tagId of tagIds) await this.deps.tags.attach(session.id, tagId)
+    return session
+  }
+
+  /**
+   * 移除会话，四步有序：结束终端（不等退出）→ 删记录（广播 session:changed）→ 删其关联（有才写，广播 tag:changed）
+   * → 立即清掉运行时记录并广播墓碑（不等 pty 退出；没开过终端的会话没有记录，调用无副作用）。
+   * 跨两份文件不做事务：中途写盘失败原样抛、已做的不回滚，残留关联由下次 load 清掉
+   */
+  async remove(id: string): Promise<void> {
+    this.deps.terminals.kill(id)
+    await this.deps.store.remove(id)
+    await this.deps.tags.detachAllOf(id)
+    this.deps.agent.sessionRemoved(id)
+  }
+
+  /** 给会话挂标签（幂等）：先核对会话存在（TagStore 不认识会话），标签不存在由 TagStore 抛 */
+  async attachTag(sessionId: string, tagId: string): Promise<void> {
+    this.deps.store.get(sessionId)
+    await this.deps.tags.attach(sessionId, tagId)
+  }
+
+  /** 从会话摘标签：不核对会话（摘不存在的关联本来就静默），与挂标签的不对称是有意的 */
+  detachTag(sessionId: string, tagId: string): Promise<void> {
+    return this.deps.tags.detach(sessionId, tagId)
   }
 
   /**
