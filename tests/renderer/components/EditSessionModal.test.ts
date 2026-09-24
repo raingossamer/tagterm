@@ -69,6 +69,28 @@ describe('EditSessionModal', () => {
     wrapper.unmount()
   })
 
+  it('会话的 Shell 不在本机探测到的可用列表里：下拉仍显示它（补在列表末尾）；只改名只提交名称，不连带换 Shell', async () => {
+    const api = installFakeApi({ app: { listShells: async () => ['cmd.exe', 'powershell.exe'] } })
+    const pwshSession = makeSession({ name: 'lab', cwd: 'D:\\lab', shell: 'pwsh.exe' })
+    installFakeWorkspace([pwshSession])
+    const wrapper = mount(EditSessionModal, { props: { session: pwshSession } })
+    await flushPromises()
+
+    expect((wrapper.find('[data-test=es-shell]').element as HTMLSelectElement).value).toBe(
+      'pwsh.exe',
+    )
+    expect(wrapper.findAll('[data-test=es-shell] option').map((o) => o.text())).toEqual([
+      'cmd.exe',
+      'powershell.exe',
+      'pwsh.exe',
+    ])
+
+    await wrapper.find('[data-test=es-name]').setValue('lab-2')
+    await wrapper.find('[data-test=es-save]').trigger('click')
+    await flushPromises()
+    expect(api.session.update).toHaveBeenCalledWith(pwshSession.id, { name: 'lab-2' })
+  })
+
   it('「浏览…」填目录；终端已打开（已退出）时保存成功后重新选中 = 按新配置重启', async () => {
     const api = installFakeApi({ session: { pickDirectory: async () => 'E:\\new\\dir' } })
     const { workspace, pty } = installFakeWorkspace([session])
