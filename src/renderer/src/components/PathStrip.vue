@@ -55,6 +55,14 @@ const pathTitle = computed(() => {
   return `${where}\n点击在资源管理器中打开`
 })
 
+// 胶囊 ×：摘标签，失败（写盘失败等）在路径条红字
+function untag(tagId: string): void {
+  if (!session.value) return
+  tags
+    .detach(session.value.id, tagId)
+    .catch((err) => flashError(err instanceof Error ? err.message : String(err)))
+}
+
 // 点路径 chip = 在资源管理器打开当前目录（与「复制」同一个路径）；路径由主进程从真相源解析，这里只传会话 id。
 // 500 ms 冷却：shell.openPath 每调一次多开一个资源管理器窗口，沿原型「单击全选」旧习惯双击 chip 的人不该得到两个窗口
 const canOpenDirectory = createCooldown(500)
@@ -90,7 +98,7 @@ function openDirectory(): void {
       }}<button
         title="从这个标签移除"
         data-test="strip-untag"
-        @click="tags.detach(session.id, t.id)"
+        @click="untag(t.id)"
         v-text="'×'"
       ></button
     ></span>

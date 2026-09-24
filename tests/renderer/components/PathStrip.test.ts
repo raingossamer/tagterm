@@ -226,4 +226,26 @@ describe('PathStrip', () => {
       'D:\\Projects\\simba\\api\n会话固定在这个目录\n点击在资源管理器中打开',
     )
   })
+
+  it('标签胶囊 × 摘标签失败：原因显示成路径条红字 1.2 s', async () => {
+    vi.useFakeTimers()
+    installFakeApi({
+      tag: {
+        detach: vi.fn(async () => {
+          throw new Error('EPERM: operation not permitted')
+        }),
+      },
+    })
+    const java = makeTag({ name: 'java' })
+    const tags = useTagsStore()
+    tags.tags = [java]
+    tags.sessionTags = [{ sessionId: session.id, tagId: java.id }]
+    const wrapper = mount(PathStrip)
+
+    await wrapper.find('[data-test=strip-untag]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test=strip-error]').text()).toBe('EPERM: operation not permitted')
+    await vi.advanceTimersByTimeAsync(1200)
+    expect(wrapper.find('[data-test=strip-error]').exists()).toBe(false)
+  })
 })

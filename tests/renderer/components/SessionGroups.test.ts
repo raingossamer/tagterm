@@ -498,4 +498,34 @@ describe('SessionGroups', () => {
     expect(dotsOfApi).toHaveLength(1)
     expect(dotsOfApi[0]).toContain('idle')
   })
+
+  it('右键菜单「移除会话」失败（写盘失败等）：原因显示在左栏红字，会话照旧在列表里', async () => {
+    vi.useFakeTimers()
+    const s = makeSession({ name: 'simba-api' })
+    useSessionsStore().sessions = [s]
+    installFakeApi({
+      session: {
+        remove: vi.fn(async () => {
+          throw new Error('EPERM: operation not permitted')
+        }),
+      },
+    })
+    stubConfirm(true)
+    const wrapper = mount(SessionGroups, { attachTo: document.body })
+    wrapper.find('[data-test=session-row]').element.dispatchEvent(
+      new MouseEvent('contextmenu', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 10,
+        clientY: 10,
+      }),
+    )
+    await nextTick()
+    await wrapper.find('[data-test=menu-remove]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test=groups-error]').text()).toBe('EPERM: operation not permitted')
+    expect(wrapper.findAll('[data-test=session-row]')).toHaveLength(1)
+    wrapper.unmount()
+  })
 })
