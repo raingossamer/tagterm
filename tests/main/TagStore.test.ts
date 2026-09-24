@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { TagStore } from '../../src/main/store/TagStore'
@@ -221,5 +221,62 @@ describe('TagStore', () => {
       tags: [{ ...a, color: '#D14343' }],
       sessionTags: [{ sessionId: 's1', tagId: a.id }],
     })
+  })
+
+  it('写盘失败：内存保持改之前、不回调、原样抛；之后别的变更落盘也不会把失败的改动带进文件', async () => {
+    const received: TagListResult[] = []
+    const store = new TagStore(dir, { onChanged: (r) => received.push(r) })
+    await store.load()
+    const a = await store.create('甲')
+    const b = await store.create('乙')
+    await store.attach('s1', a.id)
+    const before = store.list()
+    received.length = 0
+    const file = join(dir, 'tags.json')
+    chmodSync(file, 0o444) // 只读：原子写最后一步 rename 覆盖它时 EPERM，原内容保留
+    try {
+      await expect(store.create('丙')).rejects.toThrow(/EPERM/)
+      await expect(store.update(a.id, { name: '甲甲', color: '#D14343' })).rejects.toThrow(/EPERM/)
+      await expect(store.reorder([b.id, a.id])).rejects.toThrow(/EPERM/)
+      await expect(store.attach('s2', b.id)).rejects.toThrow(/EPERM/)
+      await expect(store.detach('s1', a.id)).rejects.toThrow(/EPERM/)
+      await expect(store.detachAllOf('s1')).rejects.toThrow(/EPERM/)
+      await expect(store.pruneDangling([])).rejects.toThrow(/EPERM/)
+      await expect(store.remove(a.id)).rejects.toThrow(/EPERM/)
+    } finally {
+      chmodSync(file, 0o666)
+    }
+    expect(store.list()).toEqual(before)
+    expect(received).toEqual([])
+
+    await store.update(b.id, { hidden: true })
+    const saved = JSON.parse(readFileSync(file, 'utf8'))
+    expect(saved.tags.map((t: { name: string }) => t.name)).toEqual(['甲', '乙'])
+    expect(saved.sessionTags).toEqual([{ sessionId: 's1', tagId: a.id }])
+  })
+
+  it('并发的变更排队执行、互不覆盖：同时给会话挂两个标签、同时新建两个标签，内存与文件里都齐全', async () => {
+    const store = new TagStore(dir)
+    await store.load()
+    const [a, b] = await Promise.all([store.create('甲'), store.create('乙')])
+    expect([a.sortOrder, b.sortOrder]).toEqual([1, 2])
+    expect(a.color).not.toBe(b.color)
+    await Promise.all([store.attach('s1', a.id), store.attach('s1', b.id)])
+
+    expect(store.list().sessionTags).toEqual([
+      { sessionId: 's1', tagId: a.id },
+      { sessionId: 's1', tagId: b.id },
+    ])
+    const reloaded = new TagStore(dir)
+    await reloaded.load()
+    expect(reloaded.list()).toEqual(store.list())
+  })
+
+  it('并发新建同名标签只建一个：排在后面的按前一个提交后的数据判定，返回已有的', async () => {
+    const store = new TagStore(dir)
+    await store.load()
+    const [a, b] = await Promise.all([store.create('甲'), store.create(' 甲 ')])
+    expect(b).toEqual(a)
+    expect(store.list().tags).toEqual([a])
   })
 })

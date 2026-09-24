@@ -282,6 +282,8 @@ describe('SessionSubsystem（主进程会话编排子系统）', () => {
     }
     expect(log).toEqual(['session:changed']) // 没有 tag:changed，也没有墓碑
     expect(sessions.list()).toEqual([])
+    // 写失败的那一步不领先于文件：TagStore 内存里关联还在（渲染进程以会话列表内连接，看不见它）
+    expect(tags.list().sessionTags).toEqual([{ sessionId: s.id, tagId: t.id }])
 
     log.length = 0
     await build().load()

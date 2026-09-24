@@ -1,7 +1,8 @@
 /**
  * 服务层（深模块）：tags.json 的加载、标签 CRUD、会话与标签的多对多关联、版本校验与原子写。
  * 目录以构造参数注入；不 import electron。文件不存在视为空集合（与 sessions.json 一致）。
- * 会话是否存在由编排层（接口层）核对，本模块只保证标签侧的约束。
+ * 会话是否存在由会话子系统核对，本模块只保证标签侧的约束。
+ * 变更经串行队列一个接一个执行，每次先按已提交的数据算出整份新数据写盘，成功才换内存并回调。
  */
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
@@ -15,6 +16,7 @@ import {
   type TagsFile,
 } from '@shared/models'
 import { readJson, writeJsonAtomic } from './jsonFile'
+import { createSerialQueue } from './serialQueue'
 
 const TAGS_FILE = 'tags.json'
 
@@ -26,6 +28,8 @@ export interface TagStoreDeps {
 export class TagStore {
   private tags: Tag[] = []
   private sessionTags: SessionTag[] = []
+  /** 变更一个接一个执行：每次都从前一次提交后的数据算起（见 serialQueue） */
+  private readonly queue = createSerialQueue()
   private readonly file: string
   private readonly onChanged: (result: TagListResult) => void
 
@@ -67,105 +71,124 @@ export class TagStore {
   }
 
   /** 同名（trim 后精确匹配）返回已有标签；颜色缺省按当前标签数对八色表轮转 */
-  async create(name: string, color?: TagColor): Promise<Tag> {
-    const trimmed = assertName(name)
-    const existing = this.findByName(trimmed)
-    if (existing) return existing
-    const tag: Tag = {
-      id: randomUUID(),
-      name: trimmed,
-      color: color ?? TAG_COLORS[this.tags.length % TAG_COLORS.length]!,
-      sortOrder: this.tags.reduce((max, t) => Math.max(max, t.sortOrder), 0) + 1,
-    }
-    this.tags.push(tag)
-    await this.save()
-    return tag
+  create(name: string, color?: TagColor): Promise<Tag> {
+    return this.queue.run(async () => {
+      const trimmed = assertName(name)
+      const existing = this.findByName(trimmed)
+      if (existing) return existing
+      const tag: Tag = {
+        id: randomUUID(),
+        name: trimmed,
+        color: color ?? TAG_COLORS[this.tags.length % TAG_COLORS.length]!,
+        sortOrder: this.tags.reduce((max, t) => Math.max(max, t.sortOrder), 0) + 1,
+      }
+      await this.commit([...this.tags, tag], this.sessionTags)
+      return tag
+    })
   }
 
   /** 改名 trim 后校验非空且不与其他标签撞名；颜色只允许八色之一 */
-  async update(id: string, patch: TagPatch): Promise<Tag> {
-    const tag = this.get(id)
-    const next: Tag = { ...tag }
-    if (patch.name !== undefined) {
-      const name = assertName(patch.name)
-      const other = this.findByName(name)
-      if (other && other.id !== id) throw new Error(`已有同名标签：${name}`)
-      next.name = name
-    }
-    if (patch.color !== undefined) next.color = assertColor(patch.color)
-    // hidden 是可选字段：true 落盘写键，false 删键（缺省 = 显示，见 sql.md「约定」可选字段缺省不写）
-    if (patch.hidden !== undefined) {
-      if (patch.hidden) next.hidden = true
-      else delete next.hidden
-    }
-    this.tags[this.tags.indexOf(tag)] = next
-    await this.save()
-    return next
+  update(id: string, patch: TagPatch): Promise<Tag> {
+    return this.queue.run(async () => {
+      const tag = this.get(id)
+      const next: Tag = { ...tag }
+      if (patch.name !== undefined) {
+        const name = assertName(patch.name)
+        const other = this.findByName(name)
+        if (other && other.id !== id) throw new Error(`已有同名标签：${name}`)
+        next.name = name
+      }
+      if (patch.color !== undefined) next.color = assertColor(patch.color)
+      // hidden 是可选字段：true 落盘写键，false 删键（缺省 = 显示，见 sql.md「约定」可选字段缺省不写）
+      if (patch.hidden !== undefined) {
+        if (patch.hidden) next.hidden = true
+        else delete next.hidden
+      }
+      await this.commit(
+        this.tags.map((t) => (t === tag ? next : t)),
+        this.sessionTags,
+      )
+      return next
+    })
   }
 
   /** 按 ids 顺序整体重排 sortOrder 为 1..n；ids 必须是当前全部标签 id 的一个排列，否则拒绝且不改动 */
-  async reorder(ids: readonly string[]): Promise<void> {
-    const current = new Set(this.tags.map((t) => t.id))
-    const given = new Set(ids)
-    if (
-      ids.length !== this.tags.length ||
-      given.size !== ids.length ||
-      ![...given].every((id) => current.has(id))
-    ) {
-      throw new Error('排序参数必须是全部标签 id 的一个排列')
-    }
-    const byId = new Map(this.tags.map((t) => [t.id, t]))
-    this.tags = ids.map((id, i) => ({ ...byId.get(id)!, sortOrder: i + 1 }))
-    await this.save()
+  reorder(ids: readonly string[]): Promise<void> {
+    return this.queue.run(async () => {
+      const current = new Set(this.tags.map((t) => t.id))
+      const given = new Set(ids)
+      if (
+        ids.length !== this.tags.length ||
+        given.size !== ids.length ||
+        ![...given].every((id) => current.has(id))
+      ) {
+        throw new Error('排序参数必须是全部标签 id 的一个排列')
+      }
+      const byId = new Map(this.tags.map((t) => [t.id, t]))
+      await this.commit(
+        ids.map((id, i) => ({ ...byId.get(id)!, sortOrder: i + 1 })),
+        this.sessionTags,
+      )
+    })
   }
 
   /** 删标签并解除其全部关联（一次原子写），会话本身保留 */
-  async remove(id: string): Promise<void> {
-    const tag = this.get(id)
-    this.tags = this.tags.filter((t) => t !== tag)
-    this.sessionTags = this.sessionTags.filter((st) => st.tagId !== id)
-    await this.save()
+  remove(id: string): Promise<void> {
+    return this.queue.run(async () => {
+      const tag = this.get(id)
+      await this.commit(
+        this.tags.filter((t) => t !== tag),
+        this.sessionTags.filter((st) => st.tagId !== id),
+      )
+    })
   }
 
   /** 幂等：已有关联不重复写 */
-  async attach(sessionId: string, tagId: string): Promise<void> {
-    this.get(tagId)
-    if (this.hasLink(sessionId, tagId)) return
-    this.sessionTags.push({ sessionId, tagId })
-    await this.save()
+  attach(sessionId: string, tagId: string): Promise<void> {
+    return this.queue.run(async () => {
+      this.get(tagId)
+      if (this.hasLink(sessionId, tagId)) return
+      await this.commit(this.tags, [...this.sessionTags, { sessionId, tagId }])
+    })
   }
 
   /** 不存在的关联静默 */
-  async detach(sessionId: string, tagId: string): Promise<void> {
-    if (!this.hasLink(sessionId, tagId)) return
-    this.sessionTags = this.sessionTags.filter(
-      (st) => !(st.sessionId === sessionId && st.tagId === tagId),
-    )
-    await this.save()
+  detach(sessionId: string, tagId: string): Promise<void> {
+    return this.queue.run(async () => {
+      if (!this.hasLink(sessionId, tagId)) return
+      await this.commit(
+        this.tags,
+        this.sessionTags.filter((st) => !(st.sessionId === sessionId && st.tagId === tagId)),
+      )
+    })
   }
 
-  /** 移除会话时由编排层调用：清掉该会话的全部关联 */
-  async detachAllOf(sessionId: string): Promise<void> {
-    const next = this.sessionTags.filter((st) => st.sessionId !== sessionId)
-    if (next.length === this.sessionTags.length) return
-    this.sessionTags = next
-    await this.save()
+  /** 移除会话时由会话子系统调用：清掉该会话的全部关联 */
+  detachAllOf(sessionId: string): Promise<void> {
+    return this.queue.run(async () => {
+      const next = this.sessionTags.filter((st) => st.sessionId !== sessionId)
+      if (next.length === this.sessionTags.length) return
+      await this.commit(this.tags, next)
+    })
   }
 
   /**
-   * 启动时由装配层在两份文件都加载后调用：清掉指向不存在会话或标签的关联（崩溃遗留），
+   * 启动时由会话子系统在两份文件都加载后调用：清掉指向不存在会话或标签的关联（崩溃遗留），
    * 落盘但不回调 onChanged（渲染进程尚未订阅）。返回清掉的条数。
    */
-  async pruneDangling(sessionIds: readonly string[]): Promise<number> {
-    const sessions = new Set(sessionIds)
-    const tagIds = new Set(this.tags.map((t) => t.id))
-    const kept = this.sessionTags.filter((st) => sessions.has(st.sessionId) && tagIds.has(st.tagId))
-    const removed = this.sessionTags.length - kept.length
-    if (removed === 0) return 0
-    this.sessionTags = kept
-    await this.write()
-    console.log(`[store] 已清理 ${removed} 条悬空的会话标签关联：${this.file}`)
-    return removed
+  pruneDangling(sessionIds: readonly string[]): Promise<number> {
+    return this.queue.run(async () => {
+      const sessions = new Set(sessionIds)
+      const tagIds = new Set(this.tags.map((t) => t.id))
+      const kept = this.sessionTags.filter(
+        (st) => sessions.has(st.sessionId) && tagIds.has(st.tagId),
+      )
+      const removed = this.sessionTags.length - kept.length
+      if (removed === 0) return 0
+      await this.commit(this.tags, kept, { silent: true })
+      console.log(`[store] 已清理 ${removed} 条悬空的会话标签关联：${this.file}`)
+      return removed
+    })
   }
 
   /** 找不到即抛错（message 面向用户可读） */
@@ -183,18 +206,20 @@ export class TagStore {
     return this.tags.find((t) => t.name === name)
   }
 
-  private async save(): Promise<void> {
-    await this.write()
-    this.onChanged(this.list())
-  }
-
-  private write(): Promise<void> {
-    const data: TagsFile = {
-      version: TAGS_FILE_VERSION,
-      tags: this.tags,
-      sessionTags: this.sessionTags,
-    }
-    return writeJsonAtomic(this.file, data)
+  /**
+   * 先写盘、成功才换内存再回调（silent 不回调，启动清理用）：写失败时内存仍与文件一致、不广播、错误原样抛 ——
+   * 先改内存的话，写失败后内存领先于文件，下一次任何成功落盘都会把这次失败的改动悄悄带进文件
+   */
+  private async commit(
+    tags: Tag[],
+    sessionTags: SessionTag[],
+    { silent = false }: { silent?: boolean } = {},
+  ): Promise<void> {
+    const data: TagsFile = { version: TAGS_FILE_VERSION, tags, sessionTags }
+    await writeJsonAtomic(this.file, data)
+    this.tags = tags
+    this.sessionTags = sessionTags
+    if (!silent) this.onChanged(this.list())
   }
 }
 
