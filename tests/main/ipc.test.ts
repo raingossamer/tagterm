@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { registerIpc, type IpcDeps } from '../../src/main/ipc'
@@ -9,14 +9,15 @@ import { TagStore } from '../../src/main/store/TagStore'
 import { Updater } from '../../src/main/updater/Updater'
 import { FakeAutoUpdater } from './fakeAutoUpdater'
 import { PtyManager } from '../../src/main/pty/PtyManager'
-import { AgentSubsystem } from '../../src/main/agent/AgentSubsystem'
+import type { AgentSubsystem } from '../../src/main/agent/AgentSubsystem'
 import { SessionSubsystem } from '../../src/main/session/SessionSubsystem'
 import { GlobalShortcut } from '../../src/main/shortcut/GlobalShortcut'
+import { FakeConpty } from './fakeConpty'
 import { FakeShortcutPort } from './fakeShortcutPort'
 import type { AutoLaunchStatus, PtyExitEvent, PtyOpenResult, TagListResult } from '@shared/ipc'
 import type { Session, SessionRuntime, Settings, Tag, UpdateStatus } from '@shared/models'
 import { createFakeIpcMain, type FakeIpcMain } from './fakeIpcMain'
-import { waitFor } from './helpers'
+import { createQuietAgent } from './quietAgent'
 
 describe('IPC 接口层', () => {
   let dir: string
@@ -31,11 +32,9 @@ describe('IPC 接口层', () => {
   const agentRemovals: string[] = []
   let autoUpdater: FakeAutoUpdater
   const updateStatuses: UpdateStatus[] = []
-  const output: Record<string, string> = {}
   const exits: PtyExitEvent[] = []
-  /** 假进程树：是否报告「shell 里有子进程」，以及被查询的次数 */
-  let hasChildren = false
-  let childQueries = 0
+  /** 假 ConPTY：node-pty 是真外部依赖，这里不起真实终端（真实终端的行为见 PtyManager / SessionSubsystem 测试） */
+  let conpty: FakeConpty
   /** 假登录项：开机自启状态 */
   let autoLaunch: AutoLaunchStatus = { enabled: false, blockedBySystem: false }
   /** 假打开目录端口（FolderPort）：记下要打开的路径；openPathError 非空即模拟打开失败（返回原因） */
@@ -55,42 +54,21 @@ describe('IPC 接口层', () => {
     await settings.load()
     tags = new TagStore(dir)
     await tags.load()
-    // 与生产同一条装配：AgentSubsystem 注入假件，PtyManager 的回调经 wrapPty 串上状态机与探针
-    agent = new AgentSubsystem({
-      dataDir: dir,
+    // 与生产同一条装配（PtyManager 的回调经 wrapPty 串上状态机与探针、会话子系统拿它们装配），只换真外部依赖：
+    // node-pty 换假 ConPTY；AgentSubsystem 不 start（不起 HookServer，hooks 状态在端口 0 下同样成立）、进程树为空
+    agent = createQuietAgent({
+      dir,
       sessions: () => store.list(),
       // 记录变化与删除（alive: false 墓碑）走同一条广播
       broadcast: (r) => (r.alive ? agentChanges.push(r) : agentRemovals.push(r.sessionId)),
-      notifications: { isSupported: () => false, show: () => {} },
-      badge: { setCounts: () => {} },
-      hookTargets: {
-        claude: {
-          agent: 'claude',
-          settingsPath: join(dir, 'claude-settings.json'),
-          createIfMissing: false,
-        },
-        codex: {
-          agent: 'codex',
-          settingsPath: join(dir, 'codex-hooks.json'),
-          createIfMissing: true,
-        },
-      },
-      // 假进程树：hasChildren 为真时报告一个子进程；探针定时器不触发（这里不测探针）
-      listSubtree: async () => {
-        childQueries += 1
-        return hasChildren ? [{ pid: 1, ppid: 0, name: 'ping.exe' }] : []
-      },
-      timers: { setTimer: () => 0, clearTimer: () => {} },
-      preferredPort: 0,
     })
-    await agent.start()
+    conpty = new FakeConpty()
     pty = new PtyManager(
       agent.wrapPty({
-        onData: (id, d) => {
-          output[id] = (output[id] ?? '') + d
-        },
+        onData: () => {},
         onExit: (e) => exits.push(e),
         isFile: existsSync,
+        spawnPty: conpty.spawn,
       }),
     )
     shortcutPort = new FakeShortcutPort()
@@ -136,8 +114,6 @@ describe('IPC 接口层', () => {
   afterEach(async () => {
     pty.killAll()
     await agent.stop()
-    hasChildren = false
-    childQueries = 0
     sessionBroadcasts = 0
     autoLaunch = { enabled: false, blockedBySystem: false }
     opened.length = 0
@@ -146,7 +122,6 @@ describe('IPC 接口层', () => {
     agentChanges.length = 0
     agentRemovals.length = 0
     updateStatuses.length = 0
-    for (const k of Object.keys(output)) delete output[k]
     rmSync(dir, { recursive: true, force: true })
   })
 
@@ -199,25 +174,13 @@ describe('IPC 接口层', () => {
     await expect(ipc.invoke('session:pick-directory')).resolves.toBe('D:\\picked')
   })
 
-  it('session:open-directory：把会话当前目录交给注入的 openPath —— 终端里 cd 过则是 cwdNow，否则固定目录；渲染进程只传会话 id；会话不存在 / id 非法 reject；openPath 返回错误说明 → reject「打不开目录：…」', async () => {
-    const s = (await ipc.invoke('session:create', { cwd: process.cwd() })) as Session
+  it('session:open-directory：渲染进程只传会话 id，交子系统打开会话目录；id 非法在接口层拒绝（路径解析与错误文案见 SessionSubsystem 测试）', async () => {
+    const s = (await ipc.invoke('session:create', { cwd: 'D:\\x' })) as Session
     await expect(ipc.invoke('session:open-directory', s.id)).resolves.toBeUndefined()
-    expect(opened).toEqual([process.cwd()])
+    expect(opened).toEqual(['D:\\x'])
 
-    // 终端跑起来并在里面 cd 到别处：主进程从提示符解析到的 cwdNow 优先
-    await ipc.invoke('pty:open', s.id, { cols: 80, rows: 24 })
-    ipc.send('agent:report-output', s.id, { tail: ['C:\\Windows>'], silentMs: 1500 })
-    await ipc.invoke('session:open-directory', s.id)
-    expect(opened.at(-1)).toBe('C:\\Windows')
-
-    await expect(ipc.invoke('session:open-directory', 'missing')).rejects.toThrow()
-    await expect(ipc.invoke('session:open-directory', '')).rejects.toThrow()
-    expect(opened).toHaveLength(2)
-
-    openPathError = 'Failed to open path'
-    await expect(ipc.invoke('session:open-directory', s.id)).rejects.toThrow(
-      '打不开目录：Failed to open path',
-    )
+    await expect(ipc.invoke('session:open-directory', '')).rejects.toThrow('会话 id 不能为空')
+    expect(opened).toHaveLength(1)
   })
 
   it('app:open-logs-dir：日志目录由主进程给定（渲染进程不传路径），不存在先建，再交注入的 openPath；打不开 → reject「打不开日志目录：…」', async () => {
@@ -237,79 +200,31 @@ describe('IPC 接口层', () => {
     await expect(ipc.invoke('app:list-shells')).resolves.toEqual(['cmd.exe', 'powershell.exe'])
   })
 
-  it('pty:open 按会话目录 / shell 起真实终端且幂等；写入 / 是否存活 / kill 经接口层生效', async () => {
-    const s = (await ipc.invoke('session:create', { cwd: process.cwd() })) as Session
-    const fileBefore = readFileSync(join(dir, 'sessions.json'), 'utf8')
-    const broadcastsBefore = sessionBroadcasts
-
-    const first = (await ipc.invoke('pty:open', s.id, { cols: 80, rows: 24 })) as PtyOpenResult
-    expect(first.created).toBe(true)
-    expect(first.pid).toBeGreaterThan(0)
-    const again = (await ipc.invoke('pty:open', s.id, { cols: 80, rows: 24 })) as PtyOpenResult
-    expect(again).toEqual({ created: false, pid: first.pid })
+  it('pty:open / write / resize / is-alive / kill 经接口层转给子系统（幂等、不写盘、等退出等规则见 SessionSubsystem 测试）', async () => {
+    const s = (await ipc.invoke('session:create', { cwd: 'D:\\x' })) as Session
+    const result = (await ipc.invoke('pty:open', s.id, { cols: 80, rows: 24 })) as PtyOpenResult
+    expect(result.created).toBe(true)
+    expect(conpty.spawns.map((x) => x.pid)).toEqual([result.pid])
     await expect(ipc.invoke('pty:is-alive', s.id)).resolves.toBe(true)
-    // 打开终端不写 sessions.json、不广播会话列表（原先每次打开都写 lastOpenedAt：没人读，却要整份写盘再广播一次）
-    expect(readFileSync(join(dir, 'sessions.json'), 'utf8')).toBe(fileBefore)
-    expect(sessionBroadcasts).toBe(broadcastsBefore)
 
-    ipc.send('pty:write', s.id, 'echo via-ipc\r')
-    await waitFor(() => (output[s.id] ?? '').includes('via-ipc'))
+    ipc.send('pty:write', s.id, 'dir\r')
     await ipc.invoke('pty:resize', s.id, { cols: 100, rows: 30 })
+    expect(conpty.writes).toEqual([[result.pid, 'dir\r']])
+    expect(conpty.resizes).toEqual([[result.pid, 100, 30]])
 
-    // pty:kill 等进程真正退出才返回：返回时退出事件已广播出去（重启终端靠这一点，否则新终端会被迟到的退出标成已退出）
-    await ipc.invoke('pty:kill', s.id)
-    expect(exits.filter((e) => e.sessionId === s.id)).toHaveLength(1)
+    const killing = ipc.invoke('pty:kill', s.id)
+    conpty.exit(result.pid)
+    await killing
+    expect(exits.map((e) => e.sessionId)).toEqual([s.id])
     await expect(ipc.invoke('pty:is-alive', s.id)).resolves.toBe(false)
-    await ipc.invoke('pty:kill', s.id) // 已经没在跑：立即返回，不再有退出事件
-    expect(exits.filter((e) => e.sessionId === s.id)).toHaveLength(1)
   })
 
-  it('pty:open 不存在的会话报错', async () => {
-    await expect(ipc.invoke('pty:open', 'missing', { cols: 80, rows: 24 })).rejects.toThrow(
-      /会话不存在/,
-    )
-  })
-
-  it('session:update 接受 cwd（trim 非空）；只改 name 不查子进程也不结束 pty', async () => {
-    const s = (await ipc.invoke('session:create', { cwd: process.cwd() })) as Session
+  it('session:update 的 cwd 在接口层 trim、不能为空', async () => {
+    const s = (await ipc.invoke('session:create', { cwd: 'D:\\x' })) as Session
     const moved = (await ipc.invoke('session:update', s.id, { cwd: ' D:\\y ' })) as Session
     expect(moved.cwd).toBe('D:\\y')
     expect(store.get(s.id).cwd).toBe('D:\\y')
     await expect(ipc.invoke('session:update', s.id, { cwd: '   ' })).rejects.toThrow('需要一个目录')
-
-    await ipc.invoke('session:update', s.id, { cwd: process.cwd() })
-    await ipc.invoke('pty:open', s.id, { cols: 80, rows: 24 })
-    hasChildren = true
-    const renamed = (await ipc.invoke('session:update', s.id, { name: 'idle-rename' })) as Session
-    expect(renamed.name).toBe('idle-rename')
-    expect(childQueries).toBe(0)
-    expect(pty.has(s.id)).toBe(true)
-  })
-
-  it('session:update 改 cwd / shell 时：shell 里有程序在跑 → reject 且不动；空闲 → 先结束 pty（exit 先到）再改，之后 pty:open 按新目录起', async () => {
-    const s = (await ipc.invoke('session:create', { cwd: process.cwd() })) as Session
-    await ipc.invoke('pty:open', s.id, { cols: 80, rows: 24 })
-    await waitFor(() => />/.test(output[s.id] ?? ''))
-
-    hasChildren = true
-    await expect(
-      ipc.invoke('session:update', s.id, { cwd: join(process.cwd(), 'tests') }),
-    ).rejects.toThrow('终端里有程序正在运行，退出后再修改目录或 Shell')
-    expect(store.get(s.id).cwd).toBe(process.cwd())
-    expect(pty.has(s.id)).toBe(true)
-
-    hasChildren = false
-    const moved = (await ipc.invoke('session:update', s.id, {
-      cwd: join(process.cwd(), 'tests'),
-    })) as Session
-    expect(exits.some((e) => e.sessionId === s.id)).toBe(true)
-    expect(pty.has(s.id)).toBe(false)
-    expect(moved.cwd).toBe(join(process.cwd(), 'tests'))
-
-    output[s.id] = ''
-    const reopened = (await ipc.invoke('pty:open', s.id, { cols: 80, rows: 24 })) as PtyOpenResult
-    expect(reopened.created).toBe(true)
-    await waitFor(() => (output[s.id] ?? '').includes('tests>'))
   })
 
   it('app:get-auto-launch / app:set-auto-launch 转发装配层注入的登录项回调；非布尔参数被拒绝', async () => {
@@ -386,16 +301,6 @@ describe('IPC 接口层', () => {
     await expect(ipc.invoke('app:pause-global-shortcut', 'yes')).rejects.toThrow(
       '暂停参数必须是布尔',
     )
-  })
-
-  it('session:remove 同时结束其 pty', async () => {
-    const s = (await ipc.invoke('session:create', { cwd: process.cwd() })) as Session
-    await ipc.invoke('pty:open', s.id, { cols: 80, rows: 24 })
-
-    await ipc.invoke('session:remove', s.id)
-    await waitFor(() => exits.some((e) => e.sessionId === s.id))
-    expect(pty.has(s.id)).toBe(false)
-    await expect(ipc.invoke('session:list')).resolves.toEqual([])
   })
 
   it('settings:get 返回当前设置；settings:update 以补丁合并后返回全量', async () => {
@@ -489,17 +394,14 @@ describe('IPC 接口层', () => {
     ).rejects.toThrow(/背景图片路径/)
   })
 
-  it('tag:create / list / update / remove 与 session-tag:attach / detach 经接口层落到 TagStore；attach 要求会话存在', async () => {
-    const s = (await ipc.invoke('session:create', { cwd: process.cwd() })) as Session
+  it('tag:create / list / update / remove 落到 TagStore，session-tag:attach / detach 经会话子系统（挂标签核对会话见 SessionSubsystem 测试）', async () => {
+    const s = (await ipc.invoke('session:create', { cwd: 'D:\\x' })) as Session
     const a = (await ipc.invoke('tag:create', 'simba')) as Tag
     const b = (await ipc.invoke('tag:create', 'java', '#D14343')) as Tag
     expect(a).toMatchObject({ name: 'simba', color: '#2F6FDB' })
     expect(b).toMatchObject({ name: 'java', color: '#D14343' })
 
     await ipc.invoke('session-tag:attach', s.id, a.id)
-    await expect(ipc.invoke('session-tag:attach', 'missing', a.id)).rejects.toThrow(
-      '会话不存在：missing',
-    )
     await expect(ipc.invoke('session-tag:attach', s.id, 'missing')).rejects.toThrow(
       '标签不存在：missing',
     )
@@ -563,22 +465,17 @@ describe('IPC 接口层', () => {
     )
   })
 
-  it('agent:list 经同一条装配拿到运行时记录：pty:open 后出现空闲记录，session:remove 清掉', async () => {
+  it('agent:list 转发运行时记录：经同一条装配，pty:open 后出现空闲记录（移除即清见 SessionSubsystem 测试）', async () => {
     await expect(ipc.invoke('agent:list')).resolves.toEqual([])
-    const s = (await ipc.invoke('session:create', { cwd: process.cwd() })) as Session
+    const s = (await ipc.invoke('session:create', { cwd: 'D:\\x' })) as Session
     await ipc.invoke('pty:open', s.id, { cols: 80, rows: 24 })
     await expect(ipc.invoke('agent:list')).resolves.toEqual([
       { sessionId: s.id, alive: true, agent: null, status: 'idle' },
     ])
-    await ipc.invoke('session:remove', s.id)
-    await waitFor(() => agentRemovals.includes(s.id))
-    await expect(ipc.invoke('agent:list')).resolves.toEqual([])
-    // 等这条 pty 真的退出再结束用例，别让 afterEach 的 killAll 撞上正在退出的 pty
-    await waitFor(() => exits.some((e) => e.sessionId === s.id))
   })
 
-  it('agent:report-output（单向）：合法报告交给子系统（cwdNow 更新）；非法参数 / 未知会话静默忽略', async () => {
-    const s = (await ipc.invoke('session:create', { cwd: process.cwd() })) as Session
+  it('agent:report-output（单向）：合法报告交子系统（cwdNow 更新）；非法参数在接口层静默忽略（未知会话的过滤见 SessionSubsystem 测试）', async () => {
+    const s = (await ipc.invoke('session:create', { cwd: 'D:\\x' })) as Session
     await ipc.invoke('pty:open', s.id, { cols: 80, rows: 24 })
     agentChanges.length = 0
 
@@ -586,7 +483,6 @@ describe('IPC 接口层', () => {
     expect(agentChanges.at(-1)).toMatchObject({ sessionId: s.id, cwdNow: 'C:\\Windows' })
 
     const count = agentChanges.length
-    ipc.send('agent:report-output', 'ghost', { tail: ['C:\\x>'], silentMs: 1500 })
     ipc.send('agent:report-output', s.id, { tail: 'C:\\x>', silentMs: 1500 })
     ipc.send('agent:report-output', s.id, { tail: ['C:\\x>'], silentMs: -1 })
     ipc.send('agent:report-output', s.id, { tail: new Array(51).fill('C:\\x>'), silentMs: 0 })
@@ -628,48 +524,18 @@ describe('IPC 接口层', () => {
     )
   })
 
-  it('session:remove 级联删掉该会话的标签关联（kill pty → 删会话 → 删关联）', async () => {
-    const s = (await ipc.invoke('session:create', { cwd: process.cwd() })) as Session
+  it('session:create 带 tagIds 经子系统逐个挂上；tagIds 不是字符串数组在接口层拒绝（挂标签的顺序与失败不回滚见 SessionSubsystem 测试）', async () => {
     const a = (await ipc.invoke('tag:create', 'simba')) as Tag
-    await ipc.invoke('session-tag:attach', s.id, a.id)
-
-    await ipc.invoke('session:remove', s.id)
+    const s = (await ipc.invoke('session:create', { cwd: 'D:\\x', tagIds: [a.id] })) as Session
     const result = (await ipc.invoke('tag:list')) as TagListResult
-    expect(result.sessionTags).toEqual([])
-    expect(result.tags).toEqual([a])
-  })
+    expect(result.sessionTags).toEqual([{ sessionId: s.id, tagId: a.id }])
 
-  it('session:create 带 tagIds：建会话后逐个 attach；tagIds 非字符串数组被拒绝；含不存在的标签 → reject 但会话已创建（不回滚）', async () => {
-    const a = (await ipc.invoke('tag:create', 'simba')) as Tag
-    const b = (await ipc.invoke('tag:create', 'java')) as Tag
-    const s = (await ipc.invoke('session:create', {
-      cwd: process.cwd(),
-      tagIds: [a.id, b.id],
-    })) as Session
-    const result = (await ipc.invoke('tag:list')) as TagListResult
-    expect(result.sessionTags).toEqual([
-      { sessionId: s.id, tagId: a.id },
-      { sessionId: s.id, tagId: b.id },
-    ])
-
-    await expect(ipc.invoke('session:create', { cwd: process.cwd(), tagIds: 'x' })).rejects.toThrow(
+    await expect(ipc.invoke('session:create', { cwd: 'D:\\x', tagIds: 'x' })).rejects.toThrow(
       '标签 id 列表格式不正确',
     )
-    await expect(
-      ipc.invoke('session:create', { cwd: process.cwd(), tagIds: [a.id, 5] }),
-    ).rejects.toThrow('标签 id 列表格式不正确')
-
-    await expect(
-      ipc.invoke('session:create', {
-        cwd: process.cwd(),
-        name: 'partial',
-        tagIds: [a.id, 'ghost'],
-      }),
-    ).rejects.toThrow('标签不存在：ghost')
-    const sessions = (await ipc.invoke('session:list')) as Session[]
-    const partial = sessions.find((x) => x.name === 'partial')!
-    expect(partial).toBeDefined()
-    const after = (await ipc.invoke('tag:list')) as TagListResult
-    expect(after.sessionTags).toContainEqual({ sessionId: partial.id, tagId: a.id })
+    await expect(ipc.invoke('session:create', { cwd: 'D:\\x', tagIds: [a.id, 5] })).rejects.toThrow(
+      '标签 id 列表格式不正确',
+    )
+    await expect(ipc.invoke('session:list')).resolves.toHaveLength(1)
   })
 })
