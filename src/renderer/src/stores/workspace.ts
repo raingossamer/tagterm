@@ -144,6 +144,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     await core?.restart(id)
   }
 
+  /** 设终端字号（配置导入套用文件里的字号）：委托核心，全部终端一起换、写回本机偏好；未 attach 时无副作用 */
+  function setFontSize(size: number): void {
+    core?.setFontSize(size)
+  }
+
   function toggleSide(): void {
     sideHidden.value = !sideHidden.value
   }
@@ -167,6 +172,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     restore,
     closeTab,
     restart,
+    setFontSize,
     toggleSide,
     setHovered,
   }

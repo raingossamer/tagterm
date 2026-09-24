@@ -6,6 +6,8 @@ import { DEFAULT_BACKGROUND } from '@shared/models'
 import SettingsModal from '../../../src/renderer/src/components/SettingsModal.vue'
 import { useSettingsStore } from '../../../src/renderer/src/stores/settings'
 import { useUpdateStore } from '../../../src/renderer/src/stores/update'
+import { useConfirmStore } from '../../../src/renderer/src/stores/confirm'
+import { installFakeWorkspace } from '../fakeWorkspace'
 import { installFakeApi, makeImageData, makeSettings, stubObjectUrls } from '../fakeApi'
 
 describe('SettingsModal', () => {
@@ -25,7 +27,7 @@ describe('SettingsModal', () => {
     return store
   }
 
-  it('左侧四段导航：缺省停在「外观」，点击切换内容区', async () => {
+  it('左侧六段导航：缺省停在「外观」，点击切换内容区', async () => {
     installFakeApi()
     const wrapper = mount(SettingsModal)
     await flushPromises()
@@ -35,6 +37,7 @@ describe('SettingsModal', () => {
       '启动',
       'Agent',
       '更新',
+      '导入导出',
       '关于',
     ])
     expect(wrapper.find('[data-test=appearance-section]').exists()).toBe(true)
@@ -545,5 +548,166 @@ describe('SettingsModal', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  describe('「导入导出」段（即时生效）', () => {
+    // 字号偏好存 localStorage：前一条用例设的字号别漏到下一条
+    beforeEach(() => localStorage.clear())
+
+    const IMPORT_RESULT = {
+      path: 'D:/exports/tagterm-config-20260924.json',
+      backupPath:
+        'C:/Users/test/AppData/Roaming/TagTerm/backups/tagterm-config-20260924-080000.json',
+      items: [
+        { key: 'tags' as const, outcome: 'applied' as const, message: '新建 1 个、更新 2 个' },
+        { key: 'launchCommands' as const, outcome: 'applied' as const },
+        { key: 'appearance' as const, outcome: 'unchanged' as const },
+        {
+          key: 'globalShortcut' as const,
+          outcome: 'failed' as const,
+          message: '该快捷键已被其他程序占用',
+        },
+        { key: 'autoLaunch' as const, outcome: 'absent' as const },
+        { key: 'hooks' as const, outcome: 'applied' as const },
+        { key: 'terminalFontSize' as const, outcome: 'applied' as const },
+      ],
+      terminalFontSize: 15,
+    }
+
+    // 重复打桩复用同一个替身（先清空调用记录），与 SessionGroups / ManageTagsModal 的测试同一写法
+    function stubConfirm(result: boolean) {
+      const confirm = useConfirmStore()
+      const spy = vi.isMockFunction(confirm.ask) ? vi.mocked(confirm.ask) : vi.spyOn(confirm, 'ask')
+      spy.mockReset()
+      spy.mockResolvedValue(result)
+      return spy
+    }
+
+    it('说明带什么 / 不带什么；「导出配置…」只交出当前终端字号，成功显示写到的路径，取消什么都不显示，失败红字', async () => {
+      const api = installFakeApi({
+        app: { exportConfig: vi.fn(async () => ({ path: 'D:/exports/a.json' })) },
+      })
+      const { core } = installFakeWorkspace()
+      core.setFontSize(18)
+      const wrapper = mount(SettingsModal)
+      await flushPromises()
+      await wrapper.find('[data-test=settings-nav-config]').trigger('click')
+
+      expect(wrapper.find('[data-test=config-immediate]').text()).toContain('即时生效')
+      expect(wrapper.find('[data-test=config-scope]').text()).toContain(
+        '不包含：会话、会话的标签、背景图片',
+      )
+      await wrapper.find('[data-test=config-export]').trigger('click')
+      await flushPromises()
+      expect(api.app.exportConfig).toHaveBeenCalledWith({ terminalFontSize: 18 })
+      expect(wrapper.find('[data-test=config-exported]').text()).toBe('已导出到 D:/exports/a.json')
+
+      vi.mocked(api.app.exportConfig).mockResolvedValueOnce(null)
+      await wrapper.find('[data-test=config-export]').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-test=config-exported]').text()).toBe('已导出到 D:/exports/a.json')
+
+      vi.mocked(api.app.exportConfig).mockRejectedValueOnce(
+        new Error('EPERM: operation not permitted'),
+      )
+      await wrapper.find('[data-test=config-export]').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-test=settings-error]').text()).toBe(
+        'EPERM: operation not permitted',
+      )
+    })
+
+    it('「导入配置…」先经应用内确认弹窗（取消不调）；确认后逐项显示结果与备份路径，套用字号、重取启动 / Agent 两段状态、外观草稿重置为新保存的值', async () => {
+      const api = installFakeApi({
+        app: {
+          importConfig: vi.fn(async () => {
+            // 主进程应用完会广播 settings:changed：这里直接把 store 的已保存值换掉
+            useSettingsStore().settings = makeSettings({
+              background: { ...DEFAULT_BACKGROUND, blurPx: 9 },
+            })
+            return IMPORT_RESULT
+          }),
+          getGlobalShortcut: vi
+            .fn()
+            .mockResolvedValueOnce({ enabled: true, accelerator: 'Ctrl+Alt+T', registered: true })
+            .mockResolvedValueOnce({ enabled: true, accelerator: 'Ctrl+Alt+Y', registered: true }),
+        },
+      })
+      const { workspace } = installFakeWorkspace()
+      const wrapper = mount(SettingsModal)
+      await flushPromises()
+      await wrapper.find('[data-test=settings-nav-config]').trigger('click')
+
+      const confirm = stubConfirm(false)
+      await wrapper.find('[data-test=config-import]').trigger('click')
+      await flushPromises()
+      expect(confirm).toHaveBeenCalledTimes(1)
+      expect(confirm.mock.calls[0]![0]).toContain('标签按名合并')
+      expect(confirm.mock.calls[0]![0]).toContain('导入前会先自动备份')
+      expect(api.app.importConfig).not.toHaveBeenCalled()
+
+      stubConfirm(true)
+      await wrapper.find('[data-test=config-import]').trigger('click')
+      await flushPromises()
+      expect(api.app.importConfig).toHaveBeenCalledWith({ terminalFontSize: 14 })
+      expect(wrapper.find('[data-test=config-imported]').text()).toBe(
+        '已导入 D:/exports/tagterm-config-20260924.json',
+      )
+      expect(wrapper.findAll('[data-test=config-import-result] li').map((li) => li.text())).toEqual(
+        [
+          '标签：已应用（新建 1 个、更新 2 个）',
+          '唤起命令：已应用',
+          '外观参数：与本机相同，未改',
+          '全局快捷键：失败（该快捷键已被其他程序占用）',
+          '开机自启：文件里没有，未改',
+          'Agent hooks 开关：已应用',
+          '终端字号：已应用',
+        ],
+      )
+      expect(wrapper.find('[data-test=config-item-globalShortcut]').classes()).toContain('failed')
+      expect(wrapper.find('[data-test=config-backup]').text()).toBe(
+        '导入前的配置已备份到 C:/Users/test/AppData/Roaming/TagTerm/backups/tagterm-config-20260924-080000.json',
+      )
+      expect(workspace.fontSize).toBe(15)
+      expect(api.app.getAutoLaunch).toHaveBeenCalledTimes(2)
+      expect(api.agent.getHooksStatus).toHaveBeenCalledTimes(2)
+      await wrapper.find('[data-test=settings-nav-startup]').trigger('click')
+      expect(wrapper.find('[data-test=global-shortcut-key]').text()).toBe('Ctrl+Alt+Y')
+
+      // 外观草稿已重置：此时「保存设置」提交的是导入后的值，不会把它冲掉
+      await wrapper.find('[data-test=settings-save]').trigger('click')
+      await flushPromises()
+      expect(api.settings.update).toHaveBeenCalledWith({
+        background: { ...DEFAULT_BACKGROUND, blurPx: 9 },
+      })
+    })
+
+    it('导入进行中两个按钮置灰，失败走弹窗底部红字', async () => {
+      let finish: (value: null) => void = () => {}
+      const api = installFakeApi({
+        app: {
+          importConfig: vi.fn(() => new Promise<null>((resolve) => (finish = resolve))),
+        },
+      })
+      installFakeWorkspace()
+      const wrapper = mount(SettingsModal)
+      await flushPromises()
+      await wrapper.find('[data-test=settings-nav-config]').trigger('click')
+      stubConfirm(true)
+
+      await wrapper.find('[data-test=config-import]').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-test=config-import]').attributes('disabled')).toBeDefined()
+      expect(wrapper.find('[data-test=config-export]').attributes('disabled')).toBeDefined()
+      finish(null)
+      await flushPromises()
+      expect(wrapper.find('[data-test=config-import]').attributes('disabled')).toBeUndefined()
+      expect(wrapper.find('[data-test=config-import-result]').exists()).toBe(false)
+
+      vi.mocked(api.app.importConfig).mockRejectedValueOnce(new Error('不是 TagTerm 配置文件'))
+      await wrapper.find('[data-test=config-import]').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-test=settings-error]').text()).toBe('不是 TagTerm 配置文件')
+    })
   })
 })
