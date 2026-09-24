@@ -40,6 +40,16 @@ export interface GlobalShortcutStatus extends GlobalShortcutConfig {
   registered: boolean
 }
 
+/** 配置导入导出：渲染进程只交出终端字号（它存在渲染进程 localStorage），不传任何路径 */
+export interface ConfigPrefs {
+  terminalFontSize: number
+}
+
+/** 导出结果：写到的文件 */
+export interface ConfigExportResult {
+  path: string
+}
+
 /** 新命令可不带 id，由主进程分配 */
 export type LaunchCommandInput = Omit<LaunchCommand, 'id'> & { id?: string }
 
@@ -119,6 +129,7 @@ export interface IpcInvokeMap {
   'app:get-global-shortcut': { args: []; result: GlobalShortcutStatus } // 全局快捷键配置与是否注册上
   'app:set-global-shortcut': { args: [config: GlobalShortcutConfig]; result: GlobalShortcutStatus } // 先注册新的，被占用 reject 且旧的保留、不落盘；成功才写 settings.json
   'app:pause-global-shortcut': { args: [paused: boolean]; result: void } // 设置里录新键位期间暂停当前热键（只在内存）
+  'app:export-config': { args: [prefs: ConfigPrefs]; result: ConfigExportResult | null } // 导出用户偏好：主进程弹保存对话框（取消为 null）→ 原子写 → 返回路径
   'session:list': { args: []; result: Session[] }
   'session:create': { args: [input: CreateSessionInput]; result: Session }
   'session:update': { args: [id: string, patch: SessionPatch]; result: Session } // 含 cwd / shell 时：有程序在跑 reject，空闲先 kill 再改

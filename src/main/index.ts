@@ -29,6 +29,8 @@ import { createProductionAgent } from './agent/production'
 import { electronBadge, electronNotifications } from './platform/agentPorts'
 import { electronFolders } from './platform/folderPort'
 import { electronShortcuts } from './platform/shortcutPort'
+import { electronConfigDialogs, fixedConfigDialogs } from './platform/configDialogs'
+import { ConfigService } from './config/ConfigService'
 import { SessionSubsystem, type FolderPort } from './session/SessionSubsystem'
 import { GlobalShortcut } from './shortcut/GlobalShortcut'
 import { decideSummon } from './shortcut/summon'
@@ -331,6 +333,23 @@ app.whenReady().then(async () => {
   agent = subsystem
   ptyManager = pty
 
+  // 配置导入导出：偏好散在五处，都以结构子集 / 端口注入；烟测不弹对话框，导出 / 导入落在烟测数据目录的固定路径
+  const config = new ConfigService({
+    settings,
+    tags,
+    shortcut,
+    autoLaunch: { get: getAutoLaunch, set: setAutoLaunch },
+    hooks: subsystem,
+    dialogs: isSmoke
+      ? fixedConfigDialogs({
+          save: join(dataDir, 'smoke-config-export.json'),
+          open: join(dataDir, 'smoke-config-import.json'),
+        })
+      : electronConfigDialogs(() => mainWindow),
+    appVersion: app.getVersion(),
+    dataDir,
+  })
+
   registerIpc(ipcMain, {
     version: app.getVersion(),
     osBuild: osBuildNumber(),
@@ -340,6 +359,7 @@ app.whenReady().then(async () => {
     updater,
     agent: subsystem,
     shortcut,
+    config,
     dataDir,
     logsDir,
     pickDirectory,

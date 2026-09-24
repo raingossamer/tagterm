@@ -178,6 +178,7 @@ const api = {
     getGlobalShortcut: () => ok({ enabled: true, accelerator: 'Ctrl+Alt+T', registered: true }),
     setGlobalShortcut: (config) => ok({ ...config, registered: config.enabled }),
     pauseGlobalShortcut: () => ok(undefined),
+    exportConfig: () => ok({ path: 'C:\\Users\\demo\\Documents\\tagterm-config-20260924.json' }),
     onFocusTerminal: on('app:focus-terminal'),
     onOpenSettings: on('app:open-settings'),
     onSelectSession: on('app:select-session'),
