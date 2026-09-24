@@ -22,6 +22,14 @@ function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
+/**
+ * 监听失败是不是「整段都起不来」：EACCES 说明端口落在 Windows 的动态保留端口段（Hyper-V / WSL 按 100 个一段划走），
+ * 同段相邻端口一样起不来，逐个试 20 次只是白等（本机实测每次 5–7 ms，整段 100 多毫秒）；被占（EADDRINUSE）才值得顺延一个
+ */
+export function isSegmentBlocked(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException | null)?.code === 'EACCES'
+}
+
 /** 路径 → 来源：只认契约表里的 agent */
 function agentOfPath(path: string): HookAgent | null {
   if (!path.startsWith(HOOK_PATH_PREFIX)) return null
@@ -41,8 +49,9 @@ export class HookServer {
   }
 
   /**
-   * 从 preferredPort 起最多试 maxPortAttempts 个端口；整段都起不来（被占，或整段落进 Windows 的保留端口段 → EACCES）
-   * 再依次换 fallbacks 里的起点，换段时记一行日志。0 = 随机端口，只试一次。返回实际端口，全部失败抛错
+   * 从 preferredPort 起最多试 maxPortAttempts 个端口（被占顺延一个；EACCES 说明整段落进 Windows 的保留端口段，
+   * 立即换段不再逐个试）；整段都起不来再依次换 fallbacks 里的起点，换段时记一行日志。0 = 随机端口，只试一次。
+   * 返回实际端口，全部失败抛错
    */
   async start(preferredPort: number, fallbacks: readonly number[] = []): Promise<number> {
     if (this.server) return this.port
@@ -60,6 +69,7 @@ export class HookServer {
           return this.port
         } catch (err) {
           lastError = err
+          if (isSegmentBlocked(err)) break
         }
       }
     }

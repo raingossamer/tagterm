@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createServer, request, type Server } from 'node:http'
 import type { HookAgent } from '@shared/ipc'
-import { HookServer } from '../../src/main/agent/HookServer'
+import { HookServer, isSegmentBlocked } from '../../src/main/agent/HookServer'
 
 interface Response {
   status: number
@@ -117,6 +117,15 @@ describe('HookServer（回环 HTTP，接收 Claude / Codex hooks 的 stdin JSON�
 
     await expect(server.start(taken, [taken])).rejects.toThrow(/HookServer 无法监听端口/)
     warn.mockRestore()
+  })
+
+  it('EACCES（端口落在 Windows 的保留端口段）算整段起不来，立即换段不逐个顺延；被占（EADDRINUSE）才顺延一个', () => {
+    const errorWithCode = (code: string): NodeJS.ErrnoException =>
+      Object.assign(new Error(`listen ${code}`), { code })
+    expect(isSegmentBlocked(errorWithCode('EACCES'))).toBe(true)
+    expect(isSegmentBlocked(errorWithCode('EADDRINUSE'))).toBe(false)
+    expect(isSegmentBlocked(new Error('别的错'))).toBe(false)
+    expect(isSegmentBlocked(null)).toBe(false)
   })
 })
 
