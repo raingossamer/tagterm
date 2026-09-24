@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SessionStore } from '../../src/main/store/SessionStore'
@@ -183,5 +191,61 @@ describe('SessionStore', () => {
 
     expect(store.list()).toEqual(before)
     expect(changed).toHaveLength(0)
+  })
+
+  it('写盘失败：内存保持改之前、不回调、原样抛；之后别的变更落盘也不会把失败的改动带进文件', async () => {
+    const changed: Session[][] = []
+    const store = new SessionStore(dir, { onChanged: (list) => changed.push(list) })
+    await store.load()
+    const a = await store.create({ cwd: 'D:\\a' })
+    const b = await store.create({ cwd: 'D:\\b' })
+    const before = store.list()
+    changed.length = 0
+    const file = join(dir, 'sessions.json')
+    chmodSync(file, 0o444) // 只读：原子写最后一步 rename 覆盖它时 EPERM，原内容保留
+    try {
+      await expect(store.remove(a.id)).rejects.toThrow(/EPERM/)
+      await expect(store.update(b.id, { name: '新名' })).rejects.toThrow(/EPERM/)
+      await expect(store.create({ cwd: 'D:\\c' })).rejects.toThrow(/EPERM/)
+      await expect(store.reorder([b.id, a.id])).rejects.toThrow(/EPERM/)
+    } finally {
+      chmodSync(file, 0o666)
+    }
+    expect(store.list()).toEqual(before)
+    expect(changed).toEqual([])
+
+    await store.update(a.id, { name: '甲' })
+    const saved = JSON.parse(readFileSync(file, 'utf8')).sessions as Session[]
+    expect(saved.map((s) => [s.id, s.name, s.sortOrder])).toEqual([
+      [a.id, '甲', 1],
+      [b.id, 'b', 2],
+    ])
+  })
+
+  it('并发的变更排队执行、互不覆盖：同时新建两个、同时改两个名字，内存与文件里都齐全', async () => {
+    const store = new SessionStore(dir)
+    await store.load()
+    const [a, b] = await Promise.all([
+      store.create({ cwd: 'D:\\a' }),
+      store.create({ cwd: 'D:\\b' }),
+    ])
+    expect([a.sortOrder, b.sortOrder]).toEqual([1, 2])
+    await Promise.all([store.update(a.id, { name: '甲' }), store.update(b.id, { name: '乙' })])
+
+    expect(store.list().map((s) => s.name)).toEqual(['甲', '乙'])
+    const reloaded = new SessionStore(dir)
+    await reloaded.load()
+    expect(reloaded.list()).toEqual(store.list())
+  })
+
+  it('排队中的变更按前一个提交后的数据判定：删掉之后再改同一个会话，后者抛「会话不存在」', async () => {
+    const store = new SessionStore(dir)
+    await store.load()
+    const a = await store.create({ cwd: 'D:\\a' })
+    const removing = store.remove(a.id)
+    const renaming = store.update(a.id, { name: '甲' })
+    await removing
+    await expect(renaming).rejects.toThrow(`会话不存在：${a.id}`)
+    expect(store.list()).toEqual([])
   })
 })
