@@ -68,7 +68,7 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
     expect(pty.spawnCount(a.id)).toBe(1)
   })
 
-  it('setWebglAllowed 透传给实例池：设了背景图（不允许）时当前终端退回 DOM 渲染，新选中的也不开 WebGL', async () => {
+  it('setWebglAllowed 透传给实例池：不允许时当前终端退回 DOM 渲染，新选中的也不开 WebGL', async () => {
     await core.select(a.id)
     expect(terminals[0]!.isWebgl).toBe(true)
     core.setWebglAllowed(false)

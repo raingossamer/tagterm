@@ -7,6 +7,9 @@ settings:
 overrides:
   app-builder-lib>@electron/get: 3.1.0
 
+patchedDependencies:
+  '@xterm/addon-webgl@0.19.0': 6b3a0596e427449438e0f2f432749f3b53634ff224346689e0298314d060abf4
+
 importers:
 
   .:
@@ -44,7 +47,7 @@ importers:
         version: 0.9.0
       '@xterm/addon-webgl':
         specifier: 0.19.0
-        version: 0.19.0
+        version: 0.19.0(patch_hash=6b3a0596e427449438e0f2f432749f3b53634ff224346689e0298314d060abf4)
       '@xterm/xterm':
         specifier: 6.0.0
         version: 6.0.0
@@ -3537,7 +3540,7 @@ snapshots:
 
   '@xterm/addon-unicode11@0.9.0': {}
 
-  '@xterm/addon-webgl@0.19.0': {}
+  '@xterm/addon-webgl@0.19.0(patch_hash=6b3a0596e427449438e0f2f432749f3b53634ff224346689e0298314d060abf4)': {}
 
   '@xterm/xterm@6.0.0': {}
 

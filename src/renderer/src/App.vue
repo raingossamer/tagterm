@@ -5,7 +5,7 @@
 // 「正被查看」的会话由 useViewedSession 在当前页 / 焦点 / 可见性变化时上报主进程；
 // 装配会话生命周期核心 TerminalWorkspace：provide 给 TerminalPane / SideHead（宿主操作），attachCore 给 workspace store（快照镜像）。
 // 选中 / 关页 / 重启 / 移除的编排全在核心里，这里只做接线
-import { onMounted, onUnmounted, provide, ref, watch } from 'vue'
+import { onMounted, onUnmounted, provide, ref } from 'vue'
 import type { Session } from '@shared/models'
 import type { Unsubscribe } from '@shared/api'
 import AppBackground from './components/AppBackground.vue'
@@ -58,12 +58,8 @@ const core = new TerminalWorkspace({
   reportOutput: (id, report) => window.tagterm.agent.reportOutput(id, report),
 })
 provide(TERMINAL_WORKSPACE_KEY, core)
-// 有全局背景图（含设置里的实时预览）时终端改用 DOM 渲染：终端区透出背景后，WebGL 会给暗淡字垫不透明黑底
-watch(
-  () => settings.backgroundImage,
-  (image) => core.setWebglAllowed(!image),
-  { immediate: true },
-)
+// 有背景图时不再退回 DOM 渲染：WebGL 给暗淡字 / 斜体垫黑底的根因在 addon-webgl 的背景矩形判定，已打补丁（patches/），
+// 有无背景图都用同一套渲染器
 const detachCore = workspace.attachCore(core)
 useViewedSession()
 

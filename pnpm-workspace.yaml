@@ -16,3 +16,6 @@ allowBuilds:
 # pnpm 会给它解析到 3.0.0 导致打包时 "Cannot read properties of undefined (reading 'ReadWrite')"
 overrides:
   'app-builder-lib>@electron/get': '3.1.0'
+
+patchedDependencies:
+  '@xterm/addon-webgl@0.19.0': patches/@xterm__addon-webgl@0.19.0.patch
