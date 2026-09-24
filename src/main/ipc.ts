@@ -103,8 +103,8 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   handle('app:get-auto-launch', () => deps.getAutoLaunch())
   handle('app:set-auto-launch', (enabled) => deps.setAutoLaunch(assertAutoLaunch(enabled)))
   handle('app:get-global-shortcut', () => deps.shortcut.status())
-  // 编排：先注册新键位（被占用 reject，旧的保留、不落盘）→ 成功才写 settings.json；落盘失败把注册换回去再抛，
-  // 保证文件里的键位一定注册过
+  // 编排：先注册新键位（被占用 reject，旧的保留、不落盘）→ 成功才写 settings.json；落盘失败把注册换回旧配置再抛
+  // （设置的内存也没动：SettingsStore 写盘成功才改内存），保证文件里的键位一定注册过
   handle('app:set-global-shortcut', async (config) => {
     const next = assertGlobalShortcut(config)
     const previous = deps.settings.getGlobalShortcut()
@@ -112,7 +112,7 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
     try {
       await deps.settings.setGlobalShortcut(next)
     } catch (err) {
-      deps.shortcut.apply(previous)
+      deps.shortcut.revert(previous)
       throw err
     }
     return deps.shortcut.status()

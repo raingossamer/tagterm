@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SettingsStore } from '../../src/main/store/SettingsStore'
@@ -128,6 +128,30 @@ describe('SettingsStore', () => {
     expect(reloaded.get()).toEqual(store.get())
   })
 
+  it('update 写盘失败：内存保持改之前的值、不回调；之后别的变更落盘也不会把没写进去的补丁带进文件', async () => {
+    const received: Settings[] = []
+    const store = new SettingsStore(dir, {
+      seedCommands: ['claude'],
+      onChanged: (settings) => received.push(settings),
+    })
+    await store.load()
+    const before = store.get()
+    const file = join(dir, 'settings.json')
+    chmodSync(file, 0o444) // 只读：原子写最后一步 rename 覆盖它时 EPERM，原内容保留
+    try {
+      await expect(
+        store.update({ background: { ...before.background, imagePath: 'D:/bg.png' } }),
+      ).rejects.toThrow(/EPERM/)
+    } finally {
+      chmodSync(file, 0o666)
+    }
+    expect(store.get()).toEqual(before)
+    expect(received).toEqual([])
+
+    await store.update({ launchCommands: [] })
+    expect(JSON.parse(readFileSync(file, 'utf8')).background.imagePath).toBeNull()
+  })
+
   describe('全局快捷键（可选字段 globalShortcut，settings.json 仍为 v2）', () => {
     const readFile = () => JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'))
 
@@ -167,6 +191,30 @@ describe('SettingsStore', () => {
       await reloaded.setGlobalShortcut({ enabled: true, accelerator: 'Ctrl+Alt+T' })
       expect('globalShortcut' in readFile()).toBe(false)
       expect(reloaded.get().globalShortcut).toBeUndefined()
+    })
+
+    it('写盘失败：内存保持改之前的值（之后别的变更落盘也不会把没写进去的键位带进文件）', async () => {
+      const received: Settings[] = []
+      const store = new SettingsStore(dir, {
+        seedCommands: ['claude'],
+        onChanged: (settings) => received.push(settings),
+      })
+      await store.load()
+      const file = join(dir, 'settings.json')
+      chmodSync(file, 0o444) // 只读：原子写最后一步 rename 覆盖它时 EPERM，原内容保留
+      try {
+        await expect(
+          store.setGlobalShortcut({ enabled: true, accelerator: 'Ctrl+Alt+Y' }),
+        ).rejects.toThrow(/EPERM/)
+      } finally {
+        chmodSync(file, 0o666)
+      }
+      expect(store.getGlobalShortcut()).toEqual({ enabled: true, accelerator: 'Ctrl+Alt+T' })
+      expect(store.get().globalShortcut).toBeUndefined()
+      expect(received).toEqual([])
+
+      await store.update({ launchCommands: [] })
+      expect('globalShortcut' in readFile()).toBe(false)
     })
 
     it('文件里的 globalShortcut 不合法（键位串不对、enabled 不是布尔）：当缺省处理，不拒绝加载', async () => {
