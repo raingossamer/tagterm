@@ -20,6 +20,18 @@ import { createSerialQueue } from './serialQueue'
 
 const TAGS_FILE = 'tags.json'
 
+/** 配置导入给的一条标签（不带 id，按名找本机的） */
+export interface TagImportEntry {
+  name: string
+  color: TagColor
+  hidden?: boolean
+}
+
+export interface TagImportResult {
+  created: number
+  updated: number
+}
+
 export interface TagStoreDeps {
   /** 每次变更落盘后回调全量数据，由装配层广播 tag:changed（启动清理不回调） */
   onChanged?: (result: TagListResult) => void
@@ -191,6 +203,47 @@ export class TagStore {
     })
   }
 
+  /**
+   * 配置导入的「按名合并」（一次原子写、一次回调）：给的每一条按名（trim 后精确匹配，与唯一性同一规则）找本机标签，
+   * 找到的沿用它的 id（会话关联不动），颜色与隐藏用给的；没找到的新建；给的按顺序排在前（sortOrder 1..k），
+   * 本机独有的按原顺序接在后。不删任何标签或关联。与本机完全一样时不写盘、不回调。返回新建 / 更新的条数
+   */
+  importByName(entries: readonly TagImportEntry[]): Promise<TagImportResult> {
+    return this.queue.run(async () => {
+      const byName = new Map(this.tags.map((t) => [t.name, t]))
+      const merged: Tag[] = []
+      const seen = new Set<string>()
+      let created = 0
+      let updated = 0
+      for (const entry of entries) {
+        const name = assertName(entry.name)
+        if (seen.has(name)) throw new Error(`标签重名：${name}`)
+        seen.add(name)
+        const existing = byName.get(name)
+        const next: Tag = {
+          id: existing?.id ?? randomUUID(),
+          name,
+          color: assertColor(entry.color),
+          sortOrder: merged.length + 1,
+        }
+        if (entry.hidden) next.hidden = true
+        if (!existing) created += 1
+        else if (!isSameTag(existing, next)) updated += 1
+        merged.push(next)
+      }
+      const taken = new Set(merged.map((t) => t.id))
+      const rest = [...this.tags]
+        .sort((a, b) => a.sortOrder - b.sortOrder)
+        .filter((t) => !taken.has(t.id))
+      for (const tag of rest) merged.push({ ...tag, sortOrder: merged.length + 1 })
+      const isUnchanged =
+        merged.length === this.tags.length && merged.every((t, i) => isSameTag(t, this.tags[i]!))
+      if (isUnchanged) return { created: 0, updated: 0 }
+      await this.commit(merged, this.sessionTags)
+      return { created, updated }
+    })
+  }
+
   /** 找不到即抛错（message 面向用户可读） */
   get(id: string): Tag {
     const tag = this.tags.find((t) => t.id === id)
@@ -221,6 +274,17 @@ export class TagStore {
     this.sessionTags = sessionTags
     if (!silent) this.onChanged(this.list())
   }
+}
+
+/** 两条标签记录完全一样（id、名、色、隐藏、排序） */
+function isSameTag(a: Tag, b: Tag): boolean {
+  return (
+    a.id === b.id &&
+    a.name === b.name &&
+    a.color === b.color &&
+    (a.hidden ?? false) === (b.hidden ?? false) &&
+    a.sortOrder === b.sortOrder
+  )
 }
 
 function assertColor(color: string): TagColor {
