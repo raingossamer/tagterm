@@ -1,3 +1,5 @@
-* text=auto
+# 文本文件在任何机器上检出都是 LF：Prettier 3 按 LF 检查（endOfLine 缺省 lf），
+# 而 Windows 的 Git 缺省 core.autocrlf=true 会把检出转成 CRLF —— 发布流水线（windows-latest）的 format:check 因此整片报错
+* text=auto eol=lf
 *.ico binary
 *.png binary
