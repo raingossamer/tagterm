@@ -4,7 +4,6 @@
  * 会话生命周期 = 应用生命周期：关窗只隐藏到托盘；托盘「退出」与 before-quit 都 killAll。
  */
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage } from 'electron'
-import { autoUpdater } from 'electron-updater'
 import { existsSync } from 'node:fs'
 import { release, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -188,9 +187,10 @@ function quitApp(): void {
   app.quit()
 }
 
-// 检查更新：更新源见 electron-builder.yml 的 publish；只提示不自动下载，安装前结束全部终端
+// 检查更新：更新源见 electron-builder.yml 的 publish；只提示不自动下载，安装前结束全部终端。
+// electron-updater 首次用到（启动 10 s 后的自动检查或用户点检查）才加载：它的 require 要 60 多毫秒，不该拖慢启动
 const updater = new Updater({
-  autoUpdater,
+  loadAutoUpdater: () => import('electron-updater').then((m) => m.autoUpdater),
   currentVersion: app.getVersion(),
   onStatus: (status) => broadcast('update:status', status),
   beforeInstall: () => {
