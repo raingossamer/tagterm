@@ -437,7 +437,7 @@ const FOCUS_TERMINAL = `(() => {
   return document.activeElement?.tagName ?? null
 })()`
 
-/** 设置弹窗（由左栏齿轮打开）：四段导航 + 全局背景往返（设图 → 背景层出现 → 移除）+ 检查更新 */
+/** 设置弹窗（由左栏齿轮打开）：四段导航 + 全局背景往返（设图 → 背景层出现 → 移除）+ 检查更新（必须先出现「检查中」） */
 const SETTINGS_SCRIPT = (pngPath: string): string => `(async () => {
   const api = window.tagterm
   const $ = (sel) => document.querySelector(sel)
@@ -511,11 +511,14 @@ const SETTINGS_SCRIPT = (pngPath: string): string => `(async () => {
   await sleep(50)
   $('[data-test=settings-nav-update]')?.click()
   await sleep(50)
-  // 检查更新：开发模式下 electron-updater 报「未打包」→ error；打包版对着可达的更新源 → none / available
+  // 检查更新：开发模式下 electron-updater 报「未打包」→ error；打包版对着可达的更新源 → none / available（取决于网络，只作排查）。
+  // 进门槛的是「先出现过检查中」：Updater 只在 electron-updater 加载成功、挂好事件之后才发它，与网络无关 ——
+  // 0.3.10 / 0.3.11 加载就失败、直接 error，原先把 error 也算作「结束」放了过去
   const updateStatuses = []
   api.update.onStatus((s) => updateStatuses.push(s))
   $('[data-test=update-check]')?.click()
   const updateSettled = await waitFor(() => updateStatuses.some((s) => ['none', 'available', 'error'].includes(s.state)), 15000)
+  const updateCheckStarted = updateStatuses.some((s) => s.state === 'checking')
   const updateStatus = updateStatuses[updateStatuses.length - 1] ?? null
   const updateText = $('[data-test=update-status]')?.textContent ?? null
   // 打包版对着托管了更高版本的更新源：点「下载」→ 进度 → downloaded（不点安装，安装留人工验收）
@@ -532,7 +535,7 @@ const SETTINGS_SCRIPT = (pngPath: string): string => `(async () => {
   $('[data-test=settings-cancel]')?.click()
   await sleep(50)
   const modalClosed = !$('[data-test=settings-modal]')
-  return { modalOpened, gearOpened, navLabels, appearanceShown, aboutVersion, autoLaunch, hooksSection, bgShown, bgStyle, panelOpacity, panelBg, panelsTranslucent, thumbShown, bgName, bgCleared, bgRestored, bgRemoved, panelOpacityCleared, updateSettled, updateStatus, updateText, download, modalClosed }
+  return { modalOpened, gearOpened, navLabels, appearanceShown, aboutVersion, autoLaunch, hooksSection, bgShown, bgStyle, panelOpacity, panelBg, panelsTranslucent, thumbShown, bgName, bgCleared, bgRestored, bgRemoved, panelOpacityCleared, updateSettled, updateCheckStarted, updateStatus, updateText, download, modalClosed }
 })()`
 
 /** 恢复标签页准备：再开两个会话并打开终端，把当前页放中间（标签页 [s1, r3, r4]，当前页 r3）；返回 id 与 localStorage 记下的内容 */

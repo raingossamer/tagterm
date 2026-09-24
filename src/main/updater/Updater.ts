@@ -3,6 +3,7 @@
  * electron-updater 以工厂懒加载注入（`loadAutoUpdater`，测试传假对象）：它的 require 要 60 多毫秒，
  * 构造时不加载，首次 check / download / install 才加载一次、关自动下载并挂事件（perf-startup-memory 行为 2）；
  * 加载失败转 error 状态、不抛，下次再用时重新尝试。只提示不自动下载；安装前先回调（装配层 killAll）。
+ * 从 import 结果里取 autoUpdater 用 pickAutoUpdater（CommonJS 互操作的坑见它的注释）。
  */
 import type { UpdateStatus } from '@shared/models'
 
@@ -18,8 +19,28 @@ export interface AutoUpdaterLike {
   quitAndInstall(): void
 }
 
+/**
+ * 从 `import('electron-updater')` 的结果里取出 autoUpdater。electron-updater 是 CommonJS 包，autoUpdater 用 getter 定义
+ * （首次读取才按平台 new 一个 NsisUpdater 之类）；Node 原生 import() 一个 CommonJS 包时，只把静态认得出的赋值当命名导出，
+ * getter 认不出，所以命名空间上没有 autoUpdater，它只在 default（即 module.exports）上 —— 0.3.10 / 0.3.11 直接取命名导出
+ * 拿到 undefined，检查更新必失败。先取 default 上的，取不到再退回命名导出（将来换成 ES 模块也能用）；
+ * 取到的不像 AppUpdater 就抛中文错误（经 Updater 转成 error 状态）
+ */
+export function pickAutoUpdater(mod: unknown): AutoUpdaterLike {
+  const ns = (mod ?? {}) as { default?: { autoUpdater?: unknown }; autoUpdater?: unknown }
+  const auto = ns.default?.autoUpdater ?? ns.autoUpdater
+  if (!isAutoUpdaterLike(auto)) throw new Error('electron-updater 里没有找到可用的 autoUpdater')
+  return auto
+}
+
+function isAutoUpdaterLike(value: unknown): value is AutoUpdaterLike {
+  if (typeof value !== 'object' || value === null) return false
+  const o = value as Record<string, unknown>
+  return typeof o.checkForUpdates === 'function' && typeof o.on === 'function'
+}
+
 export interface UpdaterDeps {
-  /** 首次用到时才加载 electron-updater（装配层 `import('electron-updater')`，测试返回假对象） */
+  /** 首次用到时才加载 electron-updater（装配层 `import('electron-updater').then(pickAutoUpdater)`，测试返回假对象） */
   loadAutoUpdater: () => Promise<AutoUpdaterLike>
   currentVersion: string
   /** 状态变化回调，由装配层广播 update:status */

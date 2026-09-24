@@ -34,7 +34,7 @@ import { ConfigService } from './config/ConfigService'
 import { SessionSubsystem, type FolderPort } from './session/SessionSubsystem'
 import { GlobalShortcut } from './shortcut/GlobalShortcut'
 import { decideSummon } from './shortcut/summon'
-import { Updater } from './updater/Updater'
+import { pickAutoUpdater, Updater } from './updater/Updater'
 import { detectAvailableShells, findOnPath } from './pathProbe'
 import { IMAGE_EXTENSIONS } from './store/backgroundImage'
 import { LogFile } from './log/LogFile'
@@ -193,9 +193,10 @@ function quitApp(): void {
 }
 
 // 检查更新：更新源见 electron-builder.yml 的 publish；只提示不自动下载，安装前结束全部终端。
-// electron-updater 首次用到（启动 10 s 后的自动检查或用户点检查）才加载：它的 require 要 60 多毫秒，不该拖慢启动
+// electron-updater 首次用到（启动 10 s 后的自动检查或用户点检查）才加载：它的 require 要 60 多毫秒，不该拖慢启动。
+// autoUpdater 要经 pickAutoUpdater 从 default 上取：它是 getter 定义的，原生 import() 的命名导出里没有它
 const updater = new Updater({
-  loadAutoUpdater: () => import('electron-updater').then((m) => m.autoUpdater),
+  loadAutoUpdater: () => import('electron-updater').then(pickAutoUpdater),
   currentVersion: app.getVersion(),
   onStatus: (status) => broadcast('update:status', status),
   beforeInstall: () => {
