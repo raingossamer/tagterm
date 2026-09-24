@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { DEFAULT_BACKGROUND, type Settings } from '@shared/models'
 import { useSettingsStore } from '../../src/renderer/src/stores/settings'
-import { installFakeApi, makeCommand, makeSettings } from './fakeApi'
+import { installFakeApi, makeCommand, makeImageData, makeSettings, stubObjectUrls } from './fakeApi'
 
 describe('settings store', () => {
   beforeEach(() => {
@@ -53,16 +53,17 @@ describe('settings store', () => {
     expect(store.pinnedCommands.map((c) => c.command)).toEqual(['claude', 'gemini', 'pi'])
   })
 
-  it('背景：load 后按 imagePath 读取 data: URL；广播换图后重新读取；清除后为 null', async () => {
+  it('背景：load 后按 imagePath 读字节并建 blob: URL；广播换图后重新读并收掉旧 URL；清除后为 null 并收掉', async () => {
     const withImage = makeSettings({
       background: { ...DEFAULT_BACKGROUND, imagePath: 'D:/a.png' },
     })
     let broadcast: ((s: Settings) => void) | undefined
-    let dataUrl: string | null = 'data:image/png;base64,AAA'
+    let image = makeImageData('AAA')
+    const urls = stubObjectUrls()
     const api = installFakeApi({
       settings: {
         get: async () => withImage,
-        readBackgroundImage: vi.fn(async (_path?: string) => dataUrl),
+        readBackgroundImage: vi.fn(async (_path?: string) => image),
         onChanged: (cb) => {
           broadcast = cb
           return () => {}
@@ -72,28 +73,52 @@ describe('settings store', () => {
 
     const store = useSettingsStore()
     await store.load()
-    expect(store.backgroundImage).toBe('data:image/png;base64,AAA')
+    expect(store.backgroundImage).toMatch(/^blob:/)
+    expect(store.backgroundImage).toBe(urls.created[0])
     expect(store.background).toEqual({ ...DEFAULT_BACKGROUND, imagePath: 'D:/a.png' })
     expect(store.panelOpacity).toBe(DEFAULT_BACKGROUND.panelOpacity)
 
-    dataUrl = 'data:image/png;base64,BBB'
+    image = makeImageData('BBB')
     broadcast!(makeSettings({ background: { ...DEFAULT_BACKGROUND, imagePath: 'D:/b.png' } }))
     await new Promise((r) => setTimeout(r, 0))
-    expect(store.backgroundImage).toBe('data:image/png;base64,BBB')
+    expect(store.backgroundImage).toBe(urls.created[1])
+    expect(urls.revoked).toEqual([urls.created[0]]) // 换图即收掉上一张的 URL，不泄漏
     expect(api.settings.readBackgroundImage).toHaveBeenCalledTimes(2)
 
     broadcast!(makeSettings({ background: { ...DEFAULT_BACKGROUND, imagePath: null } }))
     await new Promise((r) => setTimeout(r, 0))
     expect(store.backgroundImage).toBeNull()
+    expect(urls.revoked).toEqual([urls.created[0], urls.created[1]])
     expect(store.panelOpacity).toBe(1) // 没有背景图时面板恢复完全不透明
     expect(api.settings.readBackgroundImage).toHaveBeenCalledTimes(2) // 未设置时不读文件
   })
 
-  it('previewBackground 即时覆盖生效背景（换图时读新图的 data: URL）；saveBackground 只调 SDK，广播后清预览', async () => {
+  it('readImageUrl 给设置弹窗的草稿缩略图建独立的 blob: URL，releaseImageUrl 收掉；文件不存在为 null', async () => {
+    const urls = stubObjectUrls()
+    installFakeApi({
+      settings: {
+        readBackgroundImage: vi.fn(async (path?: string) =>
+          path?.includes('missing') ? null : makeImageData(path),
+        ),
+      },
+    })
+    const store = useSettingsStore()
+
+    const url = await store.readImageUrl('D:/draft.png')
+    expect(url).toBe(urls.created[0])
+    await expect(store.readImageUrl('D:/missing.png')).resolves.toBeNull()
+    store.releaseImageUrl(url)
+    expect(urls.revoked).toEqual([url])
+    store.releaseImageUrl(null) // 没有 URL 时什么都不做
+    expect(urls.revoked).toEqual([url])
+  })
+
+  it('previewBackground 即时覆盖生效背景（换图时读新图并建 blob: URL）；saveBackground 只调 SDK，广播后清预览', async () => {
     let broadcast: ((s: Settings) => void) | undefined
+    const urls = stubObjectUrls()
     const api = installFakeApi({
       settings: {
-        readBackgroundImage: vi.fn(async (path?: string) => `data:image/png;base64,${path}`),
+        readBackgroundImage: vi.fn(async (path?: string) => makeImageData(path)),
         onChanged: (cb) => {
           broadcast = cb
           return () => {}
@@ -112,7 +137,7 @@ describe('settings store', () => {
     // 换图：预览就要看到新图
     const picked = { ...DEFAULT_BACKGROUND, imagePath: 'D:/new.png' }
     await store.previewBackground(picked)
-    expect(store.backgroundImage).toBe('data:image/png;base64,D:/new.png')
+    expect(store.backgroundImage).toBe(urls.created[0])
 
     // 保存：只调 SDK，落盘与广播由主进程负责
     await store.saveBackground(picked)
@@ -132,13 +157,14 @@ describe('settings store', () => {
   it('背景图读不出来（太大、格式不支持）：load / 广播 / 预览 / 还原都不抛，回退纯色并记下原因；同一路径不重读，换成读得出来的图即清掉原因', async () => {
     const TOO_BIG = '背景图片太大（40 MB），请换一张小于 30 MB 的'
     let broadcast: ((s: Settings) => void) | undefined
+    const urls = stubObjectUrls()
     const api = installFakeApi({
       settings: {
         get: async () =>
           makeSettings({ background: { ...DEFAULT_BACKGROUND, imagePath: 'D:/huge.png' } }),
         readBackgroundImage: vi.fn(async (path?: string) => {
           if (path?.includes('huge')) throw new Error(TOO_BIG)
-          return `data:image/png;base64,${path}`
+          return makeImageData(path)
         }),
         onChanged: (cb) => {
           broadcast = cb
@@ -162,12 +188,13 @@ describe('settings store', () => {
 
     // 预览一张读得出来的：原因清掉；再预览一张读不出来的：回退纯色，不抛
     await store.previewBackground({ ...DEFAULT_BACKGROUND, imagePath: 'D:/ok.png' })
-    expect(store.backgroundImage).toBe('data:image/png;base64,D:/ok.png')
+    expect(store.backgroundImage).toBe(urls.created[0])
     expect(store.imageError).toBe('')
     await expect(
       store.previewBackground({ ...DEFAULT_BACKGROUND, imagePath: 'D:/huge-2.png' }),
     ).resolves.toBeUndefined()
     expect(store.backgroundImage).toBeNull()
+    expect(urls.revoked).toEqual([urls.created[0]]) // 换成读不出来的图：上一张的 URL 同样收掉
     expect(store.imageError).toBe(TOO_BIG)
 
     // 还原（取消）：已保存的也读不出来，同样不抛 —— 否则设置弹窗关不掉
@@ -178,7 +205,7 @@ describe('settings store', () => {
     // 广播换成读得出来的图
     broadcast!(makeSettings({ background: { ...DEFAULT_BACKGROUND, imagePath: 'D:/b.png' } }))
     await new Promise((r) => setTimeout(r, 0))
-    expect(store.backgroundImage).toBe('data:image/png;base64,D:/b.png')
+    expect(store.backgroundImage).toBe(urls.created[1])
     expect(store.imageError).toBe('')
     warn.mockRestore()
   })

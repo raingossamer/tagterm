@@ -111,10 +111,10 @@ function transcriptOf(id) {
 }
 
 /**
- * 设置「外观」的演示背景：一张柔和的渐变 SVG，base64 data: URL（与主进程读图后给的形式一致；
- * 不能用 encodeURIComponent —— 它不转义 SVG 里 url(#g) 的括号，放进不带引号的 CSS url() 会被整条丢弃）
+ * 设置「外观」的演示背景：一张柔和的渐变 SVG，按主进程读图后给的形式（MIME + 字节）交出去，
+ * 渲染进程自己建 blob: 对象 URL（2026-09-24 起不再是 base64 的 data: URL）
  */
-const WALLPAPER = `data:image/svg+xml;base64,${btoa(`
+const WALLPAPER_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
   <defs>
     <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
@@ -129,7 +129,8 @@ const WALLPAPER = `data:image/svg+xml;base64,${btoa(`
     <circle cx="980" cy="820" r="300" fill="#f5a97f"/>
     <circle cx="420" cy="860" r="220" fill="#8fd3b0"/>
   </g>
-</svg>`)}`
+</svg>`
+const WALLPAPER = { mime: 'image/svg+xml', bytes: new TextEncoder().encode(WALLPAPER_SVG) }
 
 // ---- 事件总线 ----
 

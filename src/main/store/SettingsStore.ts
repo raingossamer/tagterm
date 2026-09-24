@@ -5,7 +5,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-import type { LaunchCommandInput, SettingsPatch } from '@shared/ipc'
+import type { BackgroundImageData, LaunchCommandInput, SettingsPatch } from '@shared/ipc'
 import {
   DEFAULT_BACKGROUND,
   SETTINGS_FILE_VERSION,
@@ -17,7 +17,7 @@ import {
 } from '@shared/models'
 import { DEFAULT_GLOBAL_SHORTCUT, isValidAccelerator } from '@shared/accelerator'
 import { readJson, writeJsonAtomic } from './jsonFile'
-import { assertImageReadable, readImageAsDataUrl, type ShrinkImage } from './backgroundImage'
+import { assertImageReadable, readImageBytes, type ShrinkImage } from './backgroundImage'
 
 const SETTINGS_FILE = 'settings.json'
 
@@ -144,10 +144,10 @@ export class SettingsStore {
     return settings
   }
 
-  /** 背景图的 data: URL；未设置或文件不存在为 null（回退纯色）。传 file 可读未保存的图（设置弹窗预览） */
-  readBackgroundImage(file?: string): Promise<string | null> {
+  /** 背景图的 MIME 与原始字节（渲染进程自己建 Blob URL）；未设置或文件不存在为 null（回退纯色）。传 file 可读未保存的图（设置弹窗预览） */
+  readBackgroundImage(file?: string): Promise<BackgroundImageData | null> {
     const path = file ?? this.settings.background.imagePath
-    return path ? readImageAsDataUrl(path, this.shrinkImage) : Promise.resolve(null)
+    return path ? readImageBytes(path, this.shrinkImage) : Promise.resolve(null)
   }
 
   /**
