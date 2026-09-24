@@ -40,6 +40,8 @@ export interface SmokeDeps {
 }
 
 const SMOKE_SCRIPT = `(async () => {
+  // 整段包住：渲染进程抛出的 DOMException 跨进程后只剩 {}，在这里把 message 与焦点 / 可见性一起带回去（排查焦点被抢走）
+  try {
   const api = window.tagterm
   const $ = (sel) => document.querySelector(sel)
   const $$ = (sel) => [...document.querySelectorAll(sel)]
@@ -345,6 +347,9 @@ const SMOKE_SCRIPT = `(async () => {
       hiddenApplied, rowsWhenAHidden, untaggedWhenAHidden, searchFindsHidden, sessionsKeptWhenHidden,
       mixedShown, groupsWhenMixed, shownAgain,
     },
+  }
+  } catch (e) {
+    return { error: (e && e.message) ? (e.name ? e.name + ': ' : '') + e.message : String(e), focus: document.hasFocus() ? 'focused' : 'unfocused', visibility: document.visibilityState }
   }
 })()`
 

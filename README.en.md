@@ -12,7 +12,7 @@ A small Windows desktop tool: **save the project folders you use most as termina
 
 When you use AI coding tools in several projects at once, every time you have to find the project folder, type `cmd` in the address bar, then type `claude`; once a pile of terminal windows is open, you can no longer tell which tool has stopped and is waiting for your approval. TagTerm folds both into one window: a session is a path, and the status is visible at a glance.
 
-## Features (v0.3.10)
+## Features (v0.3.11)
 
 ### Sessions and terminals
 
@@ -67,6 +67,7 @@ Every open session has a status dot, shown in the sidebar, on the tab and in the
 - **Tray resident**: × only hides to the tray and every terminal keeps running; the tray menu offers Show window / Settings / Quit (quit ends all terminals). Single instance: launching again just focuses the existing window.
 - **Start with Windows**: starts silently in the tray after login, without showing the window.
 - **Check for updates**: "Settings → Updates" checks, downloads, installs and restarts; an automatic check runs 10 seconds after launch and only notifies, never downloads on its own.
+- **Export / import config**: "Settings → Import / Export" writes tags, launch commands, the global hotkey, start-with-Windows, the Agent hooks switches, appearance parameters and the terminal font size into one JSON file, and imports it on another computer; tags are merged by name, everything else is replaced, the current config is backed up first, and the result of every item is listed. Sessions, their tags and the background image are not included (see "Moving to another computer" below).
 
 ## Install
 
@@ -76,16 +77,15 @@ After installing, turn on the Claude Code / Codex hooks switches in "Settings �
 
 ### Moving to another computer
 
-1. On the old computer, quit TagTerm from the tray so the data is written to disk.
-2. Copy `sessions.json`, `settings.json` and `tags.json` from `%APPDATA%\TagTerm\` to the same place on the new computer, then start TagTerm.
-3. On the new computer, turn the hooks switches on again in "Settings → Agent": they edit `~/.claude` / `~/.codex` on the new machine.
-4. The background image is stored as a path only: copy the image along and pick it again in "Settings → Appearance".
+1. On the old computer, open "Settings → Import / Export" and click "Export config…" to get a `tagterm-config-<date>.json`.
+2. Install TagTerm on the new computer, open "Settings → Import / Export" and click "Import config…" with that file: tags, launch commands, the global hotkey, start-with-Windows, the Agent hooks switches, appearance parameters and the terminal font size are all applied. Tags are merged by name (a tag with the same name keeps the local one, and tags that only exist locally are kept); everything else is replaced. The current config is backed up to `%APPDATA%\TagTerm\backups\` before anything is applied, so a wrong import is undone by importing the backup.
+3. Sessions do not travel with the file (folder paths change with the machine and user name); recreate them on the new computer with the new paths. The background image is not included either: pick one again in "Settings → Appearance".
 
-If a session folder does not exist on the new computer the session is kept anyway, and opening its terminal tells you it cannot start. The terminal font size is kept in the local UI, not in those three files; adjust it again with Ctrl+wheel on the new machine.
+If the hooks cannot be installed on the new computer (for example Claude Code is not installed yet), the result says why; turn them on in "Settings → Agent" once it is. Only import files you exported yourself or trust: launch commands are typed into the terminal as they are. To move everything including sessions, you can still quit TagTerm and copy `sessions.json`, `settings.json` and `tags.json` from `%APPDATA%\TagTerm\` to the same place on the new computer.
 
 ## Data and privacy
 
-- The app's own data is three JSON files in `%APPDATA%\TagTerm\`: `sessions.json` (sessions), `settings.json` (launch commands, background and global hotkey) and `tags.json` (tags and their links). Uninstalling does not delete them.
+- The app's own data is three JSON files in `%APPDATA%\TagTerm\`: `sessions.json` (sessions), `settings.json` (launch commands, background and global hotkey) and `tags.json` (tags and their links). Uninstalling does not delete them. Automatic backups taken before a config import live in `backups\` next to them, with the 10 most recent kept.
 - Turning a hooks switch on edits `~/.claude/settings.json` or `~/.codex/hooks.json`: a backup is written first as `<file>.tagterm-bak-<timestamp>`, only entries marked as TagTerm's are added or removed, and turning the switch off removes them. Hooks only post events to a port on `127.0.0.1` on this machine.
 - Logs record events and errors only, in `%APPDATA%\TagTerm\logs\`, one file rotating at 1 MB with 3 kept; "Settings → About" opens the log folder with one click, which is what to send the developer when something goes wrong.
 - Terminal output and keystrokes are never written to disk or to the log. Apart from "Check for updates" reaching GitHub Releases, the app does not touch the network.
@@ -148,7 +148,7 @@ Security baseline: `contextIsolation` + `sandbox`, no Node integration, CSP `scr
 
 ## Roadmap
 
-- Config import / export
+- Nothing planned yet
 
 ## License
 
