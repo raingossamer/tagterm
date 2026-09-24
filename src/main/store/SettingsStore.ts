@@ -17,7 +17,7 @@ import {
 } from '@shared/models'
 import { DEFAULT_GLOBAL_SHORTCUT, isValidAccelerator } from '@shared/accelerator'
 import { readJson, writeJsonAtomic } from './jsonFile'
-import { readImageAsDataUrl, type ShrinkImage } from './backgroundImage'
+import { assertImageReadable, readImageAsDataUrl, type ShrinkImage } from './backgroundImage'
 
 const SETTINGS_FILE = 'settings.json'
 
@@ -130,7 +130,14 @@ export class SettingsStore {
   async update(patch: SettingsPatch): Promise<Settings> {
     const next: Settings = { ...this.settings }
     if (patch.launchCommands) next.launchCommands = patch.launchCommands.map(withId)
-    if (patch.background) next.background = { ...patch.background }
+    if (patch.background) {
+      const { imagePath } = patch.background
+      // 换了新图：读取时会被拒绝的（太大、格式不支持）不让存 —— 存进去的坏图每次启动都读不出来。
+      // 路径没变不查：存进去之后文件才变大的，不拦用户改别的
+      if (imagePath !== null && imagePath !== this.settings.background.imagePath)
+        await assertImageReadable(imagePath)
+      next.background = { ...patch.background }
+    }
     await this.commit(next)
     const settings = this.get()
     this.onChanged(settings)

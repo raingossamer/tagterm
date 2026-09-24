@@ -168,6 +168,76 @@ describe('SettingsModal', () => {
     )
   })
 
+  describe('背景图读不出来（太大、格式不支持）', () => {
+    const TOO_BIG = '背景图片太大（40 MB），请换一张小于 30 MB 的'
+    const unreadable = vi.fn(async (_path?: string): Promise<string | null> => {
+      throw new Error(TOO_BIG)
+    })
+
+    it('已保存的图读不出来：缩略图下写明原因（不说「不存在」）；「取消」/ Esc 照常关闭', async () => {
+      installFakeApi({
+        settings: {
+          get: async () =>
+            makeSettings({ background: { ...DEFAULT_BACKGROUND, imagePath: 'D:/wall/huge.png' } }),
+          readBackgroundImage: unreadable,
+        },
+      })
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      await useSettingsStore().load()
+      const wrapper = mount(SettingsModal)
+      await flushPromises()
+
+      expect(wrapper.find('[data-test=bg-error]').text()).toBe(TOO_BIG)
+      expect(wrapper.find('[data-test=bg-missing]').exists()).toBe(false)
+      await wrapper.find('[data-test=settings-cancel]').trigger('click')
+      await flushPromises()
+      expect(wrapper.emitted('close')).toHaveLength(1)
+
+      const second = mount(SettingsModal)
+      await flushPromises()
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await flushPromises()
+      expect(second.emitted('close')).toHaveLength(1)
+      vi.restoreAllMocks()
+    })
+
+    it('换了一张读不出来的图：整窗回退纯色、缩略图下写明原因；「保存设置」被主进程拒绝 → 底部红字、不关；关掉实时预览同样写明原因', async () => {
+      const api = installFakeApi({
+        app: { pickImage: vi.fn(async () => 'D:/wall/huge.png') },
+        settings: {
+          readBackgroundImage: unreadable,
+          update: vi.fn(async () => {
+            throw new Error(TOO_BIG)
+          }),
+        },
+      })
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const store = useSettingsStore()
+      const wrapper = mount(SettingsModal)
+      await flushPromises()
+
+      await wrapper.find('[data-test=bg-pick]').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[data-test=bg-name]').text()).toBe('huge.png')
+      expect(store.backgroundImage).toBeNull()
+      expect(wrapper.find('[data-test=bg-error]').text()).toBe(TOO_BIG)
+      expect(wrapper.find('[data-test=bg-missing]').exists()).toBe(false)
+      expect(wrapper.find('[data-test=settings-error]').exists()).toBe(false)
+
+      await wrapper.find('[data-test=settings-save]').trigger('click')
+      await flushPromises()
+      expect(api.settings.update).toHaveBeenCalledTimes(1)
+      expect(wrapper.find('[data-test=settings-error]').text()).toBe(TOO_BIG)
+      expect(wrapper.emitted('close')).toBeUndefined()
+
+      await wrapper.find('[data-test=live-preview]').setValue(false)
+      await flushPromises()
+      expect(wrapper.find('[data-test=bg-thumb] img').exists()).toBe(false)
+      expect(wrapper.find('[data-test=bg-error]').text()).toBe(TOO_BIG)
+      vi.restoreAllMocks()
+    })
+  })
+
   it('「启动」段：复选框反映登录项状态并标注即时生效；改动即 setAutoLaunch 并按返回回填；失败红字并还原', async () => {
     const api = installFakeApi({
       app: {

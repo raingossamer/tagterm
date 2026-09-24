@@ -34,25 +34,45 @@ export async function readImageAsDataUrl(
   file: string,
   shrink?: ShrinkImage,
 ): Promise<string | null> {
-  const mime = MIME_BY_EXT[extname(file).toLowerCase()]
-  if (!mime) throw new Error(`不支持的图片格式：${file}`)
-  let size: number
-  try {
-    size = (await stat(file)).size
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      console.warn(`[store] 背景图片不存在，回退纯色：${file}`)
-      return null
-    }
-    throw err
-  }
-  if (size > MAX_IMAGE_BYTES) {
-    const mb = Math.round(size / 1024 / 1024)
-    throw new Error(`背景图片太大（${mb} MB），请换一张小于 ${MAX_IMAGE_BYTES / 1024 / 1024} MB 的`)
+  const mime = mimeOf(file)
+  if (!(await isPresentWithinLimit(file))) {
+    console.warn(`[store] 背景图片不存在，回退纯色：${file}`)
+    return null
   }
   const bytes = await readFile(file)
   const shrunk = shrink?.(bytes, MAX_IMAGE_EDGE, mime) ?? null
   return shrunk
     ? `data:${shrunk.mime};base64,${shrunk.bytes.toString('base64')}`
     : `data:${mime};base64,${bytes.toString('base64')}`
+}
+
+/**
+ * 保存前的检查（只看扩展名与大小、不读内容）：读取时会被拒绝的图（格式不支持、超过体积上限）抛同一句中文；
+ * 文件不存在不抛 —— 与读取一样回退纯色
+ */
+export async function assertImageReadable(file: string): Promise<void> {
+  mimeOf(file)
+  await isPresentWithinLimit(file)
+}
+
+function mimeOf(file: string): string {
+  const mime = MIME_BY_EXT[extname(file).toLowerCase()]
+  if (!mime) throw new Error(`不支持的图片格式：${file}`)
+  return mime
+}
+
+/** 文件在且不超过体积上限为 true，不存在为 false，超过上限抛错 */
+async function isPresentWithinLimit(file: string): Promise<boolean> {
+  let size: number
+  try {
+    size = (await stat(file)).size
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw err
+  }
+  if (size > MAX_IMAGE_BYTES) {
+    const mb = Math.round(size / 1024 / 1024)
+    throw new Error(`背景图片太大（${mb} MB），请换一张小于 ${MAX_IMAGE_BYTES / 1024 / 1024} MB 的`)
+  }
+  return true
 }
