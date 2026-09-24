@@ -183,6 +183,29 @@ describe('SettingsStore', () => {
     expect(JSON.parse(readFileSync(file, 'utf8')).background.imagePath).toBeNull()
   })
 
+  it('并发的变更排队执行、互不覆盖：保存背景（换新图要先查文件）的同时改唤起命令与全局快捷键，三样都在', async () => {
+    const store = new SettingsStore(dir, { seedCommands: ['claude'] })
+    await store.load()
+    const { background } = store.get()
+    await Promise.all([
+      store.update({ background: { ...background, imagePath: join(dir, 'bg.png'), blurPx: 8 } }),
+      store.update({
+        launchCommands: [{ label: 'gemini', command: 'gemini', pinned: true, sortOrder: 1 }],
+      }),
+      store.setGlobalShortcut({ enabled: true, accelerator: 'Ctrl+Alt+Y' }),
+    ])
+
+    const expectAll = (s: Settings): void => {
+      expect(s.background).toMatchObject({ imagePath: join(dir, 'bg.png'), blurPx: 8 })
+      expect(s.launchCommands.map((c) => c.command)).toEqual(['gemini'])
+      expect(s.globalShortcut).toEqual({ enabled: true, accelerator: 'Ctrl+Alt+Y' })
+    }
+    expectAll(store.get())
+    const reloaded = new SettingsStore(dir, { seedCommands: [] })
+    await reloaded.load()
+    expectAll(reloaded.get())
+  })
+
   describe('全局快捷键（可选字段 globalShortcut，settings.json 仍为 v2）', () => {
     const readFile = () => JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'))
 
