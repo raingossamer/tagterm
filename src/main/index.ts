@@ -3,7 +3,7 @@
  *（agent 子系统含状态机、hooks、通知去重与角标计数），这里只接线一次。
  * 会话生命周期 = 应用生命周期：关窗只隐藏到托盘；托盘「退出」与 before-quit 都 killAll。
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { existsSync } from 'node:fs'
 import { release, tmpdir } from 'node:os'
@@ -285,17 +285,16 @@ app.whenReady().then(async () => {
   registerIpc(ipcMain, {
     version: app.getVersion(),
     osBuild: osBuildNumber(),
-    store,
+    sessions,
     settings,
     tags,
     updater,
-    pty,
     agent: subsystem,
     shortcut,
     dataDir,
     logsDir,
     pickDirectory,
-    openPath: (path) => shell.openPath(path), // 路径条「打开」：在资源管理器里打开目录，返回空串成功 / 错误说明
+    folders, // 「打开日志目录」：与会话子系统的「打开目录」共用同一个 shell.openPath 适配器
     pickImage,
     listShells: () => availableShells,
     getAutoLaunch,
