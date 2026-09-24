@@ -349,6 +349,27 @@ describe('ConfigService', () => {
       expect(tags.list().tags.map((t) => t.name)).toEqual(['b', 'a'])
     })
 
+    it('裁剪按时间戳与同秒序号算新旧，不按字符串排序（-2 比 .json 新、-10 比 -2 新）；不认识的文件名不动', async () => {
+      mkdirSync(backupsDir(), { recursive: true })
+      const names = [
+        'tagterm-config-20200101-000000.json',
+        'tagterm-config-20200101-000000-2.json',
+        'tagterm-config-20200101-000000-10.json',
+        ...Array.from({ length: 7 }, (_, i) => `tagterm-config-20200101-00000${i + 1}.json`),
+        'notes.txt',
+      ]
+      for (const name of names) writeFileSync(join(backupsDir(), name), '{}')
+      const file = writeConfig('in.json', { terminalFontSize: 12 })
+      const result = await build(fakeDialogs({ open: file })).importConfig({ terminalFontSize: 14 })
+      const left = readdirSync(backupsDir())
+      expect(left).not.toContain('tagterm-config-20200101-000000.json') // 最旧的一份
+      expect(left).toContain('tagterm-config-20200101-000000-2.json')
+      expect(left).toContain('tagterm-config-20200101-000000-10.json')
+      expect(left).toContain('notes.txt')
+      expect(left).toContain(basename(result!.backupPath))
+      expect(left.filter((n) => n.startsWith('tagterm-config-'))).toHaveLength(10)
+    })
+
     it('备份只留最近 10 份；同一秒内两次导入撞名加序号', async () => {
       mkdirSync(backupsDir(), { recursive: true })
       for (let i = 0; i < 10; i += 1) {

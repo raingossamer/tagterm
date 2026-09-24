@@ -295,14 +295,27 @@ function uniquePath(dir: string, base: string): string {
   }
 }
 
-/** 只留最近 MAX_BACKUPS 份（文件名带时间戳，按名排序即按时间） */
+/** 备份文件名：tagterm-config-<yyyyMMdd>-<HHmmss>[-<序号>].json（序号见 uniquePath） */
+const BACKUP_NAME = /^tagterm-config-(\d{8}-\d{6})(?:-(\d+))?\.json$/
+
+/**
+ * 只留最近 MAX_BACKUPS 份：按文件名里的时间戳、再按同秒序号算新旧 —— 不能按字符串排序
+ * （`-2.json` 会排在 `.json` 前、`-10` 排在 `-2` 前，同一秒内最新的那份反而先被删）；不认识的文件名不动
+ */
 async function pruneBackups(dir: string): Promise<void> {
-  const names = (await readdir(dir))
-    .filter((n) => n.startsWith('tagterm-config-') && n.endsWith('.json'))
-    .sort()
-  for (const name of names.slice(0, Math.max(0, names.length - MAX_BACKUPS))) {
+  const backups = (await readdir(dir))
+    .map((name) => ({ name, match: BACKUP_NAME.exec(name) }))
+    .filter((b): b is { name: string; match: RegExpExecArray } => b.match !== null)
+    .sort((a, b) => compareBackupName(a.match, b.match))
+  for (const { name } of backups.slice(0, Math.max(0, backups.length - MAX_BACKUPS))) {
     await unlink(join(dir, name)).catch(() => {})
   }
+}
+
+/** 先比时间戳（yyyyMMdd-HHmmss 字符串序即时间序），同秒再比序号（没有序号 = 1） */
+function compareBackupName(a: RegExpExecArray, b: RegExpExecArray): number {
+  if (a[1] !== b[1]) return a[1]! < b[1]! ? -1 : 1
+  return Number(a[2] ?? 1) - Number(b[2] ?? 1)
 }
 
 function currentLaunchCommands(
