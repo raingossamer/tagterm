@@ -22,9 +22,6 @@ import type {
   TagPatch,
 } from '@shared/ipc'
 import {
-  BACKGROUND_FITS,
-  MAX_BLUR_PX,
-  MIN_PANEL_OPACITY,
   SHELL_KINDS,
   TAG_COLORS,
   type AppBackground,
@@ -33,6 +30,7 @@ import {
   type ShellKind,
   type TagColor,
 } from '@shared/models'
+import { describeBackgroundParamsError } from '@shared/background'
 import { isValidAccelerator } from '@shared/accelerator'
 import type { AgentSubsystem } from './agent/AgentSubsystem'
 import type { FolderPort, SessionSubsystem } from './session/SessionSubsystem'
@@ -368,30 +366,14 @@ function assertBackground(bg: unknown): AppBackground {
   if (o.imagePath !== null && typeof o.imagePath !== 'string') {
     throw new Error('背景图片路径格式不正确')
   }
-  if (!BACKGROUND_FITS.includes(o.fit as BackgroundFit)) {
-    throw new Error(`不支持的显示方式：${String(o.fit)}`)
-  }
-  if (typeof o.imageOpacity !== 'number' || !(o.imageOpacity >= 0 && o.imageOpacity <= 1)) {
-    throw new Error('背景不透明度必须在 0 到 1 之间')
-  }
-  if (
-    typeof o.panelOpacity !== 'number' ||
-    !(o.panelOpacity >= MIN_PANEL_OPACITY && o.panelOpacity <= 1)
-  ) {
-    throw new Error(`面板不透明度必须在 ${MIN_PANEL_OPACITY} 到 1 之间`)
-  }
-  if (
-    !Number.isInteger(o.blurPx) ||
-    (o.blurPx as number) < 0 ||
-    (o.blurPx as number) > MAX_BLUR_PX
-  ) {
-    throw new Error(`背景模糊必须是 0 到 ${MAX_BLUR_PX} 之间的整数`)
-  }
+  // 四个参数的规则与配置文件的解析共用（shared/background），同一句中文
+  const error = describeBackgroundParamsError(o)
+  if (error) throw new Error(error)
   return {
     imagePath: o.imagePath,
     fit: o.fit as BackgroundFit,
-    imageOpacity: o.imageOpacity,
-    panelOpacity: o.panelOpacity,
+    imageOpacity: o.imageOpacity as number,
+    panelOpacity: o.panelOpacity as number,
     blurPx: o.blurPx as number,
   }
 }
