@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createServer, request, type Server } from 'node:http'
 import type { HookAgent } from '@shared/ipc'
 import { HookServer } from '../../src/main/agent/HookServer'
@@ -91,4 +91,40 @@ describe('HookServer（回环 HTTP，接收 Claude / Codex hooks 的 stdin JSON�
     server = null
     await expect(post(port, '/tagterm/hook/claude', '{}')).rejects.toThrow()
   })
+
+  it('首选端口段整段起不来（被占，或整段落进 Windows 的保留端口段）→ 依次换 fallbacks 里的起点并记一行日志，0 = 随机端口；全部失败抛错', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    blocker = createServer()
+    await new Promise<void>((r) => blocker!.listen(0, '127.0.0.1', () => r()))
+    const taken = (blocker.address() as { port: number }).port
+    const free = await freePort()
+    hooks = []
+    server = new HookServer({
+      onHook: (agent, payload) => hooks.push([agent, payload]),
+      maxPortAttempts: 1,
+    })
+
+    expect(await server.start(taken, [taken, free, 0])).toBe(free)
+    expect(warn).toHaveBeenCalledTimes(2)
+    expect(String(warn.mock.calls[0]![0])).toContain('[agent]')
+    await server.stop()
+
+    const random = await server.start(taken, [0])
+    expect(random).toBeGreaterThan(0)
+    expect(random).not.toBe(taken)
+    expect((await post(random, '/tagterm/hook/claude', '{}')).status).toBe(204)
+    await server.stop()
+
+    await expect(server.start(taken, [taken])).rejects.toThrow(/HookServer 无法监听端口/)
+    warn.mockRestore()
+  })
 })
+
+/** 取一个此刻空闲的端口：随机监听一下再关掉 */
+async function freePort(): Promise<number> {
+  const probe = createServer()
+  await new Promise<void>((r) => probe.listen(0, '127.0.0.1', () => r()))
+  const { port } = probe.address() as { port: number }
+  await new Promise<void>((r) => probe.close(() => r()))
+  return port
+}

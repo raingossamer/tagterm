@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, request } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -8,6 +8,7 @@ import type { Session, SessionRuntime } from '@shared/models'
 import {
   AgentSubsystem,
   derivePort,
+  hookPortFallbacks,
   type AgentSubsystemOptions,
   type BadgeCounts,
   type NotificationText,
@@ -553,5 +554,42 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
     expect(a).toBeGreaterThanOrEqual(49152)
     expect(a).toBeLessThanOrEqual(65535)
     expect(derivePort('D:/elsewhere')).not.toBe(a)
+  })
+
+  it('首选端口段起不来时换的起点：同一目录换两个种子再派生（每次启动同一串，端口不必每次变），最后才是随机端口', () => {
+    const dataDir = 'C:/Users/k/AppData/Roaming/TagTerm'
+    const fallbacks = hookPortFallbacks(dataDir)
+    expect(hookPortFallbacks('c:\\users\\k\\appdata\\roaming\\tagterm\\')).toEqual(fallbacks)
+    expect(fallbacks).toHaveLength(3)
+    expect(fallbacks[2]).toBe(0)
+    const seeded = fallbacks.slice(0, 2)
+    expect(new Set([derivePort(dataDir), ...seeded]).size).toBe(3)
+    for (const port of seeded) {
+      expect(port).toBeGreaterThanOrEqual(49152)
+      expect(port).toBeLessThanOrEqual(65535)
+    }
+  })
+
+  it('没注入端口时首选段起不来（被占或落进系统保留端口段）→ 换到兜底起点，hooks 照常可用', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const derived = derivePort(dir)
+    const blocker = createServer()
+    // 首选端口被占；本机若恰好把它划进保留段，listen 自己就会失败 —— 两种情形对 HookServer 都是「起不来」
+    await new Promise<void>((r) => {
+      blocker.once('error', () => r())
+      blocker.listen(derived, '127.0.0.1', () => r())
+    })
+    const { preferredPort: _random, ...defaults } = baseOptions
+    const moved = new AgentSubsystem({ ...defaults, maxPortAttempts: 1 })
+    try {
+      await moved.start()
+      expect(moved.port).toBeGreaterThan(0)
+      expect(moved.port).not.toBe(derived)
+      expect(await postHook(moved.port, 'claude', { hook_event_name: 'Stop', cwd: dir })).toBe(204)
+    } finally {
+      await moved.stop()
+      await new Promise<void>((r) => (blocker.listening ? blocker.close(() => r()) : r()))
+      warn.mockRestore()
+    }
   })
 })
