@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { registerIpc, type IpcDeps } from '../../src/main/ipc'
@@ -269,6 +269,43 @@ describe('IPC 接口层', () => {
       ipc.invoke('app:set-global-shortcut', { enabled: false, accelerator: 'Ctrl+Alt+Y' }),
     ).resolves.toEqual({ enabled: false, accelerator: 'Ctrl+Alt+Y', registered: false })
     expect(shortcutPort.registered.size).toBe(0)
+  })
+
+  it('app:set-global-shortcut 落盘失败：系统注册、状态与内存里的设置都回到调用前，之后别的变更落盘也不带上新键位', async () => {
+    const file = join(dir, 'settings.json')
+    const setWithReadonlyFile = async (accelerator: string) => {
+      chmodSync(file, 0o444) // 只读：原子写最后一步 rename 覆盖它时 EPERM，原内容保留
+      try {
+        await expect(
+          ipc.invoke('app:set-global-shortcut', { enabled: true, accelerator }),
+        ).rejects.toThrow(/EPERM/)
+      } finally {
+        chmodSync(file, 0o666)
+      }
+    }
+
+    await setWithReadonlyFile('Ctrl+Alt+Y')
+    expect([...shortcutPort.registered.keys()]).toEqual(['Ctrl+Alt+T'])
+    await expect(ipc.invoke('app:get-global-shortcut')).resolves.toEqual({
+      enabled: true,
+      accelerator: 'Ctrl+Alt+T',
+      registered: true,
+    })
+    expect(settings.getGlobalShortcut()).toEqual({ enabled: true, accelerator: 'Ctrl+Alt+T' })
+    await ipc.invoke('settings:update', { launchCommands: [] })
+    expect('globalShortcut' in JSON.parse(readFileSync(file, 'utf8'))).toBe(false)
+
+    // 旧键位启动时就被别的程序占着（没注册上）：回滚后同样是「旧键位、没注册上」，新键位不留在系统里
+    shortcut.dispose()
+    shortcutPort.occupied.add('Ctrl+Alt+T')
+    shortcut.start(settings.getGlobalShortcut())
+    await setWithReadonlyFile('Ctrl+Alt+Y')
+    expect(shortcutPort.registered.size).toBe(0)
+    await expect(ipc.invoke('app:get-global-shortcut')).resolves.toEqual({
+      enabled: true,
+      accelerator: 'Ctrl+Alt+T',
+      registered: false,
+    })
   })
 
   it('app:set-global-shortcut 守卫：键位串不合法 / enabled 不是布尔 / 不是对象 → reject，不注册不落盘', async () => {

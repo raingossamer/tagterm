@@ -102,6 +102,28 @@ describe('GlobalShortcut（全局快捷键服务，系统热键以命名端口�
     expect([...port.registered.keys()]).toEqual(['Ctrl+Alt+K'])
   })
 
+  it('revert（接口层落盘失败时回滚）：回到旧配置并按它重新注册；旧键位注册不上（启动时就被占着）→ 新键位也不留，与启动时一样 registered 为假', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const previous = { enabled: true, accelerator: 'Ctrl+Alt+T' }
+    shortcut.start(previous)
+    shortcut.apply({ enabled: true, accelerator: 'Ctrl+Alt+Y' })
+    shortcut.revert(previous)
+    expect([...port.registered.keys()]).toEqual(['Ctrl+Alt+T'])
+    expect(shortcut.status()).toEqual({ ...previous, registered: true })
+    shortcut.apply({ enabled: false, accelerator: 'Ctrl+Alt+T' })
+    shortcut.revert(previous)
+    expect([...port.registered.keys()]).toEqual(['Ctrl+Alt+T'])
+
+    shortcut.dispose()
+    port.occupied.add('Ctrl+Alt+T')
+    shortcut.start(previous)
+    shortcut.apply({ enabled: true, accelerator: 'Ctrl+Alt+Y' })
+    shortcut.revert(previous)
+    expect(port.registered.size).toBe(0)
+    expect(shortcut.status()).toEqual({ ...previous, registered: false })
+    warn.mockRestore()
+  })
+
   it('dispose 注销（退出时）', () => {
     shortcut.start({ enabled: true, accelerator: 'Ctrl+Alt+T' })
     shortcut.dispose()

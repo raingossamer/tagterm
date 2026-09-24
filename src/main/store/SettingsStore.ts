@@ -57,11 +57,10 @@ export class SettingsStore {
   async load(): Promise<void> {
     const raw = await readJson(this.file)
     if (raw === null) {
-      this.settings = {
+      await this.commit({
         launchCommands: this.seedCommands.map((command, i) => seedCommand(command, i + 1)),
         background: { ...DEFAULT_BACKGROUND },
-      }
-      await this.save()
+      })
       console.log(`[store] 已生成默认设置：${this.file}`)
       return
     }
@@ -80,8 +79,7 @@ export class SettingsStore {
     const launchCommands = file.launchCommands as LaunchCommand[]
     // 低版本逐版本迁移后立即写回（约定见 database/sql.md），下次启动不必再迁
     if (file.version < SETTINGS_FILE_VERSION) {
-      this.settings = { launchCommands, background: migrateBackground(file) }
-      await this.save()
+      await this.commit({ launchCommands, background: migrateBackground(file) })
       console.log(
         `[store] 设置文件已从 v${file.version} 迁移到 v${SETTINGS_FILE_VERSION}：${this.file}`,
       )
@@ -116,26 +114,24 @@ export class SettingsStore {
     return { ...(this.settings.globalShortcut ?? DEFAULT_GLOBAL_SHORTCUT_CONFIG) }
   }
 
-  /** 写全局快捷键配置（接口层在注册成功后才调）：等于缺省值时删键；落盘后回调全量设置 */
+  /** 写全局快捷键配置（接口层在注册成功后才调）：等于缺省值时删键；落盘成功才改内存并回调全量设置 */
   async setGlobalShortcut(config: GlobalShortcutConfig): Promise<void> {
     const isDefault =
       config.enabled === DEFAULT_GLOBAL_SHORTCUT_CONFIG.enabled &&
       config.accelerator === DEFAULT_GLOBAL_SHORTCUT_CONFIG.accelerator
-    if (isDefault) delete this.settings.globalShortcut
-    else this.settings.globalShortcut = { ...config }
-    await this.save()
+    const next: Settings = { ...this.settings }
+    if (isDefault) delete next.globalShortcut
+    else next.globalShortcut = { ...config }
+    await this.commit(next)
     this.onChanged(this.get())
   }
 
-  /** 补丁合并：给出的字段整体替换；新命令（无 id）分配 uuid */
+  /** 补丁合并：给出的字段整体替换；新命令（无 id）分配 uuid。落盘成功才改内存 */
   async update(patch: SettingsPatch): Promise<Settings> {
-    if (patch.launchCommands) {
-      this.settings.launchCommands = patch.launchCommands.map(withId)
-    }
-    if (patch.background) {
-      this.settings.background = { ...patch.background }
-    }
-    await this.save()
+    const next: Settings = { ...this.settings }
+    if (patch.launchCommands) next.launchCommands = patch.launchCommands.map(withId)
+    if (patch.background) next.background = { ...patch.background }
+    await this.commit(next)
     const settings = this.get()
     this.onChanged(settings)
     return settings
@@ -147,9 +143,14 @@ export class SettingsStore {
     return path ? readImageAsDataUrl(path, this.shrinkImage) : Promise.resolve(null)
   }
 
-  private async save(): Promise<void> {
-    const data: SettingsFile = { version: SETTINGS_FILE_VERSION, ...this.settings }
+  /**
+   * 先写盘、成功才换内存：写失败时内存仍与文件一致，之后别的变更落盘不会把这次没写进去的改动带进文件
+   * （全局快捷键落盘失败时接口层已把系统注册换回旧的，内存再停在新键位就只回滚了一半）
+   */
+  private async commit(next: Settings): Promise<void> {
+    const data: SettingsFile = { version: SETTINGS_FILE_VERSION, ...next }
     await writeJsonAtomic(this.file, data)
+    this.settings = next
   }
 }
 

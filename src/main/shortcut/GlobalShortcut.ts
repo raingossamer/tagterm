@@ -3,6 +3,7 @@
  * 本文件不 import electron。只管「注册了哪个键位、按下调谁」：
  * - start：按配置注册，被别的程序占着不抛、记一行日志，状态 registered 为假（设置里显示红字）
  * - apply：换键位时先注册新的、成功才注销旧的；新的被占用返回 false，旧的照旧可用、配置不变
+ * - revert：接口层落盘失败时回到旧配置（注册不上与 start 一样只记日志）
  * - pause / resume：设置里录新键位期间暂停当前热键，免得按到旧键把窗口藏掉
  */
 import type { GlobalShortcutConfig } from '@shared/models'
@@ -53,6 +54,15 @@ export class GlobalShortcut {
     }
     this.config = { ...next }
     return true
+  }
+
+  /**
+   * 回到旧配置（接口层落盘失败时回滚用）：注销现在的，按旧配置重新注册，注册不上与 start 一样只记日志。
+   * 不用 apply(旧配置) 回滚：旧键位启动时就被别的程序占着时 apply 返回 false，新键位会留在系统里
+   */
+  revert(previous: GlobalShortcutConfig): void {
+    this.dispose()
+    this.start(previous)
   }
 
   /** 暂停当前热键（只在内存）：注销但记住，resume 时注册回来 */
