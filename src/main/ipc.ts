@@ -116,6 +116,7 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
     else deps.shortcut.resume()
   })
   handle('app:export-config', (prefs) => deps.config.exportConfig(assertConfigPrefs(prefs)))
+  handle('app:import-config', (prefs) => deps.config.importConfig(assertConfigPrefs(prefs)))
 
   handle('session:list', () => deps.sessions.list())
   handle('session:create', (input) => deps.sessions.create(assertCreateInput(input)))

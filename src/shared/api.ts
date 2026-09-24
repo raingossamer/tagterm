@@ -19,6 +19,7 @@ import type {
   TagListResult,
   TagPatch,
   ConfigExportResult,
+  ConfigImportResult,
   ConfigPrefs,
 } from './ipc'
 import type {
@@ -53,6 +54,8 @@ export interface TagTermApi {
     pauseGlobalShortcut(paused: boolean): Promise<void>
     /** 导出配置（用户偏好）：主进程弹保存对话框，取消为 null；渲染进程只交出终端字号 */
     exportConfig(prefs: ConfigPrefs): Promise<ConfigExportResult | null>
+    /** 导入配置：主进程弹打开对话框（取消为 null）；文件不对 reject 中文原因、什么都不动；返回逐项结果与备份路径 */
+    importConfig(prefs: ConfigPrefs): Promise<ConfigImportResult | null>
     /** 全局快捷键唤出窗口后：把焦点交给当前终端 */
     onFocusTerminal(cb: () => void): Unsubscribe
     onOpenSettings(cb: () => void): Unsubscribe

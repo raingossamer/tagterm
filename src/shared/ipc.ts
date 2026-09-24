@@ -50,6 +50,33 @@ export interface ConfigExportResult {
   path: string
 }
 
+/** 配置文件里的七项（导入按此顺序逐项应用、逐项报结果） */
+export type ConfigItemKey =
+  | 'tags'
+  | 'launchCommands'
+  | 'appearance'
+  | 'globalShortcut'
+  | 'autoLaunch'
+  | 'hooks'
+  | 'terminalFontSize'
+
+/** 每项的结果：已应用 / 与本机相同没动 / 文件里没有 / 失败（message 是原因） */
+export type ConfigItemOutcome = 'applied' | 'unchanged' | 'absent' | 'failed'
+
+export interface ConfigItemResult {
+  key: ConfigItemKey
+  outcome: ConfigItemOutcome
+  message?: string
+}
+
+/** 导入结果：文件、导入前的备份、逐项结果；文件里给了字号时带回来由渲染进程套用 */
+export interface ConfigImportResult {
+  path: string
+  backupPath: string
+  items: ConfigItemResult[]
+  terminalFontSize?: number
+}
+
 /** 新命令可不带 id，由主进程分配 */
 export type LaunchCommandInput = Omit<LaunchCommand, 'id'> & { id?: string }
 
@@ -130,6 +157,7 @@ export interface IpcInvokeMap {
   'app:set-global-shortcut': { args: [config: GlobalShortcutConfig]; result: GlobalShortcutStatus } // 先注册新的，被占用 reject 且旧的保留、不落盘；成功才写 settings.json
   'app:pause-global-shortcut': { args: [paused: boolean]; result: void } // 设置里录新键位期间暂停当前热键（只在内存）
   'app:export-config': { args: [prefs: ConfigPrefs]; result: ConfigExportResult | null } // 导出用户偏好：主进程弹保存对话框（取消为 null）→ 原子写 → 返回路径
+  'app:import-config': { args: [prefs: ConfigPrefs]; result: ConfigImportResult | null } // 导入：打开对话框（取消为 null）→ 整份校验（不过 reject、什么都不动）→ 备份当前偏好 → 逐项应用 → 逐项结果
   'session:list': { args: []; result: Session[] }
   'session:create': { args: [input: CreateSessionInput]; result: Session }
   'session:update': { args: [id: string, patch: SessionPatch]; result: Session } // 含 cwd / shell 时：有程序在跑 reject，空闲先 kill 再改
