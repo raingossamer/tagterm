@@ -335,6 +335,20 @@ describe('ConfigService', () => {
       expect(tags.list().tags.map((t) => t.name)).toEqual(['甲'])
     })
 
+    it('文件里的标签只是先后不同：标签报「已应用（只调整了顺序）」', async () => {
+      await tags.create('a', '#2F6FDB')
+      await tags.create('b', '#2A9D5C')
+      const file = writeConfig('in.json', {
+        tags: [
+          { name: 'b', color: '#2A9D5C' },
+          { name: 'a', color: '#2F6FDB' },
+        ],
+      })
+      const result = await build(fakeDialogs({ open: file })).importConfig({ terminalFontSize: 14 })
+      expect(result!.items[0]).toEqual({ key: 'tags', outcome: 'applied', message: '只调整了顺序' })
+      expect(tags.list().tags.map((t) => t.name)).toEqual(['b', 'a'])
+    })
+
     it('备份只留最近 10 份；同一秒内两次导入撞名加序号', async () => {
       mkdirSync(backupsDir(), { recursive: true })
       for (let i = 0; i < 10; i += 1) {

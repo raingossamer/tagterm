@@ -162,9 +162,13 @@ export class ConfigService {
   private async applyTags(data: ConfigFileData): Promise<ConfigItemResult> {
     if (data.tags === undefined) return { key: 'tags', outcome: 'absent' }
     try {
-      const { created, updated } = await this.deps.tags.importByName(data.tags)
-      if (created === 0 && updated === 0) return { key: 'tags', outcome: 'unchanged' }
-      return { key: 'tags', outcome: 'applied', message: `新建 ${created} 个、更新 ${updated} 个` }
+      const { created, updated, changed } = await this.deps.tags.importByName(data.tags)
+      if (!changed) return { key: 'tags', outcome: 'unchanged' }
+      return {
+        key: 'tags',
+        outcome: 'applied',
+        message: created || updated ? `新建 ${created} 个、更新 ${updated} 个` : '只调整了顺序',
+      }
     } catch (err) {
       return { key: 'tags', outcome: 'failed', message: messageOf(err) }
     }
