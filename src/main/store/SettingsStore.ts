@@ -2,6 +2,7 @@
  * 服务层（深模块）：settings.json 的加载、更新、版本校验与原子写。
  * 首次运行（文件不存在）按注入的 seedCommands（装配层的 PATH 探测结果）生成唤起命令并落盘；
  * 之后完全以文件为准。目录以构造参数注入；不 import electron。
+ * 变更经串行队列一个接一个执行，每次先按已提交的数据算出整份新设置写盘，成功才换内存并回调。
  */
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
@@ -18,6 +19,7 @@ import {
 import { DEFAULT_GLOBAL_SHORTCUT, isValidAccelerator } from '@shared/accelerator'
 import { readJson, writeJsonAtomic } from './jsonFile'
 import { assertImageReadable, readImageBytes, type ShrinkImage } from './backgroundImage'
+import { createSerialQueue } from './serialQueue'
 
 const SETTINGS_FILE = 'settings.json'
 
@@ -41,6 +43,8 @@ export class SettingsStore {
     launchCommands: [],
     background: DEFAULT_BACKGROUND,
   }
+  /** 变更一个接一个执行：每次都从前一次提交后的数据算起（见 serialQueue）；load 只在启动时跑，不经队列 */
+  private readonly queue = createSerialQueue()
   private readonly file: string
   private readonly seedCommands: readonly string[]
   private readonly onChanged: (settings: Settings) => void
@@ -115,33 +119,37 @@ export class SettingsStore {
   }
 
   /** 写全局快捷键配置（接口层在注册成功后才调）：等于缺省值时删键；落盘成功才改内存并回调全量设置 */
-  async setGlobalShortcut(config: GlobalShortcutConfig): Promise<void> {
-    const isDefault =
-      config.enabled === DEFAULT_GLOBAL_SHORTCUT_CONFIG.enabled &&
-      config.accelerator === DEFAULT_GLOBAL_SHORTCUT_CONFIG.accelerator
-    const next: Settings = { ...this.settings }
-    if (isDefault) delete next.globalShortcut
-    else next.globalShortcut = { ...config }
-    await this.commit(next)
-    this.onChanged(this.get())
+  setGlobalShortcut(config: GlobalShortcutConfig): Promise<void> {
+    return this.queue.run(async () => {
+      const isDefault =
+        config.enabled === DEFAULT_GLOBAL_SHORTCUT_CONFIG.enabled &&
+        config.accelerator === DEFAULT_GLOBAL_SHORTCUT_CONFIG.accelerator
+      const next: Settings = { ...this.settings }
+      if (isDefault) delete next.globalShortcut
+      else next.globalShortcut = { ...config }
+      await this.commit(next)
+      this.onChanged(this.get())
+    })
   }
 
   /** 补丁合并：给出的字段整体替换；新命令（无 id）分配 uuid。落盘成功才改内存 */
-  async update(patch: SettingsPatch): Promise<Settings> {
-    const next: Settings = { ...this.settings }
-    if (patch.launchCommands) next.launchCommands = patch.launchCommands.map(withId)
-    if (patch.background) {
-      const { imagePath } = patch.background
-      // 换了新图：读取时会被拒绝的（太大、格式不支持）不让存 —— 存进去的坏图每次启动都读不出来。
-      // 路径没变不查：存进去之后文件才变大的，不拦用户改别的
-      if (imagePath !== null && imagePath !== this.settings.background.imagePath)
-        await assertImageReadable(imagePath)
-      next.background = { ...patch.background }
-    }
-    await this.commit(next)
-    const settings = this.get()
-    this.onChanged(settings)
-    return settings
+  update(patch: SettingsPatch): Promise<Settings> {
+    return this.queue.run(async () => {
+      if (patch.background) {
+        const { imagePath } = patch.background
+        // 换了新图：读取时会被拒绝的（太大、格式不支持）不让存 —— 存进去的坏图每次启动都读不出来。
+        // 路径没变不查：存进去之后文件才变大的，不拦用户改别的
+        if (imagePath !== null && imagePath !== this.settings.background.imagePath)
+          await assertImageReadable(imagePath)
+      }
+      const next: Settings = { ...this.settings }
+      if (patch.launchCommands) next.launchCommands = patch.launchCommands.map(withId)
+      if (patch.background) next.background = { ...patch.background }
+      await this.commit(next)
+      const settings = this.get()
+      this.onChanged(settings)
+      return settings
+    })
   }
 
   /** 背景图的 MIME 与原始字节（渲染进程自己建 Blob URL）；未设置或文件不存在为 null（回退纯色）。传 file 可读未保存的图（设置弹窗预览） */
