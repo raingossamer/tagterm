@@ -9,12 +9,13 @@
  * 以 JSON 打印到 stdout。生产运行不触发。
  */
 import { app, Menu, nativeImage, type BrowserWindow } from 'electron'
-import { copyFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { join } from 'node:path'
 import type { PtyManager } from './pty/PtyManager'
 import type { AgentSubsystem, BadgeCounts } from './agent/AgentSubsystem'
 import type { SessionSubsystem } from './session/SessionSubsystem'
+import type { SettingsStore } from './store/SettingsStore'
 import type { TagStore } from './store/TagStore'
 import { judgeSmoke } from './smokeVerdict'
 
@@ -23,6 +24,10 @@ export interface SmokeDeps {
   sessions: SessionSubsystem
   /** 标签只读：核查收尾后 tags.json 只剩空集合 */
   tags: Pick<TagStore, 'list'>
+  /** 设置只读：配置导入导出核查前后比对用（还原经渲染进程 API） */
+  settings: Pick<SettingsStore, 'get' | 'getGlobalShortcut'>
+  /** 数据目录：配置导入导出的固定路径文件与备份目录在这里 */
+  dataDir: string
   /** 终端只读探针：pid 与是否在跑（给轮询用的同步谓词）；写入与结束一律经 sessions */
   pty: Pick<PtyManager, 'getPid' | 'has'>
   /** agent 子系统只读：hooks 端口、运行时记录、shell 空闲核对（核查与诊断用） */
@@ -1107,6 +1112,161 @@ const SHORTCUT_SETTINGS_SCRIPT = `(async () => {
  * 终端里 mode con 读到的列数跟着变 = pty 尺寸真的同步了）、Ctrl+0 复位、全局快捷键的唤出 / 隐藏逻辑（烟测不注册系统热键，
  * 直接调用）、设置「启动」段的键位显示。s1 是唤起区段最后重启过、正显示着的空闲会话。字号在 finally 里还原
  */
+
+/** 配置导入导出核查用的两个标签名与导入文件内容（写死；不含开机自启与 hooks —— 不碰系统登录项与 hooks 目标，字号也不带） */
+const CONFIG_KEEP_TAG = 'smoke-cfg-keep'
+const CONFIG_NEW_TAG = 'smoke-cfg-new'
+const CONFIG_IMPORT_FILE = {
+  format: 'tagterm-config',
+  version: 1,
+  tags: [
+    { name: CONFIG_NEW_TAG, color: '#2F6FDB' },
+    { name: CONFIG_KEEP_TAG, color: '#D14343', hidden: true },
+  ],
+  launchCommands: [{ label: 'smoke-cfg', command: 'rem smoke-cfg', pinned: true }],
+  appearance: { fit: 'cover', imageOpacity: 0.5, panelOpacity: 0.9, blurPx: 2 },
+  globalShortcut: { enabled: true, accelerator: 'Ctrl+Alt+F9' },
+}
+
+/**
+ * 配置导入导出（config-import-export）：经设置弹窗「导入导出」段走真实 IPC。对话框在烟测里换成烟测数据目录下的固定路径
+ * （装配层 fixedConfigDialogs）：导出后读那份文件核对「带全部偏好项、不含会话、外观不带图片路径」；再把写死的导入文件放到
+ * 固定路径，经应用内确认弹窗（定时器自动点「确定」）导入，核对标签按名合并（同名沿用原 id、颜色与隐藏用文件里的）、唤起命令被替换、
+ * 外观参数生效而图片路径不变、全局快捷键换了、备份文件存在、会话与终端不受影响（pid 不变）。
+ * finally 还原设置与快捷键（经渲染进程 API，与用户同一条路）、删掉两个标签、关掉弹窗、删掉两份文件
+ */
+async function runConfigChecks(
+  win: BrowserWindow,
+  deps: SmokeDeps,
+  s1: string,
+): Promise<Record<string, unknown>> {
+  const js = (code: string): Promise<unknown> => win.webContents.executeJavaScript(code)
+  const click = (selector: string): Promise<unknown> =>
+    js(`document.querySelector('${selector}')?.click(); true`)
+  const exportPath = join(deps.dataDir, 'smoke-config-export.json')
+  const importPath = join(deps.dataDir, 'smoke-config-import.json')
+  const backupsDir = join(deps.dataDir, 'backups')
+  const original = deps.settings.get()
+  const originalShortcut = deps.settings.getGlobalShortcut()
+  const pidBefore = deps.pty.getPid(s1)
+  const sessionsBefore = deps.sessions.list().length
+  rmSync(exportPath, { force: true })
+  rmSync(importPath, { force: true })
+  // 本机先有一个标签：导入文件里的同名标签要沿用它的 id（关联不动），颜色与隐藏换成文件里的
+  const keep = (await js(
+    `window.tagterm.tag.create(${JSON.stringify(CONFIG_KEEP_TAG)}, '#C98A0C')`,
+  )) as { id: string }
+  await js(
+    `window.__smokeConfigConfirms = []; clearInterval(window.__smokeConfigAutoConfirm); window.__smokeConfigAutoConfirm = setInterval(() => { const d = document.querySelector('[data-test=confirm-dialog]'); if (!d) return; window.__smokeConfigConfirms.push(d.querySelector('[data-test=confirm-message]')?.textContent?.trim() ?? ''); d.querySelector('[data-test=confirm-ok]')?.click() }, 30); true`,
+  )
+  try {
+    await click('[data-test=open-settings]')
+    const modalOpened = await pollJs(
+      win,
+      `!!document.querySelector('[data-test=settings-modal]')`,
+      3000,
+    )
+    await click('[data-test=settings-nav-config]')
+    const sectionShown = await pollJs(
+      win,
+      `!!document.querySelector('[data-test=config-section]')`,
+      3000,
+    )
+
+    // 导出
+    await click('[data-test=config-export]')
+    const exportedShown = await pollJs(
+      win,
+      `!!document.querySelector('[data-test=config-exported]')`,
+      8000,
+    )
+    const exportedText = (await js(
+      `document.querySelector('[data-test=config-exported]')?.textContent?.trim() ?? ''`,
+    )) as string
+    const exported = existsSync(exportPath)
+      ? (JSON.parse(readFileSync(exportPath, 'utf8')) as Record<string, unknown>)
+      : null
+    const exportedKeys = exported ? Object.keys(exported) : []
+    const appearance = (exported?.['appearance'] ?? null) as Record<string, unknown> | null
+    const exportedTags = (exported?.['tags'] ?? []) as Array<{ name: string }>
+
+    // 导入：写死的文件放到固定路径，点「导入配置…」→ 应用内确认弹窗自动点「确定」
+    writeFileSync(importPath, JSON.stringify(CONFIG_IMPORT_FILE, null, 2))
+    await click('[data-test=config-import]')
+    const importedShown = await pollJs(
+      win,
+      `!!document.querySelector('[data-test=config-import-result]')`,
+      10000,
+    )
+    const items = (await js(
+      `[...document.querySelectorAll('[data-test=config-import-result] li')].map((li) => li.textContent.trim())`,
+    )) as string[]
+    const confirms = (await js('window.__smokeConfigConfirms')) as string[]
+    const after = deps.settings.get()
+    const tagsAfter = deps.tags.list().tags
+    const keepAfter = tagsAfter.find((t) => t.name === CONFIG_KEEP_TAG)
+    const item = (i: number, prefix: string): boolean => (items[i] ?? '').startsWith(prefix)
+    return {
+      modalOpened,
+      sectionShown,
+      exportedShown,
+      exportedText,
+      exportFileWritten: exported !== null,
+      exportHasAllItems: CONFIG_ITEM_NAMES.every((k) => exportedKeys.includes(k)),
+      exportHasNoSessions:
+        exported !== null && !('sessions' in exported) && !('sessionTags' in exported),
+      exportNoImagePath: appearance !== null && !('imagePath' in appearance),
+      exportHasKeepTag: exportedTags.some((t) => t.name === CONFIG_KEEP_TAG),
+      confirms,
+      confirmAsked: confirms.length === 1 && confirms[0]!.includes('标签按名合并'),
+      importedShown,
+      items,
+      tagsApplied: item(0, '标签：已应用'),
+      commandsApplied: item(1, '唤起命令：已应用'),
+      appearanceApplied: item(2, '外观参数：已应用'),
+      shortcutApplied: item(3, '全局快捷键：已应用'),
+      autoLaunchAbsent: item(4, '开机自启：文件里没有'),
+      hooksAbsent: item(5, 'Agent hooks 开关：文件里没有'),
+      fontSizeAbsent: item(6, '终端字号：文件里没有'),
+      keepTagSameId: keepAfter?.id === keep.id,
+      keepTagRestyled: keepAfter?.color === '#D14343' && keepAfter?.hidden === true,
+      newTagCreated: tagsAfter.some((t) => t.name === CONFIG_NEW_TAG),
+      commandsReplaced: after.launchCommands.map((c) => c.command).join(',') === 'rem smoke-cfg',
+      appearanceChanged: after.background.fit === 'cover' && after.background.blurPx === 2,
+      imagePathKept: after.background.imagePath === original.background.imagePath,
+      shortcutChanged: deps.settings.getGlobalShortcut().accelerator === 'Ctrl+Alt+F9',
+      backupExists:
+        existsSync(backupsDir) &&
+        readdirSync(backupsDir).some((n) => n.startsWith('tagterm-config-')),
+      pidUnchanged: pidBefore !== null && deps.pty.getPid(s1) === pidBefore,
+      sessionsUnchanged: deps.sessions.list().length === sessionsBefore,
+    }
+  } finally {
+    await js(`clearInterval(window.__smokeConfigAutoConfirm); true`)
+    await click('[data-test=settings-cancel]')
+    // 还原：与用户同一条路（渲染进程 API）；标签删两个；文件删掉
+    await js(
+      `window.tagterm.settings.update(${JSON.stringify({ launchCommands: original.launchCommands, background: original.background })})`,
+    )
+    await js(`window.tagterm.app.setGlobalShortcut(${JSON.stringify(originalShortcut)})`)
+    for (const tag of deps.tags.list().tags)
+      if (tag.name === CONFIG_KEEP_TAG || tag.name === CONFIG_NEW_TAG)
+        await js(`window.tagterm.tag.remove(${JSON.stringify(tag.id)})`)
+    rmSync(exportPath, { force: true })
+    rmSync(importPath, { force: true })
+  }
+}
+
+const CONFIG_ITEM_NAMES = [
+  'tags',
+  'launchCommands',
+  'appearance',
+  'globalShortcut',
+  'autoLaunch',
+  'hooks',
+  'terminalFontSize',
+]
+
 async function runKeyboardChecks(
   win: BrowserWindow,
   deps: SmokeDeps,
@@ -1696,6 +1856,18 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         keyboard = { error: errorText(err) }
       }
 
+      // 配置导入导出（config-import-export）：经设置弹窗走真实 IPC，对话框换成固定路径
+      let config: Record<string, unknown> = {}
+      try {
+        config = await withTimeout(
+          runConfigChecks(win, deps, sessionIds[0]!),
+          60000,
+          '配置导入导出烟测',
+        )
+      } catch (err) {
+        config = { error: errorText(err) }
+      }
+
       // 清理烟测会话：走会话子系统的完整级联（结束 pty → 删记录 → 删关联 → 墓碑，与右键「移除会话」同一条路），
       // 之后 before-quit 的 killAll 对它们是空操作；tags.json 应已落盘且只剩空集合
       for (const id of sessionIds) await deps.sessions.remove(id)
@@ -1733,6 +1905,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         heuristic,
         launchBar,
         keyboard,
+        config,
         processTree,
         termBackground,
         hooks,
