@@ -630,10 +630,28 @@ const TERM_EDGE_POINTS = `JSON.stringify((() => {
   return [0.35, 0.6, 0.85].map((f) => [x, r.top + r.height * f])
 })())`
 
+/**
+ * 当前可见终端第二行前面十几格（CSS 像素）：cmd 在提示符前空一行，cls 之后提示符落在第二行（原始输出里是 ESC[2;1H）；
+ * 字号 14 时一格约 8 px、一行约 17 px，x 只取到 140 px 以内落在第 1–17 格里，y 取第二行偏上的四条线（19–28 px）；
+ * 暗淡提示符核查用：那几格是带暗淡属性的「.」，点只在行底，四条线读到的都是格子底色。没有可见终端为空数组
+ */
+const TERM_DIM_POINTS = `JSON.stringify((() => {
+  const host = [...document.querySelectorAll('[data-test=terminal-pane] > div')].find((h) => h.style.display === 'block')
+  const r = host?.querySelector('.xterm-screen')?.getBoundingClientRect()
+  if (!r || r.width < 160 || r.height < 20) return []
+  const points = []
+  for (let x = 12; x <= 140; x += 6) for (const y of [19, 22, 25, 28]) points.push([r.left + x, r.top + y])
+  return points
+})())`
+
 /** 屏幕上真实合成出来的颜色（capturePage 与屏幕取色一致，2026-09-23 实测） */
-async function termEdgePixels(win: BrowserWindow): Promise<Rgb[]> {
+function termEdgePixels(win: BrowserWindow): Promise<Rgb[]> {
+  return termPixels(win, TERM_EDGE_POINTS)
+}
+
+async function termPixels(win: BrowserWindow, pointsScript: string): Promise<Rgb[]> {
   const points = JSON.parse(
-    (await win.webContents.executeJavaScript(TERM_EDGE_POINTS)) as string,
+    (await win.webContents.executeJavaScript(pointsScript)) as string,
   ) as Array<[number, number]>
   const image = await win.webContents.capturePage()
   const { width, height } = image.getSize()
@@ -664,10 +682,17 @@ const VISIBLE_TERM_RENDERER = `(() => {
 /**
  * 终端区透出全局背景的真实像素核查：不设背景 → 终端底色 #0C0C0C；设纯红背景图（面板半透明）→ 同一处带红色色偏；
  * 恢复缺省背景设置 → 回到终端底色。像素值本身是排查数据（数字不进门槛），结论是三个布尔核查。
- * 另核查：设了背景图时当前终端必须是 DOM 渲染（WebGL 会给暗淡字垫不透明黑底）；不设背景时用哪种只记录不判 ——
- * 没有 GPU 的机器（CI）上 WebGL 本来就会退回 DOM
+ * 另核查（perf-startup-memory 行为 5）：有无背景图用的是同一种渲染器（不再有背景图就退回 DOM）；用哪种只记录不判 ——
+ * 没有 GPU 的机器（CI）上 WebGL 本来就会退回 DOM。以及「暗淡格子不垫黑」：上游 addon-webgl 给带 DIM 标志位的格子画 alpha 为 1
+ * 的主题底色，透出背景时是一块块纯黑，打补丁（patches/）后应与别处一样透出红色 —— 把 cmd 的提示符换成 20 个暗淡的「.」再 cls
+ *（不用空格：ConPTY 会把连续空格换成擦除，带不上属性），第二行（cmd 在提示符前空一行）前十几格就是带暗淡属性的格子，
+ * 在行底的点之上读它们的真实像素；
+ * DOM 渲染本来就不画底，同样通过。核查完把提示符还原
  */
-async function probeTermBackground(win: BrowserWindow): Promise<Record<string, unknown>> {
+async function probeTermBackground(
+  win: BrowserWindow,
+  writeTerminal: (data: string) => void,
+): Promise<Record<string, unknown>> {
   const js = (code: string): Promise<unknown> => win.webContents.executeJavaScript(code)
   const waitJs = async (expr: string, timeoutMs: number): Promise<boolean> => {
     const start = Date.now()
@@ -691,6 +716,15 @@ async function probeTermBackground(win: BrowserWindow): Promise<Record<string, u
   await sleep(500)
   const tinted = await termEdgePixels(win)
   const tintedRenderer = await js(VISIBLE_TERM_RENDERER)
+  writeTerminal(`prompt $E[2m${'.'.repeat(20)}$E[0m$G\r`)
+  await sleep(300)
+  writeTerminal('cls\r')
+  await sleep(700)
+  const dimCells = await termPixels(win, TERM_DIM_POINTS)
+  writeTerminal('prompt\r')
+  await sleep(300)
+  writeTerminal('cls\r')
+  await sleep(300)
   await js(
     `window.tagterm.settings.update({ background: { imagePath: null, fit: 'contain', imageOpacity: 0.35, panelOpacity: 0.75, blurPx: 4 } })`,
   )
@@ -705,7 +739,9 @@ async function probeTermBackground(win: BrowserWindow): Promise<Record<string, u
     plainRenderer,
     tintedRenderer,
     restoredRenderer,
-    domRendererWithBg: tintedRenderer === 'dom',
+    sameRendererWithBg: tintedRenderer === plainRenderer,
+    dimCells,
+    dimTextNotBoxed: mostly(dimCells, isRedTinted),
     bgShown,
     bgCleared,
     plainIsTermBg: mostly(plain, isTermBg),
@@ -1272,7 +1308,9 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
       // 终端区透出全局背景（reliability-hardening 行为 4）：xterm 6 自带样式给铺满终端区的 .xterm-viewport 写死了黑底，
       // DOM 层按设计半透明，屏幕上终端文字区却是纯黑 —— 只能看真实像素。取当前终端画布最右一列的几个点（避开文字），
       // 不设背景时应是终端底色 #0C0C0C；设一张纯红背景图后同一处带红色色偏；清掉后恢复
-      const termBackground = await probeTermBackground(win)
+      const termBackground = await probeTermBackground(win, (data) =>
+        deps.sessions.writeTerminal(sessionIds[0]!, data),
+      )
 
       // 托盘「设置」的广播 → 设置弹窗；背景图设 / 清往返
       const pngPath = join(app.getPath('userData'), 'smoke-bg.png')

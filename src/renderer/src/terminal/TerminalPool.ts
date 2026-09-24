@@ -41,7 +41,7 @@ export class TerminalPool {
   private readonly entries = new Map<string, Entry>()
   private container: HTMLElement | null = null
   private activeId: string | null = null
-  /** 可见实例是否用 WebGL：设了全局背景图时关掉（WebGL 会给暗淡字垫不透明黑底，DOM 渲染器不会） */
+  /** 可见实例是否用 WebGL：装配层按需关掉（见 setWebglAllowed） */
   private isWebglAllowed = true
   /** 全部实例共用的字号；新建实例首次 fit 前就换上 */
   private fontSize = DEFAULT_FONT_SIZE
@@ -118,8 +118,8 @@ export class TerminalPool {
   }
 
   /**
-   * 允不允许可见实例用 WebGL（装配层按「有没有全局背景图」设置）：变化时可见实例立即切换渲染器，之后的 show 照此办。
-   * WebGL 渲染器在背景透明时会给暗淡字（SGR 2）画不透明黑底，透出背景图时一块块黑很扎眼；DOM 渲染器暗淡字与框线都正常
+   * 允不允许可见实例用 WebGL（装配层决定）：变化时可见实例立即切换渲染器（关掉即释放 WebGL 上下文与字形图集），之后的 show 照此办。
+   * 有背景图不再是关掉的理由：WebGL 给暗淡字 / 斜体垫黑底的根因在 addon-webgl 的背景矩形判定，已打补丁（patches/）
    */
   setWebglAllowed(allowed: boolean): void {
     if (this.isWebglAllowed === allowed) return

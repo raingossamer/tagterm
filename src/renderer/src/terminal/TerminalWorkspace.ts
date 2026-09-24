@@ -229,7 +229,7 @@ export class TerminalWorkspace {
     this.pool.focusActive()
   }
 
-  /** 可见终端允不允许用 WebGL：App 按有没有全局背景图设置（背景透明时 WebGL 会给暗淡字垫黑底，见 TerminalPool） */
+  /** 可见终端允不允许用 WebGL（透传实例池，装配层决定；见 TerminalPool.setWebglAllowed） */
   setWebglAllowed(allowed: boolean): void {
     this.pool.setWebglAllowed(allowed)
   }
