@@ -12,7 +12,7 @@ A small Windows desktop tool: **save the project folders you use most as termina
 
 When you use AI coding tools in several projects at once, every time you have to find the project folder, type `cmd` in the address bar, then type `claude`; once a pile of terminal windows is open, you can no longer tell which tool has stopped and is waiting for your approval. TagTerm folds both into one window: a session is a path, and the status is visible at a glance.
 
-## Features (v0.3.11)
+## Features (v0.3.12)
 
 ### Sessions and terminals
 
@@ -72,6 +72,8 @@ Every open session has a status dot, shown in the sidebar, on the tab and in the
 ## Install
 
 Download `TagTerm-Setup-x.y.z.exe` from [Releases](https://github.com/raingossamer/tagterm/releases) and run it. Requires Windows 10 1809 or later. The installer is unsigned, so SmartScreen warns on first run.
+
+**Upgrading from 0.3.10 or 0.3.11**: "Check for updates" is broken in these two versions and never finds a new release. Download the installer for 0.3.12 or later from Releases and install it once; in-app updates work again after that.
 
 After installing, turn on the Claude Code / Codex hooks switches in "Settings → Agent": the status dots become much more accurate. When you later upgrade, hooks that are already on are updated to the new version automatically at startup, no need to toggle them again.
 
