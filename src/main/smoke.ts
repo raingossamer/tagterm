@@ -720,8 +720,17 @@ async function probeTermBackground(
     }
     return false
   }
+  // 渲染器的采样连页面可见性一起记：窗口被别的窗口完全挡住时 Chromium（原生窗口遮挡跟踪）把页面置为不可见，
+  // 行为 6 会顺势关掉 WebGL —— 那一刻用哪种渲染器与背景图无关，「有无背景图渲染器相同」只在两次采样都可见时才判
+  const rendererSample = async (): Promise<{ renderer: string; visible: boolean }> =>
+    JSON.parse(
+      (await js(
+        `JSON.stringify({ renderer: ${VISIBLE_TERM_RENDERER}, visible: document.visibilityState === 'visible' })`,
+      )) as string,
+    ) as { renderer: string; visible: boolean }
+  win.moveTop() // 尽量别让别的窗口挡着（挡住就不判渲染器，像素核查照样做）
   const plain = await termEdgePixels(win)
-  const plainRenderer = await js(VISIBLE_TERM_RENDERER)
+  const plainSample = await rendererSample()
   const redPath = join(app.getPath('userData'), 'smoke-red.png')
   writeFileSync(redPath, solidRedPng())
   await js(
@@ -733,7 +742,7 @@ async function probeTermBackground(
   )
   await sleep(500)
   const tinted = await termEdgePixels(win)
-  const tintedRenderer = await js(VISIBLE_TERM_RENDERER)
+  const tintedSample = await rendererSample()
   writeTerminal(`prompt $E[2m${'.'.repeat(20)}$E[0m$G\r`)
   await sleep(300)
   writeTerminal('cls\r')
@@ -749,15 +758,22 @@ async function probeTermBackground(
   const bgCleared = await waitJs(`!document.querySelector('[data-test=app-background]')`, 5000)
   await sleep(500)
   const restored = await termEdgePixels(win)
-  const restoredRenderer = await js(VISIBLE_TERM_RENDERER)
+  const restoredSample = await rendererSample()
   return {
     plain,
     tinted,
     restored,
-    plainRenderer,
-    tintedRenderer,
-    restoredRenderer,
-    sameRendererWithBg: tintedRenderer === plainRenderer,
+    plainRenderer: plainSample.renderer,
+    tintedRenderer: tintedSample.renderer,
+    restoredRenderer: restoredSample.renderer,
+    // 排查数据（字符串，不进门槛）：三次采样时页面可见与否，解释渲染器为什么变了
+    pageVisibleAtSamples: [plainSample, tintedSample, restoredSample]
+      .map((s) => (s.visible ? 'visible' : 'hidden'))
+      .join(','),
+    sameRendererWithBg:
+      !plainSample.visible ||
+      !tintedSample.visible ||
+      tintedSample.renderer === plainSample.renderer,
     dimCells,
     dimTextNotBoxed: mostly(dimCells, isRedTinted),
     bgShown,

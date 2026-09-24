@@ -230,7 +230,13 @@ const api = {
       emit('settings:changed', clone(settings))
       return ok(settings)
     },
-    readBackgroundImage: (path) => ok((path ?? settings.background.imagePath) ? WALLPAPER : null),
+    // 不走 ok()：它用 JSON 深拷贝，会把字节数组变成普通对象；每次给一份新的 Uint8Array 副本（contextBridge 原样传 TypedArray）
+    readBackgroundImage: (path) =>
+      Promise.resolve(
+        (path ?? settings.background.imagePath)
+          ? { mime: WALLPAPER.mime, bytes: new Uint8Array(WALLPAPER.bytes) }
+          : null,
+      ),
     onChanged: on('settings:changed'),
   },
   update: {

@@ -58,7 +58,22 @@ app.whenReady().then(async () => {
     )
   const shot = async (file) => {
     await sleep(600) // 等过渡动画与终端重绘
-    const image = await win.webContents.capturePage()
+    // 窗口被别的窗口完全挡住时合成器没有这一帧，capturePage 抛 UnknownVizError：抬到最前再试几次，不让一次遮挡废掉整轮
+    let image
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        image = await win.webContents.capturePage()
+        break
+      } catch (err) {
+        if (attempt >= 4) throw err
+        console.log(
+          `[screenshots] ${file} 截图失败（${err instanceof Error ? err.message : err}），重试 ${attempt}`,
+        )
+        win.show()
+        win.moveTop()
+        await sleep(700)
+      }
+    }
     writeFileSync(join(OUT_DIR, file), image.toPNG())
     const { width, height } = image.getSize()
     console.log(`[screenshots] ${file} ${width}×${height}`)
