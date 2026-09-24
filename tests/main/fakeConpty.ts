@@ -3,6 +3,8 @@
  * spawn 分配 pid 并记下参数；write / resize / kill 只记录；同一句柄第二次 kill 即抛 ——
  * 真 ConPTY 此时会原生崩溃、整个进程一起没，这里让测试当场失败。
  * 退出与输出都由测试送达：exit(pid, code) / emit(pid, data)。
+ * 传入 log 时 kill 记成 `kill:<pid>`，与广播、pty 退出排进同一条有序日志。
+ * spawn 参数里的 env **不记录**（只留追加的 LANG）：断言失败时 diff 会把本机全部环境变量（可能含密钥）打进输出。
  */
 import type { IDisposable, IWindowsPtyForkOptions } from 'node-pty'
 import type { PtyProcess } from '../../src/main/pty/PtyManager'
@@ -11,7 +13,9 @@ export interface FakeSpawn {
   pid: number
   file: string
   commandLine: string
-  options: IWindowsPtyForkOptions
+  options: Omit<IWindowsPtyForkOptions, 'env'>
+  /** env 里的 LANG（PtyManager 追加的 UTF-8） */
+  lang: string | undefined
 }
 
 interface ExitInfo {
@@ -35,11 +39,13 @@ export class FakeConpty {
   private nextPid = 4000
   private readonly processes = new Map<number, FakeProcess>()
 
+  constructor(private readonly log?: string[]) {}
+
   /** 传给 PtyManagerDeps.spawnPty */
   readonly spawn = (
     file: string,
     commandLine: string,
-    options: IWindowsPtyForkOptions,
+    { env, ...options }: IWindowsPtyForkOptions,
   ): PtyProcess => {
     const pid = this.nextPid++
     const proc: FakeProcess = {
@@ -49,7 +55,7 @@ export class FakeConpty {
       hasExited: false,
     }
     this.processes.set(pid, proc)
-    this.spawns.push({ pid, file, commandLine, options })
+    this.spawns.push({ pid, file, commandLine, options, lang: env?.['LANG'] })
     return {
       pid,
       onData: (listener) => subscribe(proc.dataListeners, listener),
@@ -65,6 +71,7 @@ export class FakeConpty {
           throw new Error(`假 ConPTY：pid ${pid} 被第二次 kill（真 ConPTY 会原生崩溃）`)
         proc.isKilled = true
         this.kills.push(pid)
+        this.log?.push(`kill:${pid}`)
       },
     }
   }
