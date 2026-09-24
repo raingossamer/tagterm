@@ -186,4 +186,25 @@ describe('ManageTagsModal', () => {
     expect(wrapper.emitted('close')).toHaveLength(3)
     wrapper.unmount()
   })
+
+  it('新建标签失败（写盘失败等）：原因显示在弹窗顶部红字 1.2 s，输入框保留原文', async () => {
+    vi.useFakeTimers()
+    installFakeApi({
+      tag: {
+        create: vi.fn(async () => {
+          throw new Error('EPERM: operation not permitted')
+        }),
+      },
+    })
+    const wrapper = mount(ManageTagsModal)
+    const input = wrapper.find<HTMLInputElement>('[data-test=mt-new]')
+    await input.setValue('iot')
+    await input.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test=mt-error]').text()).toBe('EPERM: operation not permitted')
+    expect(input.element.value).toBe('iot')
+    await vi.advanceTimersByTimeAsync(1200)
+    expect(wrapper.find('[data-test=mt-error]').exists()).toBe(false)
+  })
 })

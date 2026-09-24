@@ -105,10 +105,15 @@ async function remove(tag: Tag): Promise<void> {
   }
 }
 
+/** 新建失败（写盘失败等）在弹窗顶部红字，输入框保留原文可重试 */
 async function create(): Promise<void> {
   if (!newName.value.trim()) return
-  await tags.create(newName.value)
-  newName.value = ''
+  try {
+    await tags.create(newName.value)
+    newName.value = ''
+  } catch (err) {
+    flashError('*', messageOf(err))
+  }
 }
 
 function messageOf(err: unknown): string {

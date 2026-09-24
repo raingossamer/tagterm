@@ -83,7 +83,11 @@ async function removeSession(id: string): Promise<void> {
   const s = sessions.byId(id)
   if (!s) return
   if (!window.confirm(`移除会话 "${s.name}"？终端进程会被结束。`)) return
-  await sessions.remove(s.id)
+  try {
+    await sessions.remove(s.id)
+  } catch (err) {
+    flashError(err instanceof Error ? err.message : String(err)) // 写盘失败等：会话照旧在列表里
+  }
 }
 
 const groups = computed(() =>
