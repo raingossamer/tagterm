@@ -279,4 +279,54 @@ describe('TagStore', () => {
     expect(b).toEqual(a)
     expect(store.list().tags).toEqual([a])
   })
+
+  it('importByName：按名合并 —— 同名沿用本机标签（id 与关联不动，颜色 / 隐藏用给的），没有的新建；给的在前、本机独有的接在后；一次写一次回调', async () => {
+    const received: TagListResult[] = []
+    const store = new TagStore(dir, { onChanged: (r) => received.push(r) })
+    await store.load()
+    const java = await store.create('java', '#C98A0C')
+    const old = await store.create('old', '#6B7280')
+    await store.update(old.id, { hidden: true })
+    await store.attach('s1', java.id)
+    received.length = 0
+
+    const result = await store.importByName([
+      { name: 'simba', color: '#2F6FDB' },
+      { name: 'java', color: '#2A9D5C', hidden: true },
+    ])
+    expect(result).toEqual({ created: 1, updated: 1 })
+    const { tags, sessionTags } = store.list()
+    expect(tags.map((t) => [t.name, t.color, t.hidden ?? false, t.sortOrder])).toEqual([
+      ['simba', '#2F6FDB', false, 1],
+      ['java', '#2A9D5C', true, 2],
+      ['old', '#6B7280', true, 3],
+    ])
+    expect(tags[1]!.id).toBe(java.id)
+    expect(sessionTags).toEqual([{ sessionId: 's1', tagId: java.id }])
+    expect(received).toHaveLength(1)
+
+    const reloaded = new TagStore(dir)
+    await reloaded.load()
+    expect(reloaded.list()).toEqual(store.list())
+  })
+
+  it('importByName：与本机完全相同（同名同色同隐藏、同顺序）时不写盘不回调，返回全 0', async () => {
+    const received: TagListResult[] = []
+    const store = new TagStore(dir, { onChanged: (r) => received.push(r) })
+    await store.load()
+    await store.create('a', '#2F6FDB')
+    await store.create('b', '#2A9D5C')
+    received.length = 0
+    const file = join(dir, 'tags.json')
+    const before = readFileSync(file, 'utf8')
+
+    await expect(
+      store.importByName([
+        { name: 'a', color: '#2F6FDB' },
+        { name: 'b', color: '#2A9D5C' },
+      ]),
+    ).resolves.toEqual({ created: 0, updated: 0 })
+    expect(received).toEqual([])
+    expect(readFileSync(file, 'utf8')).toBe(before)
+  })
 })
