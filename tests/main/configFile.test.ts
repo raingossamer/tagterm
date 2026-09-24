@@ -146,6 +146,11 @@ describe('配置文件（导出 / 导入的 JSON）', () => {
     for (const [data, message] of cases) expect(() => parseConfigFile(file(data))).toThrow(message)
   })
 
+  it('带 UTF-8 BOM 的文件（旧版记事本另存）照样解析', () => {
+    const text = '﻿' + JSON.stringify({ format: CONFIG_FORMAT, version: 1, autoLaunch: true })
+    expect(parseConfigFile(text)).toEqual({ autoLaunch: true })
+  })
+
   it('解析时标签名与命令 trim；显示名缺省 = 命令；hooks 只给一个也行；外观里的图片路径不认（不带）', () => {
     const text = JSON.stringify({
       format: CONFIG_FORMAT,
