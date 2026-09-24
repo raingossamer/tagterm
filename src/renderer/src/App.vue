@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 应用骨架：左栏（会话列表）+ 右栏（标签页 / 工作区 / 空状态 + 状态栏），布局照原型 .app 双栏 grid；
-// 启动依次加载 settings / update / sessions / tags / agent（tags 的派生以会话列表为主表），再恢复上次的标签页与当前页（只 spawn 当前页）；
+// 启动并行加载 osBuild / settings / update / sessions / tags / agent（tags 的派生以会话列表为主表内连接，先后到达都消化得了），
+// 全部到位再恢复上次的标签页与当前页（只 spawn 当前页）；
 // 「正被查看」的会话由 useViewedSession 在当前页 / 焦点 / 可见性变化时上报主进程；
 // 装配会话生命周期核心 TerminalWorkspace：provide 给 TerminalPane / SideHead（宿主操作），attachCore 给 workspace store（快照镜像）。
 // 选中 / 关页 / 重启 / 移除的编排全在核心里，这里只做接线
@@ -92,12 +93,16 @@ onMounted(async () => {
   // 全局快捷键唤出窗口 → 主进程已显示并聚焦窗口 → 焦点交给当前终端，可直接打字
   unsubscribeFocusTerminal = window.tagterm.app.onFocusTerminal(() => core.focusActive())
   try {
-    osBuild = await window.tagterm.app.getOsBuild()
-    await settings.load()
-    await update.load()
-    await sessions.load()
-    await tags.load()
-    await agent.load()
+    // 六次 IPC 互不依赖，并行发出（读背景图那次最慢，会话 / 标签不再排在它后面）；全部到位才恢复标签页并打开当前页
+    const [build] = await Promise.all([
+      window.tagterm.app.getOsBuild(),
+      settings.load(),
+      update.load(),
+      sessions.load(),
+      tags.load(),
+      agent.load(),
+    ])
+    osBuild = build
     await workspace.restore()
   } catch (err) {
     loadError.value = err instanceof Error ? err.message : String(err)
