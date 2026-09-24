@@ -2,7 +2,8 @@
  * 设置镜像：主进程是真相源，load() 拉取一次并订阅 settings:changed 全量替换；
  * action 只调 SDK，不本地改数据。唤起命令按 pinned / sortOrder 拆成平铺区与「更多」。
  * 全局背景另有一层「预览」：设置弹窗外观段的改动先进预览（整窗即时生效但不落盘），
- * 「保存设置」才提交，「取消」传 null 还原为已保存值。背景图以 data: URL 镜像，路径变了才重新读。
+ * 「保存设置」才提交，「取消」传 null 还原为已保存值。背景图以 data: URL 镜像，路径变了才重新读；
+ * 读不出来（太大、格式不支持）回退纯色并在 imageError 记下原因，一律不抛。
  */
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
@@ -17,8 +18,10 @@ export const useSettingsStore = defineStore('settings', () => {
     launchCommands: [],
     background: DEFAULT_BACKGROUND,
   })
-  /** 当前生效背景图的 data: URL；未设置或文件不存在为 null（纯色） */
+  /** 当前生效背景图的 data: URL；未设置、文件不存在或读不出来为 null（纯色） */
   const backgroundImage = ref<string | null>(null)
+  /** 当前生效背景图读不出来的原因（主进程的中文 message，设置弹窗显示在缩略图下）；读出来了或没设置为空串 */
+  const imageError = ref('')
   /** 设置弹窗外观段的实时预览，保存或收到广播后清除 */
   const preview = ref<AppBackground | null>(null)
   /** backgroundImage 对应的路径，避免同一张图重复经 IPC 读取 */
@@ -49,15 +52,26 @@ export const useSettingsStore = defineStore('settings', () => {
     await refreshImage()
   }
 
-  /** 按当前生效背景的 imagePath 同步 data: URL；路径没变就不重复读 */
+  /**
+   * 按当前生效背景的 imagePath 同步 data: URL；路径没变就不重复读（读不出来的同一路径也不重读）。
+   * 读不出来回退纯色、记下原因，不抛：启动加载、广播、设置弹窗的「取消」都经过这里，
+   * 一张存进去的坏图不能让会话 / 标签整段加载不了，也不能让弹窗关不掉
+   */
   async function refreshImage(): Promise<void> {
     const path = background.value.imagePath
     if (path === loadedPath) return
-    backgroundImage.value = path ? await window.tagterm.settings.readBackgroundImage(path) : null
+    try {
+      backgroundImage.value = path ? await window.tagterm.settings.readBackgroundImage(path) : null
+      imageError.value = ''
+    } catch (err) {
+      backgroundImage.value = null
+      imageError.value = err instanceof Error ? err.message : String(err)
+      console.warn(`[settings] 背景图读不出来，已回退纯色：${imageError.value}`)
+    }
     loadedPath = path
   }
 
-  /** 外观段预览：传 null 还原为已保存值。换图时会读新图，读取失败（如图片太大）原样抛给调用处提示 */
+  /** 外观段预览：传 null 还原为已保存值。换图时会读新图，读不出来回退纯色并记下原因（imageError），不抛 */
   async function previewBackground(next: AppBackground | null): Promise<void> {
     preview.value = next
     await refreshImage()
@@ -76,6 +90,7 @@ export const useSettingsStore = defineStore('settings', () => {
   return {
     settings,
     backgroundImage,
+    imageError,
     background,
     panelOpacity,
     launchCommands,

@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  assertImageReadable,
   MAX_IMAGE_BYTES,
   MAX_IMAGE_EDGE,
   readImageAsDataUrl,
@@ -75,5 +76,29 @@ describe('readImageAsDataUrl', () => {
     writeFileSync(file, Buffer.alloc(MAX_IMAGE_BYTES + 1))
 
     await expect(readImageAsDataUrl(file)).rejects.toThrow(/背景图片太大/)
+  })
+})
+
+describe('assertImageReadable（保存前的检查，只看扩展名与大小、不读内容）', () => {
+  let dir: string
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'tagterm-bg-'))
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('读取时会被拒绝的图（格式不支持、超过体积上限）抛同一句中文；读得出来的与不存在的都放行', async () => {
+    writeFileSync(join(dir, 'a.txt'), 'x')
+    await expect(assertImageReadable(join(dir, 'a.txt'))).rejects.toThrow(/不支持的图片格式/)
+    writeFileSync(join(dir, 'toobig.png'), Buffer.alloc(MAX_IMAGE_BYTES + 1))
+    await expect(assertImageReadable(join(dir, 'toobig.png'))).rejects.toThrow(
+      '背景图片太大（30 MB），请换一张小于 30 MB 的',
+    )
+
+    writeFileSync(join(dir, 'ok.png'), PNG_BYTES)
+    await expect(assertImageReadable(join(dir, 'ok.png'))).resolves.toBeUndefined()
+    // 不存在：读取时回退纯色、不报错，保存时同样不拦
+    await expect(assertImageReadable(join(dir, 'missing.png'))).resolves.toBeUndefined()
   })
 })

@@ -3,6 +3,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SettingsStore } from '../../src/main/store/SettingsStore'
+import { MAX_IMAGE_BYTES } from '../../src/main/store/backgroundImage'
 import type { Settings } from '@shared/models'
 
 // 用真实临时目录，不 mock fs；PATH 探测结果以 seedCommands 注入
@@ -126,6 +127,36 @@ describe('SettingsStore', () => {
     const reloaded = new SettingsStore(dir, { seedCommands: [] })
     await reloaded.load()
     expect(reloaded.get()).toEqual(store.get())
+  })
+
+  it('update 换了一张读不出来的新图（超过体积上限 / 格式不支持）→ reject 同一句中文，不落盘不回调；路径没变（存进去之后文件才变大）不拦别的改动', async () => {
+    const received: Settings[] = []
+    const store = new SettingsStore(dir, {
+      seedCommands: [],
+      onChanged: (settings) => received.push(settings),
+    })
+    await store.load()
+    const before = store.get()
+    const huge = join(dir, 'huge.png')
+    writeFileSync(huge, Buffer.alloc(MAX_IMAGE_BYTES + 1))
+
+    await expect(
+      store.update({ background: { ...before.background, imagePath: huge } }),
+    ).rejects.toThrow(/背景图片太大/)
+    await expect(
+      store.update({ background: { ...before.background, imagePath: join(dir, 'a.txt') } }),
+    ).rejects.toThrow(/不支持的图片格式/)
+    expect(store.get()).toEqual(before)
+    expect(received).toEqual([])
+    const file = join(dir, 'settings.json')
+    expect(JSON.parse(readFileSync(file, 'utf8')).background.imagePath).toBeNull()
+
+    const wall = join(dir, 'wall.png')
+    writeFileSync(wall, 'png')
+    await store.update({ background: { ...before.background, imagePath: wall } })
+    writeFileSync(wall, Buffer.alloc(MAX_IMAGE_BYTES + 1))
+    await store.update({ background: { ...before.background, imagePath: wall, blurPx: 10 } })
+    expect(store.get().background).toMatchObject({ imagePath: wall, blurPx: 10 })
   })
 
   it('update 写盘失败：内存保持改之前的值、不回调；之后别的变更落盘也不会把没写进去的补丁带进文件', async () => {

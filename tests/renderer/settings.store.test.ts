@@ -128,4 +128,58 @@ describe('settings store', () => {
     await store.previewBackground(null)
     expect(store.background).toEqual(picked)
   })
+
+  it('背景图读不出来（太大、格式不支持）：load / 广播 / 预览 / 还原都不抛，回退纯色并记下原因；同一路径不重读，换成读得出来的图即清掉原因', async () => {
+    const TOO_BIG = '背景图片太大（40 MB），请换一张小于 30 MB 的'
+    let broadcast: ((s: Settings) => void) | undefined
+    const api = installFakeApi({
+      settings: {
+        get: async () =>
+          makeSettings({ background: { ...DEFAULT_BACKGROUND, imagePath: 'D:/huge.png' } }),
+        readBackgroundImage: vi.fn(async (path?: string) => {
+          if (path?.includes('huge')) throw new Error(TOO_BIG)
+          return `data:image/png;base64,${path}`
+        }),
+        onChanged: (cb) => {
+          broadcast = cb
+          return () => {}
+        },
+      },
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const store = useSettingsStore()
+
+    // 启动：已保存的图读不出来也不让 load 失败（否则会话 / 标签整段加载不了）
+    await expect(store.load()).resolves.toBeUndefined()
+    expect(store.backgroundImage).toBeNull()
+    expect(store.panelOpacity).toBe(1)
+    expect(store.imageError).toBe(TOO_BIG)
+    expect(warn).toHaveBeenCalledTimes(1)
+
+    // 只调参数、路径没变：不重读
+    await store.previewBackground({ ...store.background, blurPx: 9 })
+    expect(api.settings.readBackgroundImage).toHaveBeenCalledTimes(1)
+
+    // 预览一张读得出来的：原因清掉；再预览一张读不出来的：回退纯色，不抛
+    await store.previewBackground({ ...DEFAULT_BACKGROUND, imagePath: 'D:/ok.png' })
+    expect(store.backgroundImage).toBe('data:image/png;base64,D:/ok.png')
+    expect(store.imageError).toBe('')
+    await expect(
+      store.previewBackground({ ...DEFAULT_BACKGROUND, imagePath: 'D:/huge-2.png' }),
+    ).resolves.toBeUndefined()
+    expect(store.backgroundImage).toBeNull()
+    expect(store.imageError).toBe(TOO_BIG)
+
+    // 还原（取消）：已保存的也读不出来，同样不抛 —— 否则设置弹窗关不掉
+    await expect(store.previewBackground(null)).resolves.toBeUndefined()
+    expect(store.background.imagePath).toBe('D:/huge.png')
+    expect(store.imageError).toBe(TOO_BIG)
+
+    // 广播换成读得出来的图
+    broadcast!(makeSettings({ background: { ...DEFAULT_BACKGROUND, imagePath: 'D:/b.png' } }))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(store.backgroundImage).toBe('data:image/png;base64,D:/b.png')
+    expect(store.imageError).toBe('')
+    warn.mockRestore()
+  })
 })

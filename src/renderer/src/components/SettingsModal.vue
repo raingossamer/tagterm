@@ -79,15 +79,23 @@ const hooksError = ref<Record<HookAgent, string>>({ claude: '', codex: '' })
 /** 外观段草稿：打开时取已保存值，改动只进这里，保存才落盘 */
 const draft = ref<AppBackground>({ ...settings.background })
 const isLivePreview = ref(true)
-/** 关掉实时预览时弹窗内缩略图要单独读图（整窗仍用已保存值） */
+/** 关掉实时预览时弹窗内缩略图要单独读图（整窗仍用已保存值）；读不出来的原因另记 */
 const draftImage = ref<string | null>(null)
+const draftImageError = ref('')
 
 const hasImage = computed(() => draft.value.imagePath !== null)
 const fileName = computed(() => draft.value.imagePath?.split(/[\\/]/).pop() ?? '未设置背景')
 const thumbnail = computed(() =>
   isLivePreview.value ? settings.backgroundImage : draftImage.value,
 )
-const isImageMissing = computed(() => hasImage.value && thumbnail.value === null)
+/** 缩略图那张图读不出来的原因（太大、格式不支持）：实时预览看整窗生效的图，关掉预览看草稿自己读的图 */
+const imageError = computed(() => {
+  if (!hasImage.value) return ''
+  return isLivePreview.value ? settings.imageError : draftImageError.value
+})
+const isImageMissing = computed(
+  () => hasImage.value && thumbnail.value === null && !imageError.value,
+)
 const imagePercent = computed(() => Math.round(draft.value.imageOpacity * 100))
 const panelPercent = computed(() => Math.round(draft.value.panelOpacity * 100))
 const minPanelPercent = Math.round(MIN_PANEL_OPACITY * 100)
@@ -161,20 +169,23 @@ watch(
   { deep: true },
 )
 
+// 读不出来的图（太大、格式不支持）不在这里报错：整窗回退纯色，原因写在缩略图下（imageError）
 async function applyPreview(): Promise<void> {
   error.value = ''
-  try {
-    await settings.previewBackground(isLivePreview.value ? { ...draft.value } : null)
-    if (!isLivePreview.value) await loadDraftImage()
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
-  }
+  await settings.previewBackground(isLivePreview.value ? { ...draft.value } : null)
+  if (!isLivePreview.value) await loadDraftImage()
 }
 
-/** 预览关闭时缩略图自己读图（读取失败按「文件不存在」处理，红字由调用处显示） */
+/** 预览关闭时缩略图自己读图；读不出来缩略图为空并记下原因 */
 async function loadDraftImage(): Promise<void> {
   const path = draft.value.imagePath
-  draftImage.value = path ? await window.tagterm.settings.readBackgroundImage(path) : null
+  try {
+    draftImage.value = path ? await window.tagterm.settings.readBackgroundImage(path) : null
+    draftImageError.value = ''
+  } catch (err) {
+    draftImage.value = null
+    draftImageError.value = err instanceof Error ? err.message : String(err)
+  }
 }
 
 async function pickImage(): Promise<void> {
@@ -350,6 +361,7 @@ function onKeydown(e: KeyboardEvent): void {
             <p v-if="isImageMissing" class="warn" data-test="bg-missing">
               图片文件不存在，已回退为纯色
             </p>
+            <p v-if="imageError" class="warn" data-test="bg-error" v-text="imageError"></p>
 
             <div class="field-row">
               <div class="label">
