@@ -6,6 +6,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { TAG_COLORS, type Tag } from '@shared/models'
 import { moveItem } from '../composables/launchCommands'
+import { useConfirmStore } from '../stores/confirm'
 import { useFilterStore } from '../stores/filter'
 import { useTagsStore } from '../stores/tags'
 
@@ -14,6 +15,7 @@ const FLASH_MS = 1200
 const emit = defineEmits<{ close: [] }>()
 const tags = useTagsStore()
 const filter = useFilterStore()
+const confirmDialog = useConfirmStore()
 const newName = ref('')
 /** 行内错误：tagId → 文案，1.2 s 后自动清除 */
 const rowErrors = ref<Record<string, string>>({})
@@ -96,7 +98,8 @@ async function toggleVisible(tag: Tag, e: Event): Promise<void> {
 }
 
 async function remove(tag: Tag): Promise<void> {
-  if (!window.confirm(`删除标签 "${tag.name}"？会话本身会保留。`)) return
+  if (!(await confirmDialog.ask(`删除标签 "${tag.name}"？会话本身会保留。`, { danger: true })))
+    return
   try {
     await tags.remove(tag.id)
     filter.deselect(tag.id)

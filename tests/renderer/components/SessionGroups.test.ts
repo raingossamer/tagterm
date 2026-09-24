@@ -8,14 +8,17 @@ import { useWorkspaceStore } from '../../../src/renderer/src/stores/workspace'
 import { useTagsStore } from '../../../src/renderer/src/stores/tags'
 import { useFilterStore } from '../../../src/renderer/src/stores/filter'
 import { useAgentStore } from '../../../src/renderer/src/stores/agent'
+import { useConfirmStore } from '../../../src/renderer/src/stores/confirm'
 import { installFakeApi, makeSession, makeTag } from '../fakeApi'
 import { installFakeWorkspace } from '../fakeWorkspace'
 
-// happy-dom 没有 window.confirm，按需要的返回值打桩
+// 确认走应用内确认弹窗（stores/confirm）：替换 ask 按需要的返回值作答；重复打桩复用同一个替身，先清空调用记录
 function stubConfirm(result: boolean) {
-  const fn = vi.fn(() => result)
-  Object.defineProperty(window, 'confirm', { value: fn, configurable: true, writable: true })
-  return fn
+  const confirm = useConfirmStore()
+  const spy = vi.isMockFunction(confirm.ask) ? vi.mocked(confirm.ask) : vi.spyOn(confirm, 'ask')
+  spy.mockReset()
+  spy.mockResolvedValue(result)
+  return spy
 }
 
 describe('SessionGroups', () => {
@@ -46,7 +49,9 @@ describe('SessionGroups', () => {
     await openMenu()
     await wrapper.find('[data-test=menu-remove]').trigger('click')
     await flushPromises()
-    expect(confirm).toHaveBeenCalledWith('移除会话 "simba-api"？终端进程会被结束。')
+    expect(confirm).toHaveBeenCalledWith('移除会话 "simba-api"？终端进程会被结束。', {
+      danger: true,
+    })
     expect(api.session.remove).toHaveBeenCalledWith(s.id)
     expect(wrapper.emitted('select')).toBeUndefined()
 
@@ -169,7 +174,9 @@ describe('SessionGroups', () => {
       await rightClick(wrapper, s.id)
       await wrapper.find('[data-test=menu-restart]').trigger('click')
       await flushPromises()
-      expect(confirm).toHaveBeenCalledWith('终端里有程序在运行（node），重启会结束它。继续？')
+      expect(confirm).toHaveBeenCalledWith('终端里有程序在运行（node），重启会结束它。继续？', {
+        danger: true,
+      })
       expect(pty.kills).toEqual([])
 
       agent.runtime = {
@@ -187,6 +194,7 @@ describe('SessionGroups', () => {
       await flushPromises()
       expect(confirm).toHaveBeenCalledWith(
         '终端里有程序在运行（Claude Code），重启会结束它。继续？',
+        { danger: true },
       )
       expect(pty.kills).toEqual([s.id])
 
