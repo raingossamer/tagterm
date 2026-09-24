@@ -1,13 +1,24 @@
 /**
- * 服务层（深模块）：维护 sessionId → IPty；spawn / write / resize / kill / killAll；
+ * 服务层（深模块）：维护 sessionId → 伪终端进程；spawn / write / resize / kill / killAll；
  * 按会话把输出合并（≤16 ms 或 ≥64 KB flush）后回调；进程退出时清理并回调。不 import electron。
+ * 伪终端进程缺省由 node-pty（ConPTY）起，测试可经 spawnPty 注入假 ConPTY。
  */
 import * as nodePty from 'node-pty'
-import type { IPty } from 'node-pty'
+import type { IPty, IWindowsPtyForkOptions } from 'node-pty'
 import type { PtyExitEvent } from '@shared/ipc'
 import type { ShellKind } from '@shared/models'
 import { buildSpawnSpec } from './shellArgs'
 import { OutputBatcher } from './OutputBatcher'
+
+/** 一条伪终端进程里 PtyManager 用到的那几样（node-pty 的 IPty 的子集；测试的假 ConPTY 实现它） */
+export type PtyProcess = Pick<IPty, 'pid' | 'onData' | 'onExit' | 'write' | 'resize' | 'kill'>
+
+/** 起一条伪终端进程：生产是 node-pty 的 spawn（ConPTY） */
+export type SpawnPty = (
+  file: string,
+  commandLine: string,
+  options: IWindowsPtyForkOptions,
+) => PtyProcess
 
 export interface PtyManagerDeps {
   /** 已合并的输出批次 */
@@ -17,6 +28,8 @@ export interface PtyManagerDeps {
   onSpawn?: (sessionId: string, pid: number) => void
   /** 文件存在性谓词（装配层传 existsSync）：spawn 前把 shell 名解析成绝对路径要用，见 shellArgs.resolveShellFile */
   isFile: (fullPath: string) => boolean
+  /** 缺省 node-pty 的 spawn；测试注入假 ConPTY，PtyManager 自己的逻辑照跑而不起真实进程 */
+  spawnPty?: SpawnPty
 }
 
 export interface SpawnOptions {
@@ -27,7 +40,7 @@ export interface SpawnOptions {
 }
 
 interface Entry {
-  pty: IPty
+  pty: PtyProcess
   batcher: OutputBatcher
   /** 已经调过 kill、还没收到 exit：这段窗口里再 kill 一律忽略 */
   isKilled: boolean
@@ -46,7 +59,8 @@ export class PtyManager {
   spawn(sessionId: string, opts: SpawnOptions): { pid: number } {
     if (this.entries.has(sessionId)) throw new Error(`会话 ${sessionId} 的终端已在运行`)
     const spec = buildSpawnSpec(opts.shell, opts.cwd, process.env, this.deps.isFile)
-    const pty = nodePty.spawn(spec.file, spec.commandLine, {
+    const spawnPty: SpawnPty = this.deps.spawnPty ?? nodePty.spawn
+    const pty = spawnPty(spec.file, spec.commandLine, {
       name: 'xterm-256color',
       cwd: opts.cwd,
       env: spec.env,

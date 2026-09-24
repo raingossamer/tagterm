@@ -3,6 +3,8 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { PtyExitEvent } from '@shared/ipc'
 import { PtyManager } from '../../src/main/pty/PtyManager'
+import { buildSpawnSpec } from '../../src/main/pty/shellArgs'
+import { FakeConpty } from './fakeConpty'
 import { waitFor } from './helpers'
 
 // 集成测试：起真实 cmd.exe（ConPTY）
@@ -107,5 +109,40 @@ describe('PtyManager', () => {
     } finally {
       process.chdir(original)
     }
+  })
+})
+
+// 测试注入口：node-pty 是真外部依赖，换成假 ConPTY 后 PtyManager 自己的逻辑照跑（不起真实进程）
+describe('PtyManager 注入 spawnPty', () => {
+  let pm: PtyManager | undefined
+  afterEach(() => pm?.killAll())
+
+  it('用注入的 spawnPty 起终端，参数与缺省路径一致；送达退出后回调 onExit、条目删除', () => {
+    const conpty = new FakeConpty()
+    const exits: PtyExitEvent[] = []
+    pm = new PtyManager({
+      onData: () => {},
+      onExit: (e) => exits.push(e),
+      isFile: existsSync,
+      spawnPty: conpty.spawn,
+    })
+
+    const { pid } = pm.spawn('s1', { cwd: process.cwd(), shell: 'cmd.exe', cols: 90, rows: 30 })
+    const spec = buildSpawnSpec('cmd.exe', process.cwd(), process.env, existsSync)
+    expect(conpty.spawns).toHaveLength(1)
+    // env 不整份比较：断言失败时 diff 会把本机全部环境变量（可能含密钥）打进测试输出，只核对追加的 LANG
+    const { env, ...options } = conpty.spawns[0]!.options
+    expect({ ...conpty.spawns[0], options }).toEqual({
+      pid,
+      file: spec.file,
+      commandLine: spec.commandLine,
+      options: { name: 'xterm-256color', cwd: process.cwd(), cols: 90, rows: 30, useConpty: true },
+    })
+    expect(env?.['LANG']).toBe('zh_CN.UTF-8')
+    expect(pm.getPid('s1')).toBe(pid)
+
+    conpty.exit(pid, 3)
+    expect(exits).toEqual([{ sessionId: 's1', exitCode: 3, pid }])
+    expect(pm.has('s1')).toBe(false)
   })
 })
