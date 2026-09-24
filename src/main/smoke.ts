@@ -468,7 +468,7 @@ const SETTINGS_SCRIPT = (pngPath: string): string => `(async () => {
   $('[data-test=settings-nav-appearance]')?.click()
   await sleep(50)
   await api.settings.update({ background: { imagePath: ${JSON.stringify(pngPath)}, fit: 'cover', imageOpacity: 0.3, panelOpacity: 0.8, blurPx: 6 } })
-  const bgShown = await waitFor(() => ($('[data-test=app-background]')?.getAttribute('style') ?? '').includes('data:image/png'))
+  const bgShown = await waitFor(() => ($('[data-test=app-background]')?.getAttribute('style') ?? '').includes('blob:'))
   const bgStyle = $('[data-test=app-background]')?.getAttribute('style') ?? null
   const panelOpacity = document.documentElement.style.getPropertyValue('--panel-opacity') || null
   // 变量值对还不够，面板的计算底色必须真的带 alpha：0.2.4 把变量写在 .app 上，变量是 0.8、面板却仍不透明
@@ -602,6 +602,24 @@ function countsAre(
  * 打出烟测结果与结论两行：`[smoke]` 是全部数据（排查用），`[smoke-verdict]` 是 smokeVerdict 的判定 ——
  * 发布流水线只认后者的 "ok":true；异常分支同样打印，结论必然是失败
  */
+/**
+ * 出错时的文字：Error 带堆栈；executeJavaScript 把渲染进程抛出的东西序列化成普通对象（启动瞬间焦点在别的窗口上时就会抛一个），
+ * 原先 String(err) 只剩 [object Object]，看不出是什么 —— 取它的 message，没有就整个 JSON 化
+ */
+function errorText(err: unknown): string {
+  if (err instanceof Error) return err.stack ?? err.message
+  if (typeof err === 'object' && err !== null) {
+    const message = (err as { message?: unknown }).message
+    if (typeof message === 'string' && message) return message
+    try {
+      return JSON.stringify(err)
+    } catch {
+      return String(err)
+    }
+  }
+  return String(err)
+}
+
 function report(result: Record<string, unknown>): void {
   console.log('[smoke] ' + JSON.stringify(result))
   console.log('[smoke-verdict] ' + JSON.stringify(judgeSmoke(result)))
@@ -710,7 +728,7 @@ async function probeTermBackground(
     `window.tagterm.settings.update({ background: { imagePath: ${JSON.stringify(redPath)}, fit: 'cover', imageOpacity: 1, panelOpacity: 0.5, blurPx: 0 } })`,
   )
   const bgShown = await waitJs(
-    `(document.querySelector('[data-test=app-background]')?.getAttribute('style') ?? '').includes('data:image/png')`,
+    `(document.querySelector('[data-test=app-background]')?.getAttribute('style') ?? '').includes('blob:')`,
     5000,
   )
   await sleep(500)
@@ -1622,7 +1640,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
           badgeClearedAfterAll: countsAre(badgeAfterAll, 0, 0, 0),
         }
       } catch (err) {
-        heuristic = { error: String(err) }
+        heuristic = { error: errorText(err) }
       } finally {
         rmSync(fakeAgentExe, { force: true })
       }
@@ -1636,7 +1654,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
           '唤起区与重启终端烟测',
         )
       } catch (err) {
-        launchBar = { error: String(err) }
+        launchBar = { error: errorText(err) }
       }
 
       // 第三批「键盘」：终端内搜索、Ctrl+滚轮字号与 Ctrl+0、全局快捷键唤出 / 隐藏、设置里的键位显示
@@ -1648,7 +1666,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
           '键盘烟测',
         )
       } catch (err) {
-        keyboard = { error: String(err) }
+        keyboard = { error: errorText(err) }
       }
 
       // 清理烟测会话：走会话子系统的完整级联（结束 pty → 删记录 → 删关联 → 墓碑，与右键「移除会话」同一条路），
@@ -1697,7 +1715,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         consoleErrors,
       })
     } catch (err) {
-      report({ error: String(err), ...result, consoleErrors })
+      report({ error: errorText(err), ...result, consoleErrors })
     }
     deps.quit()
   })

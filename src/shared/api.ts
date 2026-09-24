@@ -4,6 +4,7 @@
  */
 import type {
   AutoLaunchStatus,
+  BackgroundImageData,
   CreateSessionInput,
   GlobalShortcutStatus,
   HookAgent,
@@ -69,8 +70,8 @@ export interface TagTermApi {
   settings: {
     get(): Promise<Settings>
     update(patch: SettingsPatch): Promise<Settings>
-    /** 省略 path 读已保存的背景图；传 path 读指定文件（设置弹窗预览未保存的图） */
-    readBackgroundImage(path?: string): Promise<string | null>
+    /** 省略 path 读已保存的背景图；传 path 读指定文件（设置弹窗预览未保存的图）。给的是 MIME + 字节，渲染进程自己建 Blob URL */
+    readBackgroundImage(path?: string): Promise<BackgroundImageData | null>
     onChanged(cb: (settings: Settings) => void): Unsubscribe
   }
   update: {

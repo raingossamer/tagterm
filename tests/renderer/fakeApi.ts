@@ -1,6 +1,6 @@
 import { vi } from 'vitest'
 import type { TagTermApi } from '@shared/api'
-import type { TagListResult } from '@shared/ipc'
+import type { BackgroundImageData, TagListResult } from '@shared/ipc'
 import {
   DEFAULT_BACKGROUND,
   TAG_COLORS,
@@ -14,6 +14,38 @@ import {
 
 type Overrides = {
   [K in keyof TagTermApi]?: Partial<TagTermApi[K]>
+}
+
+/** 主进程读背景图的返回：MIME + 字节（tag 只为让不同的图字节不同） */
+export function makeImageData(tag = 'img'): BackgroundImageData {
+  return { mime: 'image/png', bytes: new TextEncoder().encode(tag) }
+}
+
+/**
+ * happy-dom 没有对象 URL：打桩记录建过 / 收过哪些 blob: URL。URL 里带上 Blob 的字节内容，断言时认得出是哪张图
+ *（settings store 用 URL.createObjectURL 把主进程给的字节变成 background-image 能用的地址）
+ */
+export function stubObjectUrls(): { created: string[]; revoked: string[] } {
+  const created: string[] = []
+  const revoked: string[] = []
+  let seq = 0
+  Object.defineProperty(URL, 'createObjectURL', {
+    configurable: true,
+    writable: true,
+    value: (blob: Blob) => {
+      const url = `blob:mock-${(seq += 1)}-${blob.size}`
+      created.push(url)
+      return url
+    },
+  })
+  Object.defineProperty(URL, 'revokeObjectURL', {
+    configurable: true,
+    writable: true,
+    value: (url: string) => {
+      revoked.push(url)
+    },
+  })
+  return { created, revoked }
 }
 
 /**
@@ -55,7 +87,9 @@ export function createFakeApi(overrides: Overrides = {}): TagTermApi {
     settings: {
       get: vi.fn(async () => makeSettings()),
       update: vi.fn(async (patch) => ({ ...makeSettings(), ...patch }) as Settings),
-      readBackgroundImage: vi.fn(async (_path?: string) => null),
+      readBackgroundImage: vi.fn(
+        async (_path?: string): Promise<BackgroundImageData | null> => null,
+      ),
       onChanged: vi.fn(() => () => {}),
       ...overrides.settings,
     },

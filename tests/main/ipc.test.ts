@@ -358,7 +358,7 @@ describe('IPC 接口层', () => {
     await expect(ipc.invoke('app:pick-image')).resolves.toBe(join(dir, 'picked.png'))
   })
 
-  it('settings:read-background-image：未设置或文件不存在返回 null，存在则返回 data: URL', async () => {
+  it('settings:read-background-image：未设置或文件不存在返回 null，存在则返回 MIME 与原始字节（渲染进程自己建 Blob URL）', async () => {
     await expect(ipc.invoke('settings:read-background-image')).resolves.toBeNull()
 
     const file = join(dir, 'bg.png')
@@ -374,9 +374,12 @@ describe('IPC 接口层', () => {
     await expect(ipc.invoke('settings:read-background-image')).resolves.toBeNull()
 
     writeFileSync(file, Buffer.from('89504e470d0a1a0a', 'hex'))
-    await expect(ipc.invoke('settings:read-background-image')).resolves.toBe(
-      'data:image/png;base64,iVBORw0KGgo=',
-    )
+    const image = (await ipc.invoke('settings:read-background-image')) as {
+      mime: string
+      bytes: Uint8Array
+    }
+    expect(image.mime).toBe('image/png')
+    expect(Buffer.from(image.bytes).toString('hex')).toBe('89504e470d0a1a0a')
   })
 
   it('update:get-status / check / download / install 经接口层落到 Updater', async () => {

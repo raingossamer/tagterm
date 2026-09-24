@@ -1,25 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import type { BackgroundImageData } from '@shared/ipc'
 import { DEFAULT_BACKGROUND } from '@shared/models'
 import SettingsModal from '../../../src/renderer/src/components/SettingsModal.vue'
 import { useSettingsStore } from '../../../src/renderer/src/stores/settings'
 import { useUpdateStore } from '../../../src/renderer/src/stores/update'
-import { installFakeApi, makeSettings } from '../fakeApi'
+import { installFakeApi, makeImageData, makeSettings, stubObjectUrls } from '../fakeApi'
 
 describe('SettingsModal', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     document.body.innerHTML = ''
+    stubObjectUrls()
   })
 
-  /** 让 store 处于「已保存一张背景图」的状态 */
+  /** 让 store 处于「已保存一张背景图」的状态（背景图是 store 建好的 blob: URL） */
   async function withSavedImage() {
     const store = useSettingsStore()
     store.settings = makeSettings({
       background: { ...DEFAULT_BACKGROUND, imagePath: 'D:/wall/雪山.png' },
     })
-    store.backgroundImage = 'data:image/png;base64,AAA'
+    store.backgroundImage = 'blob:mock-saved'
     return store
   }
 
@@ -48,8 +50,9 @@ describe('SettingsModal', () => {
   it('外观段：无图时滑块置灰；「更换图片」把选中的图进草稿并整窗预览，但不落盘', async () => {
     const api = installFakeApi({
       app: { pickImage: vi.fn(async () => 'D:/wall/雪山.png') },
-      settings: { readBackgroundImage: vi.fn(async () => 'data:image/png;base64,AAA') },
+      settings: { readBackgroundImage: vi.fn(async () => makeImageData('AAA')) },
     })
+    const urls = stubObjectUrls()
     const store = useSettingsStore()
     const wrapper = mount(SettingsModal)
     await flushPromises()
@@ -64,7 +67,7 @@ describe('SettingsModal', () => {
 
     expect(wrapper.find('[data-test=bg-name]').text()).toBe('雪山.png')
     expect(store.background.imagePath).toBe('D:/wall/雪山.png') // 预览：整窗立刻生效
-    expect(store.backgroundImage).toBe('data:image/png;base64,AAA')
+    expect(store.backgroundImage).toBe(urls.created[0])
     expect(api.settings.update).not.toHaveBeenCalled() // 但没落盘
     expect(
       (wrapper.find('[data-test=bg-image-opacity]').element as HTMLInputElement).disabled,
@@ -148,10 +151,11 @@ describe('SettingsModal', () => {
     expect(second.emitted('close')).toHaveLength(1)
   })
 
-  it('关掉「实时预览」后整窗回到已保存值，弹窗内缩略图仍看草稿', async () => {
+  it('关掉「实时预览」后整窗回到已保存值，弹窗内缩略图仍看草稿（自己建的 blob: URL，关弹窗时收掉）', async () => {
     installFakeApi({
-      settings: { readBackgroundImage: vi.fn(async () => 'data:image/png;base64,DRAFT') },
+      settings: { readBackgroundImage: vi.fn(async () => makeImageData('DRAFT')) },
     })
+    const urls = stubObjectUrls()
     const store = await withSavedImage()
     const wrapper = mount(SettingsModal)
     await flushPromises()
@@ -163,14 +167,20 @@ describe('SettingsModal', () => {
     await wrapper.find('[data-test=live-preview]').setValue(false)
     await flushPromises()
     expect(store.background.blurPx).toBe(DEFAULT_BACKGROUND.blurPx) // 整窗回到已保存值
-    expect(wrapper.find('[data-test=bg-thumb] img').attributes('src')).toBe(
-      'data:image/png;base64,DRAFT',
-    )
+    const draftUrl = wrapper.find('[data-test=bg-thumb] img').attributes('src')
+    expect(draftUrl).toMatch(/^blob:/)
+    expect(draftUrl).toBe(urls.created.at(-1)) // 最后建的那个是草稿图（整窗那张由 store 在预览时建）
+    expect(draftUrl).not.toBe(store.backgroundImage) // 草稿图与整窗生效的图各自一份
+
+    const revokedBefore = urls.revoked.length
+    wrapper.unmount()
+    expect(urls.revoked.slice(revokedBefore)).toEqual([draftUrl]) // 关弹窗只收掉草稿的 URL；整窗那张不归它管
+    expect(urls.revoked).not.toContain(store.backgroundImage)
   })
 
   describe('背景图读不出来（太大、格式不支持）', () => {
     const TOO_BIG = '背景图片太大（40 MB），请换一张小于 30 MB 的'
-    const unreadable = vi.fn(async (_path?: string): Promise<string | null> => {
+    const unreadable = vi.fn(async (_path?: string): Promise<BackgroundImageData | null> => {
       throw new Error(TOO_BIG)
     })
 

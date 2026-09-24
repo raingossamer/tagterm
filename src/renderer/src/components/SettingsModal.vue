@@ -158,6 +158,7 @@ onUnmounted(() => {
   document.removeEventListener('keydown', onKeydown)
   // 录制中关掉弹窗：把暂停的热键恢复
   if (isCapturing.value) void window.tagterm.app.pauseGlobalShortcut(false)
+  setDraftImage(null) // 草稿缩略图的对象 URL 随弹窗收掉
 })
 
 // 草稿或预览开关变化 → 整窗预览跟着变（关掉预览就还原为已保存值）
@@ -176,14 +177,20 @@ async function applyPreview(): Promise<void> {
   if (!isLivePreview.value) await loadDraftImage()
 }
 
+/** 换草稿缩略图（对象 URL 由 store 建，这里负责收掉上一个）；null = 没有草稿图 */
+function setDraftImage(url: string | null): void {
+  settings.releaseImageUrl(draftImage.value)
+  draftImage.value = url
+}
+
 /** 预览关闭时缩略图自己读图；读不出来缩略图为空并记下原因 */
 async function loadDraftImage(): Promise<void> {
   const path = draft.value.imagePath
   try {
-    draftImage.value = path ? await window.tagterm.settings.readBackgroundImage(path) : null
+    setDraftImage(path ? await settings.readImageUrl(path) : null)
     draftImageError.value = ''
   } catch (err) {
-    draftImage.value = null
+    setDraftImage(null)
     draftImageError.value = err instanceof Error ? err.message : String(err)
   }
 }

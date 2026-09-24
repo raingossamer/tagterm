@@ -51,6 +51,15 @@ export interface SettingsPatch {
 // ---- 标签（M2）----
 
 // hidden 走布尔入参：false 表示「取消隐藏」，主进程落盘时删键（可选字段缺省不写）；排序只走 tag:reorder
+/**
+ * 背景图：扩展名对应的 MIME + 原始字节（结构化克隆直接传，不 base64）；渲染进程自己建 Blob 对象 URL（2026-09-24）。
+ * 字节数组独占一块普通 ArrayBuffer（不是 SharedArrayBuffer、不共用 Node 的缓冲池），才能直接喂给 Blob
+ */
+export interface BackgroundImageData {
+  mime: string
+  bytes: Uint8Array<ArrayBuffer>
+}
+
 export type TagPatch = Partial<Pick<Tag, 'name' | 'color'>> & { hidden?: boolean }
 
 export interface TagListResult {
@@ -119,7 +128,7 @@ export interface IpcInvokeMap {
   'session:open-directory': { args: [id: string]; result: void } // 在资源管理器打开会话的当前目录（cwdNow 优先，缺省固定目录）；路径由主进程解析，打不开 reject
   'settings:get': { args: []; result: Settings }
   'settings:update': { args: [patch: SettingsPatch]; result: Settings } // 补丁合并，返回全量
-  'settings:read-background-image': { args: [path?: string]; result: string | null } // data: URL；未设置 / 文件不存在为 null
+  'settings:read-background-image': { args: [path?: string]; result: BackgroundImageData | null } // MIME + 原始字节（渲染进程自己建 Blob URL）；未设置 / 文件不存在为 null
   'update:get-status': { args: []; result: UpdateStatus }
   'update:check': { args: []; result: void } // 结果经 update:status 事件回报
   'update:download': { args: []; result: void }
