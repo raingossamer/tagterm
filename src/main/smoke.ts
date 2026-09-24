@@ -1171,20 +1171,33 @@ async function runKeyboardChecks(
     win.focus()
     await sleep(300)
     const focusedBeforeHide = win.isFocused()
+    const rendererBeforeHide = (await js(VISIBLE_TERM_RENDERER)) as string
     deps.summon()
     const hidden = await pollUntil(() => !win.isVisible(), 3000)
+    // 藏起来后页面不可见：可见终端应已退回 DOM 渲染（释放 WebGL 上下文，perf-startup-memory 行为 6）；
+    // 没有 GPU 的机器本来就是 DOM，同样成立
+    const webglReleasedWhenHidden = await pollJs(win, `${VISIBLE_TERM_RENDERER} !== 'webgl'`, 3000)
     deps.summon()
     const shown = await pollUntil(() => win.isVisible(), 3000)
     const terminalFocused = await pollJs(win, `${KEYBOARD_STATE}.terminalFocused`, 3000)
+    // 唤出后又回到藏之前的渲染器（有 GPU 是 WebGL、没有是 DOM）
+    const rendererRestoredAfterShow = await pollJs(
+      win,
+      `${VISIBLE_TERM_RENDERER} === ${JSON.stringify(rendererBeforeHide)}`,
+      3000,
+    )
     win.minimize()
     await pollUntil(() => win.isMinimized(), 3000)
     deps.summon()
     const restoredFromMinimized = await pollUntil(() => win.isVisible() && !win.isMinimized(), 3000)
     const summon = {
       focusedBeforeHide,
+      rendererBeforeHide,
       hidden,
+      webglReleasedWhenHidden,
       shown,
       terminalFocused,
+      rendererRestoredAfterShow,
       restoredFromMinimized,
     }
 

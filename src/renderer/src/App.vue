@@ -5,7 +5,7 @@
 // 「正被查看」的会话由 useViewedSession 在当前页 / 焦点 / 可见性变化时上报主进程；
 // 装配会话生命周期核心 TerminalWorkspace：provide 给 TerminalPane / SideHead（宿主操作），attachCore 给 workspace store（快照镜像）。
 // 选中 / 关页 / 重启 / 移除的编排全在核心里，这里只做接线
-import { onMounted, onUnmounted, provide, ref } from 'vue'
+import { onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import type { Session } from '@shared/models'
 import type { Unsubscribe } from '@shared/api'
 import AppBackground from './components/AppBackground.vue'
@@ -22,6 +22,7 @@ import NewSessionModal from './components/NewSessionModal.vue'
 import EditSessionModal from './components/EditSessionModal.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import ManageTagsModal from './components/ManageTagsModal.vue'
+import { useDocumentVisible } from './composables/useDocumentVisible'
 import { useViewedSession } from './composables/useViewedSession'
 import { useAgentStore } from './stores/agent'
 import { useSessionsStore } from './stores/sessions'
@@ -59,7 +60,10 @@ const core = new TerminalWorkspace({
 })
 provide(TERMINAL_WORKSPACE_KEY, core)
 // 有背景图时不再退回 DOM 渲染：WebGL 给暗淡字 / 斜体垫黑底的根因在 addon-webgl 的背景矩形判定，已打补丁（patches/），
-// 有无背景图都用同一套渲染器
+// 有无背景图都用同一套渲染器。窗口藏到托盘或最小化时才关掉可见终端的 WebGL（释放上下文与字形图集，藏在托盘是常态），
+// 重新可见时再开，期间 DOM 渲染兜着不会空白
+const isDocumentVisible = useDocumentVisible()
+watch(isDocumentVisible, (visible) => core.setWebglAllowed(visible), { immediate: true })
 const detachCore = workspace.attachCore(core)
 useViewedSession()
 
