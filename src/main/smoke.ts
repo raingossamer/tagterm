@@ -5,7 +5,7 @@
  * 右键菜单编辑会话改名 / 移除会话 → 真实 Ctrl+K 聚焦搜索 → 设置弹窗四段导航与全局背景往返），
  * 再在主进程侧核查「关窗只隐藏、pty 存活、托盘恢复」、「结束 pty 后整页重载 → 标签页与当前页恢复、只有当前页重新 spawn」
  * 与 tags.json 落盘，再走没装 hooks 时的状态判定、唤起区置灰 / 路径条拖拽 / 右键重启终端的真实链路，
- * 最后清理会话并走正常退出路径（before-quit killAll）。
+ * 最后经会话子系统移除烟测会话（与右键「移除会话」同一条级联），再走正常退出路径。
  * 以 JSON 打印到 stdout。生产运行不触发。
  */
 import { app, Menu, nativeImage, type BrowserWindow } from 'electron'
@@ -14,16 +14,19 @@ import { request as httpRequest } from 'node:http'
 import { join } from 'node:path'
 import type { PtyManager } from './pty/PtyManager'
 import type { AgentSubsystem, BadgeCounts } from './agent/AgentSubsystem'
-import type { SessionStore } from './store/SessionStore'
+import type { SessionSubsystem } from './session/SessionSubsystem'
 import type { TagStore } from './store/TagStore'
 import { judgeSmoke } from './smokeVerdict'
 
 export interface SmokeDeps {
-  store: SessionStore
-  tags: TagStore
-  pty: PtyManager
-  /** agent 子系统：hooks 端口、运行时记录、shell 空闲核对（核查与诊断用） */
-  agent: AgentSubsystem
+  /** 会话与终端的一切改动都经会话子系统，与渲染进程同一条路（移除会话走完整级联，没法绕过） */
+  sessions: SessionSubsystem
+  /** 标签只读：核查收尾后 tags.json 只剩空集合 */
+  tags: Pick<TagStore, 'list'>
+  /** 终端只读探针：pid 与是否在跑（给轮询用的同步谓词）；写入与结束一律经 sessions */
+  pty: Pick<PtyManager, 'getPid' | 'has'>
+  /** agent 子系统只读：hooks 端口、运行时记录、shell 空闲核对（核查与诊断用） */
+  agent: Pick<AgentSubsystem, 'list' | 'isShellIdle' | 'port'>
   /** 托盘当前的角标计数（等你确认 / 运行中）；托盘还没建为 null */
   badgeCounts: () => BadgeCounts | null
   /** 全局快捷键按下时的动作（唤出 / 隐藏窗口）：烟测不注册系统热键，直接调用它核查 */
@@ -888,7 +891,7 @@ async function runLaunchBarChecks(
     const idleSeen = await pollUntil(() => deps.pty.has(s1) && programOf() === undefined, 8000)
     const idle = (await js(LAUNCH_STATE)) as Record<string, unknown>
 
-    deps.pty.write(s1, 'ping -n 30 127.0.0.1 >nul\r')
+    deps.sessions.writeTerminal(s1, 'ping -n 30 127.0.0.1 >nul\r')
     const programSeen = await pollUntil(() => programOf() === 'ping', 8000)
     const greyedSeen = await pollJs(win, `${LAUNCH_STATE}.allGreyed`, 3000)
     const busy = (await js(LAUNCH_STATE)) as { titles: string[]; clearTitle: string }
@@ -1042,7 +1045,7 @@ async function runKeyboardChecks(
   /** 终端里跑 mode con，读 ConPTY 报告的列数（中文系统「列:」、英文系统「Columns:」）；读不到为 0 */
   const consoleCols = async (): Promise<number> => {
     const from = (await output()).length
-    deps.pty.write(s1, 'mode con\r')
+    deps.sessions.writeTerminal(s1, 'mode con\r')
     const start = Date.now()
     while (Date.now() - start < 5000) {
       const match = /(?:Columns|列)\s*:\s*(\d+)/.exec(stripAnsi((await output()).slice(from)))
@@ -1063,7 +1066,7 @@ async function runKeyboardChecks(
     // 1 终端内搜索：写一个唯一的词（提示符行 + 输出行 = 2 处），真实 Ctrl+Shift+F 打开，小写查（不区分大小写）
     const token = `KbdFind${Date.now().toString(36)}`
     const echoFrom = (await output()).length
-    deps.pty.write(s1, `echo ${token}\r`)
+    deps.sessions.writeTerminal(s1, `echo ${token}\r`)
     let echoed = false
     for (const start = Date.now(); !echoed && Date.now() - start < 5000; await sleep(100))
       echoed = (await occurrences(token, echoFrom)) >= 2
@@ -1204,7 +1207,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         return false
       }
       const idleBefore = await pollChildren(false, 3000)
-      deps.pty.write(sessionIds[0]!, 'ping -n 2 127.0.0.1\r')
+      deps.sessions.writeTerminal(sessionIds[0]!, 'ping -n 2 127.0.0.1\r')
       const busyDuringPing = await pollChildren(true, 3000)
       const idleAfterPing = await pollChildren(false, 8000)
       const processTree = { shellPid, idleBefore, busyDuringPing, idleAfterPing }
@@ -1261,7 +1264,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         const pasteCount = (await win.webContents.executeJavaScript(
           `(window.__smokeOutputs?.[${outputKey}] ?? '').slice(${lenBefore}).split('右键真实粘贴OK').length - 1`,
         )) as number
-        deps.pty.write(sessionIds[0]!, '\r') // 把粘进去的那行执行掉，别留在提示符上
+        deps.sessions.writeTerminal(sessionIds[0]!, '\r') // 把粘进去的那行执行掉，别留在提示符上
         await sleep(300)
         rightClick = { termCenter, pasteCount }
       }
@@ -1315,7 +1318,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         '恢复标签页准备',
       )) as { ids: string[] } & Record<string, unknown>
       const restoreIds = [sessionIds[0]!, ...prepare.ids]
-      for (const id of restoreIds) await deps.pty.killAndWait(id)
+      for (const id of restoreIds) await deps.sessions.killTerminal(id)
       const aliveBeforeReload = restoreIds.filter((id) => deps.pty.has(id)).length
       const reloaded = new Promise<void>((r) => win.webContents.once('did-finish-load', () => r()))
       win.webContents.reload()
@@ -1506,7 +1509,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         // s1 的 pty 在恢复段被结束过：先点回它的标签页重开一条（它的 cwd 与 hooks 用的两个目录都不同，没收到过 hook 事件，不在抑制窗里）
         await clickTab('smoke-已改名')
         const recordSeen = await waitUntil(() => statusOf() !== null, 8000)
-        deps.pty.write(s1, `"${fakeAgentExe}" -n 30 127.0.0.1 >nul\r`)
+        deps.sessions.writeTerminal(s1, `"${fakeAgentExe}" -n 30 127.0.0.1 >nul\r`)
         const agentSeen = await waitUntil(() => agentOf() === 'claude', 8000)
         // 刚写入的命令回显是这条 pty 最后一次真实输出，渲染进程 1.5 s 后会送一份**真实**的静默报告（屏幕只有提示符与命令行，没有计时器）；
         // 它若落在下面的合成采样中间，会把刚判出的运行中打回空闲（实测偶发）。等它过去再送合成采样
@@ -1542,7 +1545,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         await report(['✻ Cooked for 8s · done 13:57', '> '], 1500)
         const leftWorking = await waitUntil(() => statusOf() !== 'working', 3000)
         const statusAfterDone = statusOf()
-        deps.pty.write(s1, '\x03') // Ctrl+C 停掉假 agent
+        deps.sessions.writeTerminal(s1, '\x03') // Ctrl+C 停掉假 agent
         const agentGone = await waitUntil(() => agentOf() === null, 8000)
         const badgeAfterAll = deps.badgeCounts()
         heuristic = {
@@ -1597,9 +1600,10 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         keyboard = { error: String(err) }
       }
 
-      // 清理烟测会话（正常退出路径由 before-quit killAll 结束 pty）；tags.json 应已落盘且只剩空集合
-      for (const id of sessionIds) await deps.store.remove(id)
-      const remaining = deps.store.list().length
+      // 清理烟测会话：走会话子系统的完整级联（结束 pty → 删记录 → 删关联 → 墓碑，与右键「移除会话」同一条路），
+      // 之后 before-quit 的 killAll 对它们是空操作；tags.json 应已落盘且只剩空集合
+      for (const id of sessionIds) await deps.sessions.remove(id)
+      const remaining = deps.sessions.list().length
       const tagsFile = {
         exists: existsSync(join(app.getPath('userData'), 'tags.json')),
         remaining: deps.tags.list(),
