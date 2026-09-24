@@ -4,7 +4,13 @@
  * 不持有状态：真相仍在两个 store、PtyManager 与 AgentDetector。不 import electron：打开目录以命名端口 FolderPort 注入。
  * 标签本身的增删改是单文件操作，不经这里（接口层直连 TagStore）。
  */
-import type { CreateSessionInput, OutputReport, PtyOpenResult, PtySize } from '@shared/ipc'
+import type {
+  CreateSessionInput,
+  OutputReport,
+  PtyOpenResult,
+  PtySize,
+  SessionPatch,
+} from '@shared/ipc'
 import type { Session } from '@shared/models'
 import type { AgentSubsystem } from '../agent/AgentSubsystem'
 import type { PtyManager } from '../pty/PtyManager'
@@ -61,6 +67,26 @@ export class SessionSubsystem {
   }
 
   /**
+   * 改名 / 换目录 / 换 shell。目录或 shell 真的变了（同值不算）且终端在跑时：shell 下有程序在跑即拒绝、什么都不动；
+   * 空闲则先结束终端并等它真正退出（pty:exit 先广播出去）再写记录 —— 渲染进程拿到结果时运行态已是 exited，
+   * 再选中即按新配置重开。只改名不查进程树、不动终端
+   */
+  async update(id: string, patch: SessionPatch): Promise<Session> {
+    const current = this.deps.store.get(id)
+    const isConfigChanged =
+      (patch.cwd !== undefined && patch.cwd !== current.cwd) ||
+      (patch.shell !== undefined && patch.shell !== current.shell)
+    const pid = this.deps.terminals.getPid(id)
+    if (isConfigChanged && pid !== null) {
+      if (!(await this.deps.agent.isShellIdle(pid))) {
+        throw new Error('终端里有程序正在运行，退出后再修改目录或 Shell')
+      }
+      await this.deps.terminals.killAndWait(id)
+    }
+    return this.deps.store.update(id, patch)
+  }
+
+  /**
    * 移除会话，四步有序：结束终端（不等退出）→ 删记录（广播 session:changed）→ 删其关联（有才写，广播 tag:changed）
    * → 立即清掉运行时记录并广播墓碑（不等 pty 退出；没开过终端的会话没有记录，调用无副作用）。
    * 跨两份文件不做事务：中途写盘失败原样抛、已做的不回滚，残留关联由下次 load 清掉
@@ -81,6 +107,17 @@ export class SessionSubsystem {
   /** 从会话摘标签：不核对会话（摘不存在的关联本来就静默），与挂标签的不对称是有意的 */
   detachTag(sessionId: string, tagId: string): Promise<void> {
     return this.deps.tags.detach(sessionId, tagId)
+  }
+
+  /**
+   * 在资源管理器打开会话的当前目录：路径从真相源解析（运行时 cwdNow 优先，缺省记录的固定目录），
+   * 渲染进程只传会话 id、拿不到「打开任意路径」的能力；打不开抛「打不开目录：<原因>」
+   */
+  async openDirectory(id: string): Promise<void> {
+    const session = this.deps.store.get(id)
+    const cwdNow = this.deps.agent.list().find((r) => r.sessionId === id)?.cwdNow
+    const error = await this.deps.folders.open(cwdNow ?? session.cwd)
+    if (error) throw new Error(`打不开目录：${error}`)
   }
 
   /**
