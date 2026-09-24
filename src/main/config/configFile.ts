@@ -87,7 +87,8 @@ export function composeConfigFile(
 export function parseConfigFile(text: string): ConfigFileData {
   let raw: unknown
   try {
-    raw = JSON.parse(text)
+    // 旧版记事本等编辑器另存会带 UTF-8 BOM，JSON.parse 不认；去掉再解析，别把用户手改过的文件判成不是配置文件
+    raw = JSON.parse(text.startsWith('﻿') ? text.slice(1) : text)
   } catch {
     throw new Error(NOT_CONFIG)
   }
