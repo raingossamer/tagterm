@@ -129,16 +129,22 @@ describe('PtyManager 注入 spawnPty', () => {
 
     const { pid } = pm.spawn('s1', { cwd: process.cwd(), shell: 'cmd.exe', cols: 90, rows: 30 })
     const spec = buildSpawnSpec('cmd.exe', process.cwd(), process.env, existsSync)
-    expect(conpty.spawns).toHaveLength(1)
-    // env 不整份比较：断言失败时 diff 会把本机全部环境变量（可能含密钥）打进测试输出，只核对追加的 LANG
-    const { env, ...options } = conpty.spawns[0]!.options
-    expect({ ...conpty.spawns[0], options }).toEqual({
-      pid,
-      file: spec.file,
-      commandLine: spec.commandLine,
-      options: { name: 'xterm-256color', cwd: process.cwd(), cols: 90, rows: 30, useConpty: true },
-    })
-    expect(env?.['LANG']).toBe('zh_CN.UTF-8')
+    // 假 ConPTY 不记录 env（免得断言失败时把本机环境变量打进输出），只核对追加的 LANG
+    expect(conpty.spawns).toEqual([
+      {
+        pid,
+        file: spec.file,
+        commandLine: spec.commandLine,
+        options: {
+          name: 'xterm-256color',
+          cwd: process.cwd(),
+          cols: 90,
+          rows: 30,
+          useConpty: true,
+        },
+        lang: 'zh_CN.UTF-8',
+      },
+    ])
     expect(pm.getPid('s1')).toBe(pid)
 
     conpty.exit(pid, 3)
