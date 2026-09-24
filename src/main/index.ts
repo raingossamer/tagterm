@@ -2,13 +2,16 @@
  * 装配层：创建各服务、造 Electron 适配器、把依赖注入进去、绑定 app 生命周期；业务规则都在服务层
  *（agent 子系统含状态机、hooks、通知去重与角标计数），这里只接线一次。
  * 会话生命周期 = 应用生命周期：关窗只隐藏到托盘；托盘「退出」与 before-quit 都 killAll。
+ * 启动分两段（perf-startup-memory 行为 3）：不依赖 Electron 窗口 / 托盘 / 对话框的工作（数据目录、日志、PATH 探测、
+ * 三份 JSON、hooks 端点与补装）在模块顶层就发起（startBoot），与 Chromium 初始化并行；
+ * whenReady 里只等它的结果、注册 IPC、建窗、托盘、快捷键 —— 实测这段纯 Node I/O 约 45 ms，此前排在 ready 之后串行。
  */
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage } from 'electron'
 import { existsSync } from 'node:fs'
 import { release, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AutoLaunchStatus, EventArgs, EventChannel } from '@shared/ipc'
-import { DEFAULT_AGENTS } from '@shared/models'
+import { DEFAULT_AGENTS, type ShellKind } from '@shared/models'
 import overlayBlockedIconPath from '../../resources/overlay-blocked.png?asset'
 import overlayDoneIconPath from '../../resources/overlay-done.png?asset'
 import overlayWorkingIconPath from '../../resources/overlay-working.png?asset'
@@ -26,7 +29,7 @@ import { createProductionAgent } from './agent/production'
 import { electronBadge, electronNotifications } from './platform/agentPorts'
 import { electronFolders } from './platform/folderPort'
 import { electronShortcuts } from './platform/shortcutPort'
-import { SessionSubsystem } from './session/SessionSubsystem'
+import { SessionSubsystem, type FolderPort } from './session/SessionSubsystem'
 import { GlobalShortcut } from './shortcut/GlobalShortcut'
 import { decideSummon } from './shortcut/summon'
 import { Updater } from './updater/Updater'
@@ -36,7 +39,7 @@ import { LogFile } from './log/LogFile'
 import { teeConsole } from './log/consoleTee'
 
 // 日志落文件：控制台照常输出，同时抄一份进 <数据目录>\logs\main.log（1 MB 轮转、保留 3 份）；
-// 数据目录在 whenReady 里才解析出来，在那之前的日志先缓冲。只收事件与错误，终端输出与键入内容从不经过 console
+// 数据目录在 startBoot 里（模块顶层）才解析出来，在那之前的日志先缓冲。只收事件与错误，终端输出与键入内容从不经过 console
 const logFile = new LogFile({ maxBytes: 1024 * 1024, keep: 3 })
 teeConsole(console, (level, message) => logFile.write(level, message))
 
@@ -53,14 +56,14 @@ process.on('unhandledRejection', (reason) => {
 const isSmoke = !!process.env['TAGTERM_SMOKE']
 if (isSmoke) app.setPath('userData', join(tmpdir(), 'tagterm-smoke'))
 
-// 单实例锁：二次启动只聚焦已有窗口
-if (!app.requestSingleInstanceLock()) {
-  app.quit()
-}
+// 单实例锁：二次启动只聚焦已有窗口（second-instance 事件在先起的那个实例里触发）；拿不到锁的实例不做任何启动工作
+//（不读数据、不起 hooks 端点 —— 否则它会先把已装 hooks 的端口改成自己的再退出）
+const hasLock = app.requestSingleInstanceLock()
+if (!hasLock) app.quit()
 
 let mainWindow: BrowserWindow | null = null
 let tray: TrayHandle | null = null
-/** 终端与 agent 子系统都在 whenReady 里装配（数据目录与会话列表就位之后） */
+/** 终端与 agent 子系统在 ready 之前就装配好（startBoot）；这两个引用在启动数据就绪后才赋值，供退出与安装更新时结束终端 */
 let ptyManager: PtyManager | null = null
 let agent: AgentSubsystem | null = null
 /** 任务栏 overlay 的黄点 / 蓝点 / 绿点图，whenReady 里加载 */
@@ -199,14 +202,27 @@ const updater = new Updater({
   },
 })
 
-app.whenReady().then(async () => {
-  // 系统通知在 Windows 上要有 AppUserModelId（与 electron-builder.yml 的 appId 一致）才能显示
-  app.setAppUserModelId('com.tagterm.app')
-  overlayImages = {
-    blocked: nativeImage.createFromPath(overlayBlockedIconPath),
-    done: nativeImage.createFromPath(overlayDoneIconPath),
-    working: nativeImage.createFromPath(overlayWorkingIconPath),
-  }
+/** ready 之前就装配好的各服务实例，与一条已经发起的加载链 */
+interface Boot {
+  dataDir: string
+  logsDir: string
+  availableShells: ShellKind[]
+  settings: SettingsStore
+  tags: TagStore
+  subsystem: AgentSubsystem
+  pty: PtyManager
+  folders: FolderPort
+  sessions: SessionSubsystem
+  /** sessions.json → tags.json → 清悬空关联 → settings.json → hooks 端点与补装；坏文件原样 reject，由 whenReady 弹框退出 */
+  loaded: Promise<void>
+}
+
+/**
+ * 模块顶层调用：解析数据目录、开日志、PATH 探测、建 store 与两个子系统，并发起加载链。
+ * 这里一律不碰窗口、托盘、对话框、系统热键（都要 ready 之后）；广播函数只在有窗口时才发，提前建好没有副作用
+ */
+function startBoot(): Boot {
+  const startedAt = Date.now()
   const dataDir = isSmoke ? app.getPath('userData') : resolveDataDir(app.getPath('appData'))
   const logsDir = join(dataDir, 'logs')
   logFile.open(logsDir)
@@ -248,7 +264,7 @@ app.whenReady().then(async () => {
     badge: electronBadge({
       tray: () => tray,
       window: () => mainWindow,
-      overlays: overlayImages!,
+      overlays: () => overlayImages,
     }),
   })
   const pty = new PtyManager(
@@ -268,19 +284,52 @@ app.whenReady().then(async () => {
     agent: subsystem,
     folders,
   })
-  try {
-    // sessions.json → tags.json → 清掉崩溃遗留的悬空关联（此时渲染进程尚未订阅，不广播），再加载设置
+  // sessions.json → tags.json → 清掉崩溃遗留的悬空关联（此时渲染进程尚未订阅，不广播）→ 设置 → hooks 端点（含启动补装）
+  const loaded = (async () => {
     await sessions.load()
     await settings.load()
+    await subsystem.start()
+    console.log(`[main] 启动数据与 hooks 端点就绪，用时 ${Date.now() - startedAt} ms`)
+  })()
+  loaded.catch(() => {}) // 结果在 whenReady 里处理；这里只防它在 ready 之前成为未处理拒绝
+  return {
+    dataDir,
+    logsDir,
+    availableShells,
+    settings,
+    tags,
+    subsystem,
+    pty,
+    folders,
+    sessions,
+    loaded,
+  }
+}
+
+const boot = hasLock ? startBoot() : null
+
+app.whenReady().then(async () => {
+  if (!boot) return
+  // 系统通知在 Windows 上要有 AppUserModelId（与 electron-builder.yml 的 appId 一致）才能显示
+  app.setAppUserModelId('com.tagterm.app')
+  overlayImages = {
+    blocked: nativeImage.createFromPath(overlayBlockedIconPath),
+    done: nativeImage.createFromPath(overlayDoneIconPath),
+    working: nativeImage.createFromPath(overlayWorkingIconPath),
+  }
+  const readyAt = Date.now()
+  try {
+    await boot.loaded
   } catch (err) {
     // 坏文件不静默清空：提示后退出，由用户处理文件
     dialog.showErrorBox('TagTerm 无法加载数据', err instanceof Error ? err.message : String(err))
     app.exit(1)
     return
   }
+  console.log(`[main] app ready 后等待启动数据 ${Date.now() - readyAt} ms`)
+  const { sessions, settings, tags, subsystem, pty, folders, dataDir, logsDir } = boot
   agent = subsystem
   ptyManager = pty
-  await subsystem.start()
 
   registerIpc(ipcMain, {
     version: app.getVersion(),
@@ -296,7 +345,7 @@ app.whenReady().then(async () => {
     pickDirectory,
     folders, // 「打开日志目录」：与会话子系统的「打开目录」共用同一个 shell.openPath 适配器
     pickImage,
-    listShells: () => availableShells,
+    listShells: () => boot.availableShells,
     getAutoLaunch,
     setAutoLaunch,
   })
