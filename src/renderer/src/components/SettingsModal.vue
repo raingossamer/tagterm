@@ -1,16 +1,29 @@
 <script setup lang="ts">
-// 「设置」弹窗：左侧五段导航（外观 / 启动 / Agent / 更新 / 关于）。
+// 「设置」弹窗：左侧六段导航（外观 / 启动 / Agent / 更新 / 导入导出 / 关于）。
+// 导入导出段即时生效：导出把用户偏好写成一份文件；导入先经应用内确认弹窗，成功后套用字号、重取启动 / Agent 两段状态、
+// 外观草稿重置为新保存的值（草稿是打开弹窗时的快照，不重置的话之后点「保存设置」会把导入的外观冲掉）
 // 外观段是草稿语义（决策 2）：改动只进本地草稿，经 settings.previewBackground 整窗实时生效但不落盘；
 // 「保存设置」才提交，「取消」/ Esc / 点遮罩丢弃草稿并还原。启动 / Agent / 更新 / 关于四段即时生效。
 // Agent 段：两个开关分别安装 / 移除 Claude Code 与 Codex 的 hooks（改用户配置文件前先备份），各自独立的状态与错误红字
 // 启动段另有全局快捷键（唤出 / 隐藏窗口）：开关 + 键位框，点键位框后按下新组合即改（录制期间暂停当前热键），Esc / 失焦取消
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import type { AutoLaunchStatus, GlobalShortcutStatus, HookAgent, HooksStatusMap } from '@shared/ipc'
+import type {
+  AutoLaunchStatus,
+  ConfigImportResult,
+  ConfigItemKey,
+  ConfigItemOutcome,
+  ConfigItemResult,
+  GlobalShortcutStatus,
+  HookAgent,
+  HooksStatusMap,
+} from '@shared/ipc'
 import type { AppBackground, BackgroundFit, GlobalShortcutConfig } from '@shared/models'
 import { MAX_BLUR_PX, MIN_PANEL_OPACITY } from '@shared/models'
 import { DEFAULT_GLOBAL_SHORTCUT } from '@shared/accelerator'
 import { useSettingsStore } from '../stores/settings'
 import { useUpdateStore } from '../stores/update'
+import { useWorkspaceStore } from '../stores/workspace'
+import { useConfirmStore } from '../stores/confirm'
 import { describeUpdateStatus } from '../composables/updateStatus'
 import { createCooldown } from '../composables/cooldown'
 import { captureAccelerator } from '../composables/shortcutCapture'
@@ -20,13 +33,14 @@ const SHORTCUT_RULE = '需要包含 Ctrl 或 Alt，再加字母、数字或 F1�
 const SHORTCUT_HINT =
   '窗口在前台时按下藏到托盘，否则唤出并把焦点交给当前终端。点击键位框后按下新组合，Esc 取消'
 
-type SectionKey = 'appearance' | 'startup' | 'agent' | 'update' | 'about'
+type SectionKey = 'appearance' | 'startup' | 'agent' | 'update' | 'config' | 'about'
 
 const SECTIONS: Array<{ key: SectionKey; label: string }> = [
   { key: 'appearance', label: '外观' },
   { key: 'startup', label: '启动' },
   { key: 'agent', label: 'Agent' },
   { key: 'update', label: '更新' },
+  { key: 'config', label: '导入导出' },
   { key: 'about', label: '关于' },
 ]
 
@@ -49,9 +63,30 @@ const FITS: Array<{ value: BackgroundFit; label: string; hint: string }> = [
   { value: 'tile', label: '平铺', hint: '按原始尺寸重复铺满窗口' },
 ]
 
+const CONFIG_ITEM_LABELS: Record<ConfigItemKey, string> = {
+  tags: '标签',
+  launchCommands: '唤起命令',
+  appearance: '外观参数',
+  globalShortcut: '全局快捷键',
+  autoLaunch: '开机自启',
+  hooks: 'Agent hooks 开关',
+  terminalFontSize: '终端字号',
+}
+const OUTCOME_LABELS: Record<ConfigItemOutcome, string> = {
+  applied: '已应用',
+  unchanged: '与本机相同，未改',
+  absent: '文件里没有，未改',
+  failed: '失败',
+}
+const IMPORT_CONFIRM =
+  '导入会用文件里的内容替换本机的唤起命令、外观参数、全局快捷键、开机自启、Agent hooks 开关和终端字号；' +
+  '标签按名合并，不删本机已有的。\n会话、会话的标签和正在运行的终端不受影响。导入前会先自动备份当前配置。\n继续？'
+
 const emit = defineEmits<{ close: [] }>()
 const settings = useSettingsStore()
 const update = useUpdateStore()
+const workspace = useWorkspaceStore()
+const confirmDialog = useConfirmStore()
 
 const section = ref<SectionKey>('appearance')
 const version = ref('')
@@ -121,6 +156,57 @@ const canOpenLogs = createCooldown(500)
 function openLogsDir(): void {
   if (!canOpenLogs()) return
   void runAction(() => window.tagterm.app.openLogsDir())
+}
+
+// ---- 导入导出（即时生效）：路径由主进程的对话框取得，这里只交出终端字号 ----
+const isConfigBusy = ref(false)
+const exportedPath = ref('')
+const importResult = ref<ConfigImportResult | null>(null)
+
+function describeItem(item: ConfigItemResult): string {
+  const suffix = item.message ? `（${item.message}）` : ''
+  return `${CONFIG_ITEM_LABELS[item.key]}：${OUTCOME_LABELS[item.outcome]}${suffix}`
+}
+
+async function exportConfig(): Promise<void> {
+  if (isConfigBusy.value) return
+  isConfigBusy.value = true
+  try {
+    await runAction(async () => {
+      const result = await window.tagterm.app.exportConfig({ terminalFontSize: workspace.fontSize })
+      if (result) exportedPath.value = result.path
+    })
+  } finally {
+    isConfigBusy.value = false
+  }
+}
+
+/** 先经应用内确认弹窗；成功后套用字号、重取启动 / Agent 两段的状态、外观草稿重置为新保存的值 */
+async function importConfig(): Promise<void> {
+  if (isConfigBusy.value) return
+  if (!(await confirmDialog.ask(IMPORT_CONFIRM))) return
+  isConfigBusy.value = true
+  try {
+    await runAction(async () => {
+      const result = await window.tagterm.app.importConfig({ terminalFontSize: workspace.fontSize })
+      if (!result) return
+      importResult.value = result
+      if (result.terminalFontSize !== undefined) workspace.setFontSize(result.terminalFontSize)
+      await refreshAfterImport()
+    })
+  } finally {
+    isConfigBusy.value = false
+  }
+}
+
+async function refreshAfterImport(): Promise<void> {
+  ;[autoLaunch.value, hooks.value, shortcut.value] = await Promise.all([
+    window.tagterm.app.getAutoLaunch(),
+    window.tagterm.agent.getHooksStatus(),
+    window.tagterm.app.getGlobalShortcut(),
+  ])
+  await settings.previewBackground(null)
+  draft.value = { ...settings.settings.background }
 }
 
 onMounted(async () => {
@@ -555,6 +641,54 @@ function onKeydown(e: KeyboardEvent): void {
             <p class="hint" data-test="update-status">{{ updateText }}</p>
           </section>
 
+          <section v-else-if="section === 'config'" data-test="config-section">
+            <h4>导入导出</h4>
+            <p class="hint" data-test="config-immediate">
+              即时生效：导出与导入都立刻执行，不经「保存设置」
+            </p>
+            <p class="hint" data-test="config-scope">
+              包含：标签、唤起命令、全局快捷键、开机自启、Agent hooks 开关、外观参数、终端字号。<br />
+              不包含：会话、会话的标签、背景图片。
+            </p>
+            <div class="row">
+              <button
+                class="btn sm"
+                type="button"
+                :disabled="isConfigBusy"
+                data-test="config-export"
+                @click="exportConfig"
+                v-text="'导出配置…'"
+              ></button>
+              <button
+                class="btn sm"
+                type="button"
+                :disabled="isConfigBusy"
+                data-test="config-import"
+                @click="importConfig"
+                v-text="'导入配置…'"
+              ></button>
+            </div>
+            <p v-if="exportedPath" class="hint mono" data-test="config-exported">
+              已导出到 {{ exportedPath }}
+            </p>
+            <div v-if="importResult" data-test="config-import-result">
+              <p class="hint mono" data-test="config-imported">已导入 {{ importResult.path }}</p>
+              <ul class="result">
+                <li
+                  v-for="item in importResult.items"
+                  :key="item.key"
+                  :class="item.outcome"
+                  :data-test="`config-item-${item.key}`"
+                >
+                  {{ describeItem(item) }}
+                </li>
+              </ul>
+              <p class="hint mono" data-test="config-backup">
+                导入前的配置已备份到 {{ importResult.backupPath }}
+              </p>
+            </div>
+          </section>
+
           <section v-else>
             <h4>关于</h4>
             <p data-test="about-version">TagTerm v{{ version }}</p>
@@ -826,5 +960,19 @@ footer {
 }
 .spacer {
   flex: 1;
+}
+/* 导入结果：失败红字，没动的项灰字 */
+.result {
+  margin: 6px 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.result li.failed {
+  color: #b42318;
+}
+.result li.unchanged,
+.result li.absent {
+  color: var(--muted);
 }
 </style>
