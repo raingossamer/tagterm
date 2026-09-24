@@ -77,7 +77,7 @@ describe('IPC 接口层', () => {
     ipc = createFakeIpcMain()
     autoUpdater = new FakeAutoUpdater()
     const updater = new Updater({
-      autoUpdater,
+      loadAutoUpdater: async () => autoUpdater,
       currentVersion: '0.1.0',
       onStatus: (s) => updateStatuses.push(s),
       beforeInstall: () => autoUpdater.order.push('before'),
