@@ -5,6 +5,7 @@ import type {
   SearchResult,
   TerminalSize,
 } from '../../src/renderer/src/terminal/TerminalInstance'
+import { CLOSED_TAB_SCROLLBACK, SCROLLBACK } from '../../src/renderer/src/terminal/theme'
 import { FakeTerminal } from './fakeTerminal'
 
 describe('TerminalPool（只管 xterm 一侧，不认识 pty）', () => {
@@ -232,5 +233,19 @@ describe('TerminalPool（只管 xterm 一侧，不认识 pty）', () => {
     expect(terminals[0]!.host!.parentElement).toBe(next)
     pool.open('b')
     expect(terminals[1]!.host!.parentElement).toBe(next)
+  })
+
+  it('trimScrollback / restoreScrollback：只动目标实例（裁到 200 / 设回 5000），别的实例不碰，未知 id 静默', () => {
+    pool.open('a')
+    pool.open('b')
+    const [a, b] = terminals
+    pool.trimScrollback('a')
+    expect(a!.scrollbackCalls).toEqual([CLOSED_TAB_SCROLLBACK])
+    expect(b!.scrollbackCalls).toEqual([])
+    pool.restoreScrollback('a')
+    expect(a!.scrollbackCalls).toEqual([CLOSED_TAB_SCROLLBACK, SCROLLBACK])
+    pool.trimScrollback('ghost')
+    pool.restoreScrollback('ghost')
+    expect(terminals.map((t) => t.scrollback)).toEqual([SCROLLBACK, SCROLLBACK])
   })
 })

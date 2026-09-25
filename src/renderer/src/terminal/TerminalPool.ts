@@ -13,6 +13,7 @@ import type {
   TerminalSize,
 } from './TerminalInstance'
 import { DEFAULT_FONT_SIZE } from './fontSize'
+import { CLOSED_TAB_SCROLLBACK, SCROLLBACK } from './theme'
 
 const FALLBACK_SIZE: TerminalSize = { cols: 80, rows: 24 }
 
@@ -163,6 +164,16 @@ export class TerminalPool {
 
   focusActive(): void {
     if (this.activeId) this.entries.get(this.activeId)?.term.focus()
+  }
+
+  /** 标签页关掉后：该实例的回滚裁到 200 行（xterm 立即裁掉最早的行，释放内存）；实例、pty、末尾判定都不动。未知 id 静默 */
+  trimScrollback(sessionId: string): void {
+    this.entries.get(sessionId)?.term.setScrollback(CLOSED_TAB_SCROLLBACK)
+  }
+
+  /** 标签页重开：回滚上限设回 5000（裁掉的不回来，新输出照常累积）。未知 id 静默 */
+  restoreScrollback(sessionId: string): void {
+    this.entries.get(sessionId)?.term.setScrollback(SCROLLBACK)
   }
 
   /** 移除会话 / 重启 shell 时：取消订阅、销毁实例、移除 host */
