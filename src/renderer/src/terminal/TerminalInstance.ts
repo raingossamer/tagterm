@@ -23,6 +23,8 @@ export interface TerminalInstance {
   onFontZoom(cb: (zoom: FontZoom) => void): Disposable
   /** 换字号（不 fit；量尺寸与同步 pty 由池决定） */
   setFontSize(size: number): void
+  /** 改回滚缓冲上限（行数）：改小时立即裁掉最早的行（关掉的标签页省内存），改大只放宽上限、裁掉的不回来 */
+  setScrollback(lines: number): void
   /** 终端内查找（不区分大小写的普通文本，回滚区一起查）：高亮全部匹配并跳到下一处 / 上一处 */
   findNext(query: string, options?: FindOptions): void
   findPrevious(query: string): void

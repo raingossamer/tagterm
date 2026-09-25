@@ -49,12 +49,16 @@ export const SEARCH_DECORATIONS = {
 /** 高亮上限（超出后仍能逐处跳转，但不再全部标出，计数改显示「1000+」由界面决定） */
 export const SEARCH_HIGHLIGHT_LIMIT = 1000
 
+/** 回滚缓冲上限（行）：开着的终端 5000；标签页关掉后裁到 200（一两屏上下文，够末尾判定与提示符解析），重开恢复 */
+export const SCROLLBACK = 5000
+export const CLOSED_TAB_SCROLLBACK = 200
+
 /** osBuild 为 Windows 构建号（如 26200），xterm 据此选择 ConPTY 的兼容策略 */
 export function buildTerminalOptions(osBuild: number): ITerminalOptions {
   return {
     fontFamily: TERMINAL_FONT_FAMILY,
     fontSize: 14,
-    scrollback: 5000,
+    scrollback: SCROLLBACK,
     cursorBlink: true,
     cursorStyle: 'bar', // 与原生命令提示符一致的竖线光标（xterm 默认是实心方块）
     // 失焦时也保持竖线：xterm 的 cursorInactiveStyle 缺省是 'outline'（空心方块），

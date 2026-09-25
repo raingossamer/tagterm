@@ -130,6 +130,10 @@ export function createXtermFactory(getOptions: () => ITerminalOptions): Terminal
         zoomListeners.add(cb)
         return { dispose: () => zoomListeners.delete(cb) }
       },
+      // 改小时 xterm 6 的 BufferSet 监听该选项、立即按新上限裁行；同值不碰（每次赋值都会触发一次 resize）
+      setScrollback: (lines) => {
+        if (term.options.scrollback !== lines) term.options.scrollback = lines
+      },
       setFontSize: (size) => {
         if (term.options.fontSize !== size) term.options.fontSize = size
       },
