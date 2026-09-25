@@ -123,6 +123,7 @@ export class TerminalWorkspace {
     // 已退出 → 重启：销毁旧实例后照常打开（新 spawn，旧输出不保留）
     if (this.runtime.get(id)?.phase === 'exited') this.pool.dispose(id)
     if (this.pool.has(id)) {
+      this.pool.restoreScrollback(id) // 标签页关掉时裁过回滚，重开设回上限（本来就是上限的同值不动）
       this.pool.show(id)
       this.emit()
       await this.reconcileAlive(id)
@@ -205,9 +206,13 @@ export class TerminalWorkspace {
     this.emit()
   }
 
-  /** 只动标签页：实例与 pty 都保留；关当前页激活 openTabs[min(i, len-1)]，全关则隐藏全部 */
+  /**
+   * 只动标签页：实例与 pty 都保留，但该实例的回滚裁到 200 行省内存（重开 select 时恢复；末尾判定读的 24 行不受影响）；
+   * 关当前页激活 openTabs[min(i, len-1)]，全关则隐藏全部
+   */
   closeTab(id: string): void {
     if (!this.openTabs.includes(id)) return
+    this.pool.trimScrollback(id)
     this.removeTab(id)
     this.emit()
   }

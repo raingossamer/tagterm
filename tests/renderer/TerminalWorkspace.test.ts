@@ -5,6 +5,7 @@ import {
   type WorkspaceSnapshot,
 } from '../../src/renderer/src/terminal/TerminalWorkspace'
 import { FakePty } from './fakePty'
+import { CLOSED_TAB_SCROLLBACK, SCROLLBACK } from '../../src/renderer/src/terminal/theme'
 import { FakeTerminal } from './fakeTerminal'
 import { makeSession } from './fakeApi'
 
@@ -565,5 +566,34 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
     expect(pty.subscriberCount).toBe(0)
     expect(terminals.every((t) => t.isDisposed)).toBe(true)
     expect(core.snapshot()).toEqual({ openTabs: [], activeId: null, runtime: {}, fontSize: 14 })
+  })
+
+  it('22 关标签页：该实例回滚裁到 200（关当前页也裁，切过去的邻居不动）；重开设回 5000；已退出重开 / restart / 移除会话是新实例或销毁，不裁不恢复', async () => {
+    await core.select(a.id)
+    await core.select(b.id)
+    const [ta, tb] = terminals
+    core.closeTab(b.id) // 关当前页 → 激活邻居 a：只裁 b
+    expect(tb!.scrollbackCalls).toEqual([CLOSED_TAB_SCROLLBACK])
+    expect(ta!.scrollbackCalls).toEqual([])
+    core.closeTab(a.id) // 关最后一页：同样裁
+    expect(ta!.scrollbackCalls).toEqual([CLOSED_TAB_SCROLLBACK])
+
+    await core.select(a.id) // 重开：已有实例 → 设回 5000，不新建
+    expect(ta!.scrollbackCalls).toEqual([CLOSED_TAB_SCROLLBACK, SCROLLBACK])
+    expect(terminals).toHaveLength(2)
+
+    pty.emitExit(a.id, 0)
+    await core.select(a.id) // 已退出重开：新实例，缺省上限，旧的销毁
+    expect(terminals).toHaveLength(3)
+    expect(terminals[2]!.scrollbackCalls).toEqual([])
+    expect(ta!.isDisposed).toBe(true)
+
+    await core.restart(a.id) // 重启：新实例
+    expect(terminals).toHaveLength(4)
+    expect(terminals[3]!.scrollbackCalls).toEqual([])
+
+    core.syncSessions([b, c]) // 移除 a：销毁实例，不裁
+    expect(terminals[3]!.isDisposed).toBe(true)
+    expect(terminals[3]!.scrollbackCalls).toEqual([])
   })
 })
