@@ -100,6 +100,7 @@ If the hooks cannot be installed on the new computer (for example Claude Code is
 - When another program already owns the global hotkey, pressing it does nothing at all (the system hands it to that program); look for the notice in "Settings → Startup" and pick another combination.
 - Search inside full-screen programs (vim, less and the like) only covers the current screen, not the scrollback that returns after they exit.
 - Terminal processes end when the app quits; the next launch does not restore processes or output.
+- A closed tab keeps only its last 200 lines of output (to save memory), so older history is gone once you reopen it; open tabs still keep 5000 lines.
 - The installer is unsigned.
 
 ## Development
