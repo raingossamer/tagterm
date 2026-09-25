@@ -4,11 +4,13 @@
 // 那时写进去的命令会被当成一条消息发给那个程序（用户 2026-09-23 判定）。置灰用 aria-disabled 而不是 disabled：
 // disabled 的按钮收不到拖拽事件，置灰的按钮仍要能拖动调顺序。
 // 按钮可以直接在路径条上拖（像浏览器收藏夹栏）：路径条内换位、拖进「更多 ▾」（停半秒自动展开）、从「更多」拖回来；
-// 拖出去松手原样弹回、不删除（删除只在编辑弹窗里做）；松手即保存，顺序以主进程广播为准
+// 拖出去松手原样弹回、不删除（删除只在编辑弹窗里做）；松手即保存，顺序以主进程广播为准。
+// 点完唤起命令 / 清屏后焦点直接落到终端：唤起的工具接着要在终端里选会话、按回车，不该还要先点一下终端
 import { computed, onUnmounted, ref } from 'vue'
 import type { Session } from '@shared/models'
 import { useAgentStore } from '../stores/agent'
 import { useSettingsStore } from '../stores/settings'
+import { useWorkspaceStore } from '../stores/workspace'
 import { dropLaunchCommand, type LaunchDrop, type LaunchZone } from '../composables/launchCommands'
 import { usePopover } from '../composables/usePopover'
 import LaunchCommandsModal from './LaunchCommandsModal.vue'
@@ -18,6 +20,7 @@ const props = defineProps<{ session: Session }>()
 const emit = defineEmits<{ error: [message: string] }>()
 const settings = useSettingsStore()
 const agent = useAgentStore()
+const workspace = useWorkspaceStore()
 const isEditOpen = ref(false)
 // 点击式弹出层：点击容器（按钮 + 弹出层）外部即关闭
 const moreEl = ref<HTMLElement | null>(null)
@@ -37,6 +40,7 @@ const busyTitle = computed(() =>
 function runCommand(cmd: string): void {
   if (runningName.value) return
   window.tagterm.pty.write(props.session.id, `${cmd}\r`)
+  workspace.focusActive()
 }
 
 function runFromMore(cmd: string): void {

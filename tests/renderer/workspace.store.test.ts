@@ -159,6 +159,24 @@ describe('workspace store（TerminalWorkspace 的薄适配器 + 纯 UI 状态）
     expect(pty.opens).toEqual([])
   })
 
+  it('focusActive 委托核心：焦点落到当前可见终端（唤起命令点完直接在终端里接着操作）；未 attachCore 或没有当前页时无副作用', async () => {
+    const ws = useWorkspaceStore()
+    ws.focusActive() // 未 attach：不抛、什么都不做
+    ws.attachCore(core)
+    ws.focusActive() // 没有当前页：同样什么都不做
+    expect(terminals).toEqual([])
+
+    await ws.select(a.id)
+    await ws.select(b.id)
+    const [termA, termB] = terminals
+    const focusA = termA!.focusCount
+    const focusB = termB!.focusCount
+    ws.focusActive()
+    ws.focusActive()
+    expect(termB!.focusCount).toBe(focusB + 2)
+    expect(termA!.focusCount).toBe(focusA) // 只聚焦可见的那个
+  })
+
   it('会话镜像变化喂给核心 syncSessions：列表少了已打开的会话 → 标签页关闭、activeId 为 null、运行态清除', async () => {
     const ws = useWorkspaceStore()
     ws.attachCore(core)
