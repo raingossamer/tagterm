@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import LaunchBar from '../../../src/renderer/src/components/LaunchBar.vue'
 import { useAgentStore } from '../../../src/renderer/src/stores/agent'
 import { useSettingsStore } from '../../../src/renderer/src/stores/settings'
+import { useWorkspaceStore } from '../../../src/renderer/src/stores/workspace'
 import { installFakeApi, makeCommand, makeSession, makeSettings } from '../fakeApi'
 
 describe('LaunchBar（路径条右侧的唤起区）', () => {
@@ -17,7 +18,7 @@ describe('LaunchBar（路径条右侧的唤起区）', () => {
     vi.restoreAllMocks()
   })
 
-  it('唤起区平铺 pinned 命令（显示名），点击即向终端写入 `<command>\r`；清屏按 shell 写 cls / clear', async () => {
+  it('唤起区平铺 pinned 命令（显示名），点击即向终端写入 `<command>\r` 并把焦点交回终端；清屏按 shell 写 cls / clear', async () => {
     const api = installFakeApi()
     useSettingsStore().settings = makeSettings({
       launchCommands: [
@@ -25,6 +26,7 @@ describe('LaunchBar（路径条右侧的唤起区）', () => {
         makeCommand({ command: 'claude --continue', label: 'claude 续', sortOrder: 1 }),
       ],
     })
+    const focusActive = vi.spyOn(useWorkspaceStore(), 'focusActive')
     const wrapper = mount(LaunchBar, { props: { session } })
     await flushPromises()
 
@@ -35,13 +37,17 @@ describe('LaunchBar（路径条右侧的唤起区）', () => {
 
     await launchers[0]!.trigger('click')
     expect(api.pty.write).toHaveBeenCalledWith(session.id, 'claude --continue\r')
+    // 唤起的工具接着要在终端里选会话、按回车：写完命令焦点直接落到终端，不用再点一下终端
+    expect(focusActive).toHaveBeenCalledTimes(1)
 
     await wrapper.find('[data-test=strip-clear]').trigger('click')
     expect(api.pty.write).toHaveBeenCalledWith(session.id, 'cls\r')
+    expect(focusActive).toHaveBeenCalledTimes(2)
 
     await wrapper.setProps({ session: { ...session, shell: 'powershell.exe' } })
     await wrapper.find('[data-test=strip-clear]').trigger('click')
     expect(api.pty.write).toHaveBeenCalledWith(session.id, 'clear\r')
+    expect(focusActive).toHaveBeenCalledTimes(3)
   })
 
   it('非 pinned 命令收进「更多 ▾」：点开列出、点选即执行并收起；没有任何命令时只剩「唤起」与「编辑」', async () => {
@@ -60,9 +66,11 @@ describe('LaunchBar（路径条右侧的唤起区）', () => {
     await wrapper.find('[data-test=launch-more]').trigger('click')
     const items = wrapper.findAll('[data-test=launch-more-item]')
     expect(items.map((b) => b.text())).toEqual(['pi x'])
+    const focusActive = vi.spyOn(useWorkspaceStore(), 'focusActive')
     await items[0]!.trigger('click')
     expect(api.pty.write).toHaveBeenCalledWith(session.id, 'pi --model x\r')
     expect(wrapper.find('[data-test=launch-more-item]').exists()).toBe(false)
+    expect(focusActive).toHaveBeenCalledTimes(1) // 「更多」里点选同样把焦点交回终端
 
     settings.settings = makeSettings({ launchCommands: [] })
     await flushPromises()
@@ -122,6 +130,7 @@ describe('LaunchBar（路径条右侧的唤起区）', () => {
         program: 'claude',
       },
     }
+    const focusActive = vi.spyOn(useWorkspaceStore(), 'focusActive')
     const wrapper = mount(LaunchBar, { props: { session } })
     await flushPromises()
 
@@ -139,6 +148,7 @@ describe('LaunchBar（路径条右侧的唤起区）', () => {
     expect(item.attributes('title')).toBe(busyTitle)
     await item.trigger('click')
     expect(api.pty.write).not.toHaveBeenCalled()
+    expect(focusActive).not.toHaveBeenCalled() // 什么都没发生，焦点也不动
     expect(wrapper.find('[data-test=launch-label]').text()).toBe('唤起')
     expect(wrapper.find('[data-test=launch-edit]').attributes('aria-disabled')).toBeUndefined()
     expect(wrapper.find('[data-test=launch-more]').attributes('aria-disabled')).toBeUndefined()

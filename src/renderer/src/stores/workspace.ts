@@ -149,6 +149,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     core?.setFontSize(size)
   }
 
+  /** 焦点落到当前可见终端（唤起命令点完直接在终端里接着操作）：委托核心；未 attach 或没有当前页时无副作用 */
+  function focusActive(): void {
+    core?.focusActive()
+  }
+
   function toggleSide(): void {
     sideHidden.value = !sideHidden.value
   }
@@ -173,6 +178,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     closeTab,
     restart,
     setFontSize,
+    focusActive,
     toggleSide,
     setHovered,
   }
