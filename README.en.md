@@ -12,7 +12,7 @@ A small Windows desktop tool: **save the project folders you use most as termina
 
 When you use AI coding tools in several projects at once, every time you have to find the project folder, type `cmd` in the address bar, then type `claude`; once a pile of terminal windows is open, you can no longer tell which tool has stopped and is waiting for your approval. TagTerm folds both into one window: a session is a path, and the status is visible at a glance.
 
-## Features (v0.3.12)
+## Features (v0.3.13)
 
 ### Sessions and terminals
 
