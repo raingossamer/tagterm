@@ -1,5 +1,5 @@
 /**
- * 假终端（TerminalInstance 的测试替身）：记录 open 的 host、写入内容、fit / focus 次数、字号、WebGL 与 dispose 状态；
+ * 假终端（TerminalInstance 的测试替身）：记录 open 的 host、写入内容、fit / focus 次数、字号、回滚上限、WebGL 与 dispose 状态；
  * 可手动触发 onData（模拟用户键入）、onResize（模拟 xterm 重排）与 onFontZoom（模拟 Ctrl+滚轮 / Ctrl+0）。
  * display 由池写在 host.style 上，经 isVisible 读取。
  */
@@ -56,6 +56,13 @@ export class FakeTerminal implements TerminalInstance {
   }
   setFontSize(size: number): void {
     this.fontSize = size
+  }
+  /** 回滚上限的当前值与每次调用的序列（池 / 核心测试断言关闭裁、重开恢复） */
+  scrollback = 5000
+  scrollbackCalls: number[] = []
+  setScrollback(lines: number): void {
+    this.scrollback = lines
+    this.scrollbackCalls.push(lines)
   }
   setWebgl(enabled: boolean): void {
     this.isWebgl = enabled
