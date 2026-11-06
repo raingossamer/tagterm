@@ -192,6 +192,11 @@ export interface IpcInvokeMap {
   'agent:set-viewed': { args: [sessionId: string | null]; result: void } // 正被查看的会话：当前页变化 / 焦点 / 可见性变化时上报，不可见或失焦发 null
   'agent:get-hooks-status': { args: []; result: HooksStatusMap } // 两个目标的 hooks 安装状态
   'agent:set-hooks': { args: [agent: HookAgent, enabled: boolean]; result: HooksStatus } // 安装 / 卸载某目标的 hooks，失败 reject 中文 message
+  // ---- 本周备忘（2026-11-06）----
+  'memo:list': { args: []; result: MemoItem[] }
+  'memo:create': { args: [text: string]; result: MemoItem } // trim 后非空、≤ 500 字
+  'memo:update': { args: [id: string, patch: MemoPatch]; result: MemoItem } // 勾选完成时主进程写 doneAt，取消删键
+  'memo:remove': { args: [id: string]; result: void }
 }
 
 // 单向高频：ipcRenderer.send → ipcMain.on（键入不等待响应）
@@ -212,6 +217,7 @@ export interface IpcEventMap {
   'agent:status': [runtime: SessionRuntime] // 某会话运行时记录变化；记录删除时发 alive: false 的空闲记录
   'app:select-session': [sessionId: string] // 系统通知被点击：显示窗口并切到该会话
   'app:focus-terminal': [] // 全局快捷键唤出窗口后：把焦点交给当前终端，可直接打字
+  'memo:changed': [items: MemoItem[]] // 备忘事项变更后广播全量
 }
 
 export type SendChannel = keyof IpcSendMap
