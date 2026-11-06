@@ -203,6 +203,7 @@ export interface IpcInvokeMap {
 export interface IpcSendMap {
   'pty:write': [sessionId: string, data: string]
   'agent:report-output': [sessionId: string, report: OutputReport] // 静默末尾报告（高频单向，非法参数静默忽略）
+  'app:memo-visibility': [open: boolean] // 备忘录弹窗开 / 关（主进程据此判定备忘录热键是开还是关）
 }
 
 // 主进程 → 渲染进程：webContents.send → ipcRenderer.on

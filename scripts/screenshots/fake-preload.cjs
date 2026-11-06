@@ -43,6 +43,9 @@ let sessionTags = [
   ['s-dotfiles', 't-tools'],
 ].map(([sessionId, tagId]) => ({ sessionId, tagId }))
 
+// 本周备忘的演示事项（memo.png 场景用）
+let memos = []
+
 let settings = {
   launchCommands: [
     { id: 'c-claude', label: 'claude', command: 'claude', pinned: true, sortOrder: 1 },
@@ -195,9 +198,36 @@ const api = {
         ],
         terminalFontSize: 15,
       }),
+    reportMemoVisibility: () => {},
     onFocusTerminal: on('app:focus-terminal'),
     onOpenSettings: on('app:open-settings'),
     onSelectSession: on('app:select-session'),
+  },
+  memo: {
+    list: () => ok(memos),
+    create: (text) => {
+      const m = { id: `m-${Date.now()}`, text: text.trim(), done: false, createdAt: T0 }
+      memos = [...memos, m]
+      emit('memo:changed', clone(memos))
+      return ok(m)
+    },
+    update: (id, patch) => {
+      memos = memos.map((m) => {
+        if (m.id !== id) return m
+        const next = { ...m, ...patch }
+        if (patch.done === true && !m.done) next.doneAt = new Date().toISOString()
+        if (patch.done === false) delete next.doneAt
+        return next
+      })
+      emit('memo:changed', clone(memos))
+      return ok(memos.find((m) => m.id === id))
+    },
+    remove: (id) => {
+      memos = memos.filter((m) => m.id !== id)
+      emit('memo:changed', clone(memos))
+      return ok()
+    },
+    onChanged: on('memo:changed'),
   },
   session: {
     list: () => ok(sessions),

@@ -50,6 +50,7 @@ const api: TagTermApi = {
     pauseGlobalShortcut: (paused) => invoke('app:pause-global-shortcut', paused),
     exportConfig: (prefs) => invoke('app:export-config', prefs),
     importConfig: (prefs) => invoke('app:import-config', prefs),
+    reportMemoVisibility: (open) => send('app:memo-visibility', open),
     onFocusTerminal: (cb) => subscribe('app:focus-terminal', cb),
     onOpenSettings: (cb) => subscribe('app:open-settings', cb),
     onSelectSession: (cb) => subscribe('app:select-session', cb),
