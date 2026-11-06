@@ -1,6 +1,21 @@
 <script setup lang="ts">
-// 左栏底部：「新建会话」「管理标签」与右侧两个图标按钮 —— 本周备忘、齿轮（打开设置弹窗；托盘「设置」入口保留）
+// 左栏底部：「新建会话」「管理标签」与右侧两个图标按钮 —— 本周备忘（tooltip 带当前键位）、齿轮（打开设置弹窗；托盘「设置」入口保留）
+import { computed } from 'vue'
+import { DEFAULT_MEMO_SHORTCUT } from '@shared/accelerator'
+import { useSettingsStore } from '../stores/settings'
+
 const emit = defineEmits<{ newSession: []; manageTags: []; memo: []; settings: [] }>()
+const settings = useSettingsStore()
+
+/** 键位随设置里的修改走（settings:changed 广播带着 memoShortcut）；关掉热键时只写名字 */
+const memoTitle = computed(() => {
+  const config = settings.settings.memoShortcut ?? {
+    enabled: true,
+    accelerator: DEFAULT_MEMO_SHORTCUT,
+  }
+  // 名字与键位之间是一个全角空格（与搜索框占位的写法一致）
+  return config.enabled ? `本周备忘\u3000${config.accelerator}` : '本周备忘'
+})
 </script>
 
 <template>
@@ -12,7 +27,7 @@ const emit = defineEmits<{ newSession: []; manageTags: []; memo: []; settings: [
     <button
       class="btn icon memo"
       type="button"
-      title="本周备忘"
+      :title="memoTitle"
       data-test="open-memo"
       @click="emit('memo')"
     >
