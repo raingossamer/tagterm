@@ -105,8 +105,10 @@ function onTabKeydown(e: KeyboardEvent, id: string): void {
   padding: 8px 8px 0;
   height: 44px;
 }
-/* 只有中间这一段滚动，☰ 与 ＋ 钉在两端；滚动条藏起，靠滚轮（转横向）与「当前页滚进视野」定位 */
+/* 只有中间这一段滚动，☰ 与 ＋ 钉在两端；滚动条藏起，靠滚轮（转横向）与「当前页滚进视野」定位。
+   flex: 1 占满中间：宽度不由内容决定，标签页挤不下才压窄（不加它时标签页区按内容收缩，四个标签页就被截断） */
 .tab-scroller {
+  flex: 1 1 auto;
   display: flex;
   align-items: flex-end;
   gap: 2px;
