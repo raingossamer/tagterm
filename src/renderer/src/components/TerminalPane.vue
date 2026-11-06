@@ -73,10 +73,12 @@ onUnmounted(() => {
      结果整个窗口内容（含左栏）被往左挤。clip 只裁不滚、也不把溢出算进祖先的可滚范围，窗口就再也挤不动 */
   overflow: clip;
 }
+/* 留白用定位偏移而不是 padding：实例池的 host 是 absolute + inset 0，以本元素的内边距盒为准，
+   padding 对它无效（2026-11-06 前写的 padding 从没生效，终端第一列紧贴左栏）。
+   左 4 px ≈ 14 号字半个英文字符，上 4 px 让提示符不贴路径条；FitAddon 按缩进后的盒量列数 */
 .term {
   position: absolute;
-  inset: 0;
-  padding: 4px 0 0 8px;
+  inset: 4px 0 0 4px;
 }
 /* xterm 6 自带的 xterm.css 给铺满终端区的 .xterm-viewport 写死了 background-color: #000（注释说是给 macOS 滚动条用的），
    它垫在画布下面，终端文字区因此永远纯黑、透不出全局背景（与渲染器无关，WebGL / DOM 都一样）。
