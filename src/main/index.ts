@@ -449,6 +449,8 @@ app.whenReady().then(async () => {
       agent: subsystem,
       badgeCounts: () => tray?.counts() ?? null,
       summon: summonWindow,
+      toggleMemo,
+      memo,
       quit: quitApp,
     })
   // 未打包（开发）时 electron-updater 会直接报错，只在打包版自动检查
