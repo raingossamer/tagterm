@@ -12,14 +12,14 @@ A small Windows desktop tool: **save the project folders you use most as termina
 
 When you use AI coding tools in several projects at once, every time you have to find the project folder, type `cmd` in the address bar, then type `claude`; once a pile of terminal windows is open, you can no longer tell which tool has stopped and is waiting for your approval. TagTerm folds both into one window: a session is a path, and the status is visible at a glance.
 
-## Features (v0.3.13)
+## Features (v0.4.0)
 
 ### Sessions and terminals
 
 - **A session is a path**: creating a session only needs a folder; the name defaults to the last path segment, and the shell can be cmd.exe / PowerShell / pwsh. Right-click a session to edit its name, folder or shell, or to remove it.
 - **Restart terminal**: right-click a session and choose "Restart terminal" to end its terminal (including whatever is running in it) and start a fresh one in the same folder, switching to that session. If a program is running, you are asked first and the prompt names the program; the item is greyed out while the terminal has not been opened yet.
 - **Real terminals**: node-pty (ConPTY) + xterm.js. UTF-8 Chinese renders correctly and full-screen TUIs such as Claude Code display properly. One terminal instance per session, so switching never loses output.
-- **Tabs**: open sessions show as tabs; closing a tab does not end the process. On the next launch the tabs and the current tab are restored (only the current tab starts its terminal right away).
+- **Tabs**: open sessions show as tabs; closing a tab does not end the process. On the next launch the tabs and the current tab are restored (only the current tab starts its terminal right away). With many tabs they narrow first and then scroll; the mouse wheel scrolls them sideways, the session you switch to scrolls into view, and "＋" always stays clickable on the right.
 - **Clipboard**: Ctrl+V / Shift+Insert paste, Ctrl+Shift+C copies, Ctrl+C copies when there is a selection and interrupts otherwise, right-click copies with a selection and pastes without one.
 - **Search in terminal**: Ctrl+Shift+F opens a search box in the top-right corner of the terminal; typing highlights every match and shows "match N of M", Enter / Shift+Enter jump to the next / previous match, Esc closes. It searches the whole scrollback of that terminal, case-insensitively.
 - **Font size**: hold Ctrl and scroll on a terminal to change the text size (10–32; pinching on a touchpad works too). All terminals change together and the size is kept for the next launch; Ctrl+0 restores the default 14.
@@ -55,6 +55,15 @@ Every open session has a status dot, shown in the sidebar, on the tab and in the
 - **Drag directly on the strip**: like a browser bookmarks bar, drag buttons past each other to reorder; hover over "More ▾" for half a second to expand it and drop anywhere in the list, or drag an item out of "More" back onto the strip. Dropping outside snaps back and never deletes (deletion lives in "Edit").
 - **Greyed out while a program runs**: while anything is running in the terminal (Claude Code, `npm run dev`, anything), the launch buttons and "Clear" are greyed out and the tooltip names the program — a click at that moment would send the command as a message to that program. They come back once you return to the prompt.
 
+### Weekly memo
+
+- **One hotkey to jot things down**: Ctrl+Alt+M by default, from any program, summons TagTerm and opens the "Weekly memo" with the focus in the input box; press Enter to add and keep typing. Press the hotkey again to close it — if TagTerm was brought out of the tray or the background by this hotkey, it hides again and you are back in the program you were using. The memo button to the left of the gear at the bottom of the sidebar and "Weekly memo" in the tray menu open it too.
+- **This week's list**: tick to finish, click the text to edit in place, × to delete; finished items are struck through and sink to the bottom. Unfinished items stay in the current week across week boundaries, labelled with the week they were written down ("from W44").
+- **Looking back**: ‹ › next to the title pages through earlier weeks to see what got done (read-only).
+- "Settings → Startup" lets you change the combination or turn it off; it cannot be the same as the summon hotkey.
+
+![Weekly memo](docs/screenshots/memo.png)
+
 ### Appearance, tray and updates
 
 - **Global background**: one image fills the whole window; the sidebar, tab bar and terminal become translucent over it. Fit mode, image opacity, panel opacity and blur are adjustable with a live preview; "Save settings" applies them.
@@ -64,10 +73,10 @@ Every open session has a status dot, shown in the sidebar, on the tab and in the
   ![Settings · Appearance](docs/screenshots/settings.png)
 
 - **Global hotkey**: Ctrl+Alt+T by default summons TagTerm from anywhere with the focus landing in the current terminal; pressing it again while the window is in front hides it to the tray. "Settings → Startup" lets you change the combination or turn it off, and tells you when another program already owns it.
-- **Tray resident**: × only hides to the tray and every terminal keeps running; the tray menu offers Show window / Settings / Quit (quit ends all terminals). Single instance: launching again just focuses the existing window.
+- **Tray resident**: × only hides to the tray and every terminal keeps running; the tray menu offers Show window / Weekly memo / Settings / Quit (quit ends all terminals). Single instance: launching again just focuses the existing window.
 - **Start with Windows**: starts silently in the tray after login, without showing the window.
 - **Check for updates**: "Settings → Updates" checks, downloads, installs and restarts; an automatic check runs 10 seconds after launch and only notifies, never downloads on its own.
-- **Export / import config**: "Settings → Import / Export" writes tags, launch commands, the global hotkey, start-with-Windows, the Agent hooks switches, appearance parameters and the terminal font size into one JSON file, and imports it on another computer; tags are merged by name, everything else is replaced, the current config is backed up first, and the result of every item is listed. Sessions, their tags and the background image are not included (see "Moving to another computer" below).
+- **Export / import config**: "Settings → Import / Export" writes tags, launch commands, both global hotkeys, start-with-Windows, the Agent hooks switches, appearance parameters and the terminal font size into one JSON file, and imports it on another computer; tags are merged by name, everything else is replaced, the current config is backed up first, and the result of every item is listed. Sessions, their tags, the background image and memo items are not included (see "Moving to another computer" below).
 
 ## Install
 
@@ -80,14 +89,14 @@ After installing, turn on the Claude Code / Codex hooks switches in "Settings �
 ### Moving to another computer
 
 1. On the old computer, open "Settings → Import / Export" and click "Export config…" to get a `tagterm-config-<date>.json`.
-2. Install TagTerm on the new computer, open "Settings → Import / Export" and click "Import config…" with that file: tags, launch commands, the global hotkey, start-with-Windows, the Agent hooks switches, appearance parameters and the terminal font size are all applied. Tags are merged by name (a tag with the same name keeps the local tag and its links while its color and visibility come from the file; tags that only exist locally are kept); everything else is replaced. The current config is backed up to `%APPDATA%\TagTerm\backups\` before anything is applied, so a wrong import is undone by importing the backup.
-3. Sessions do not travel with the file (folder paths change with the machine and user name); recreate them on the new computer with the new paths. The background image is not included either: pick one again in "Settings → Appearance".
+2. Install TagTerm on the new computer, open "Settings → Import / Export" and click "Import config…" with that file: tags, launch commands, both global hotkeys, start-with-Windows, the Agent hooks switches, appearance parameters and the terminal font size are all applied. Tags are merged by name (a tag with the same name keeps the local tag and its links while its color and visibility come from the file; tags that only exist locally are kept); everything else is replaced. The current config is backed up to `%APPDATA%\TagTerm\backups\` before anything is applied, so a wrong import is undone by importing the backup.
+3. Sessions do not travel with the file (folder paths change with the machine and user name); recreate them on the new computer with the new paths. The background image is not included either: pick one again in "Settings → Appearance". Memo items are a record rather than a preference and are not included either.
 
-If the hooks cannot be installed on the new computer (for example Claude Code is not installed yet), the result says why; turn them on in "Settings → Agent" once it is. Only import files you exported yourself or trust: launch commands are typed into the terminal as they are. To move everything including sessions, you can still quit TagTerm and copy `sessions.json`, `settings.json` and `tags.json` from `%APPDATA%\TagTerm\` to the same place on the new computer.
+If the hooks cannot be installed on the new computer (for example Claude Code is not installed yet), the result says why; turn them on in "Settings → Agent" once it is. Only import files you exported yourself or trust: launch commands are typed into the terminal as they are. To move everything including sessions, you can still quit TagTerm and copy `sessions.json`, `settings.json`, `tags.json` and `memo.json` from `%APPDATA%\TagTerm\` to the same place on the new computer.
 
 ## Data and privacy
 
-- The app's own data is three JSON files in `%APPDATA%\TagTerm\`: `sessions.json` (sessions), `settings.json` (launch commands, background and global hotkey) and `tags.json` (tags and their links). Uninstalling does not delete them. Automatic backups taken before a config import live in `backups\` next to them, with the 10 most recent kept.
+- The app's own data is four JSON files in `%APPDATA%\TagTerm\`: `sessions.json` (sessions), `settings.json` (launch commands, background and both global hotkeys), `tags.json` (tags and their links) and `memo.json` (weekly memo items). Uninstalling does not delete them. Automatic backups taken before a config import live in `backups\` next to them, with the 10 most recent kept.
 - Turning a hooks switch on edits `~/.claude/settings.json` or `~/.codex/hooks.json`: a backup is written first as `<file>.tagterm-bak-<timestamp>`, only entries marked as TagTerm's are added or removed, and turning the switch off removes them. Hooks only post events to a port on `127.0.0.1` on this machine.
 - Logs record events and errors only, in `%APPDATA%\TagTerm\logs\`, one file rotating at 1 MB with 3 kept; "Settings → About" opens the log folder with one click, which is what to send the developer when something goes wrong.
 - Terminal output and keystrokes are never written to disk or to the log. Apart from "Check for updates" reaching GitHub Releases, the app does not touch the network.
@@ -97,7 +106,7 @@ If the hooks cannot be installed on the new computer (for example Claude Code is
 - Without hooks, status can only be judged from screen signals: during a Claude Code permission dialog the dot may still show "working", and a turn that ended with an API error cannot be told apart from a normal finish.
 - Greying out the launch buttons relies on a process-tree scan every 2 seconds, so the change lands up to 2 seconds after a program starts or exits; a command that finishes in a flash is never greyed out.
 - A windowed program started from the terminal and left open (such as `start notepad`) also counts as "a program is running", so the buttons stay grey until it is closed.
-- When another program already owns the global hotkey, pressing it does nothing at all (the system hands it to that program); look for the notice in "Settings → Startup" and pick another combination.
+- When another program already owns a global hotkey (summon or weekly memo), pressing it does nothing at all (the system hands it to that program); look for the notice in "Settings → Startup" and pick another combination.
 - Search inside full-screen programs (vim, less and the like) only covers the current screen, not the scrollback that returns after they exit.
 - Terminal processes end when the app quits; the next launch does not restore processes or output.
 - A closed tab keeps only its last 200 lines of output (to save memory), so older history is gone once you reopen it; open tabs still keep 5000 lines.

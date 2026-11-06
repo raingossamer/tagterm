@@ -118,6 +118,15 @@ app.whenReady().then(async () => {
     await js(`document.querySelector('[data-test=manage-tags]')?.click()`)
     await sleep(500)
     await shot('manage-tags.png')
+    await js(
+      `document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`,
+    )
+    await sleep(300)
+
+    // 5. 本周备忘（左栏齿轮左边的按钮；热键 Ctrl+Alt+M 是系统热键，截图脚本不注册）
+    await js(`document.querySelector('[data-test=open-memo]')?.click()`)
+    await waitFor(`document.querySelector('[data-test=memo-modal]')`, '本周备忘弹窗')
+    await shot('memo.png')
   } catch (err) {
     console.error('[screenshots] 失败：', err)
     process.exitCode = 1
