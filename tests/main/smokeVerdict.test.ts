@@ -19,6 +19,7 @@ function passing(): Record<string, unknown> {
       ],
     },
     search: { focusedAfterCtrlK: 'search-input', outputGrew: false },
+    memo: { closedByHotkey: true, hiddenAfterEsc: false, hiddenAfterFrontClose: false },
     settings: { autoLaunch: { shown: true, checked: false, blocked: false }, download: null },
     hooks: { claudeBlocked: true, viewDiag: { hasFocus: false, hidden: false } },
     remaining: 0,

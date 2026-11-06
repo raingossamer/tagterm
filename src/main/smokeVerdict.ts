@@ -19,6 +19,9 @@ export const MUST_BE_FALSE: Readonly<Record<string, string>> = {
   'tags.untaggedWhenAHidden': '隐藏标签 A 时，只挂 A 的会话随组收起，不会掉进「未打标签」组',
   'tags.searchFindsHidden': '被隐藏的会话，左栏搜索同样搜不到',
   'search.outputGrew': '终端里按 Ctrl+K 被搜索框接走，一个字也没有进 shell',
+  'memo.hiddenAfterEsc':
+    '热键从后台叫出的备忘录用 Esc 关掉时窗口不藏（只有用同一个热键关掉才藏回去）',
+  'memo.hiddenAfterFrontClose': '窗口在前台时打开的备忘录，再按热键只关不藏',
 }
 
 export const NOT_JUDGED: Readonly<Record<string, string>> = {

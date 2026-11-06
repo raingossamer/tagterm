@@ -17,6 +17,7 @@ import type { AgentSubsystem, BadgeCounts } from './agent/AgentSubsystem'
 import type { SessionSubsystem } from './session/SessionSubsystem'
 import type { SettingsStore } from './store/SettingsStore'
 import type { TagStore } from './store/TagStore'
+import type { MemoStore } from './store/MemoStore'
 import { judgeSmoke } from './smokeVerdict'
 
 export interface SmokeDeps {
@@ -36,6 +37,10 @@ export interface SmokeDeps {
   badgeCounts: () => BadgeCounts | null
   /** 全局快捷键按下时的动作（唤出 / 隐藏窗口）：烟测不注册系统热键，直接调用它核查 */
   summon: () => void
+  /** 本周备忘热键按下时的动作（开 / 关 / 关掉并藏回去）：同上，直接调用 */
+  toggleMemo: () => void
+  /** 备忘事项只读：核查经界面加的一条落了盘 */
+  memo: Pick<MemoStore, 'list'>
   quit: () => void
 }
 
@@ -396,10 +401,53 @@ const SIDEBAR_SCRIPT = `(async () => {
     sideFits: side.bottom <= innerHeight + 1,
     footVisible: foot.top >= 0 && foot.bottom <= innerHeight + 1,
     listScrolls: groups.scrollHeight > groups.clientHeight + 1,
+    // 滚动条藏起来：列表照样能滚，但不占宽度（weekly-memo-ui-polish 行为 2）
+    noScrollbarWidth: groups.offsetWidth - groups.clientWidth === 0,
   }
+  // 标签页一多（weekly-memo-ui-polish 行为 3）：点开 12 个，标签页区确实溢出了（核查不空转）、
+  // 最后点开的那页在可视区内、「＋」还在窗口里；再点回第一个，它被滚回可视区
+  const rowOf = (name) =>
+    $$('[data-test=session-row]').find((r) => r.querySelector('.name')?.textContent.trim() === name)
+  const tabOf = (name) =>
+    $$('[data-test=tab]').find((t) => t.querySelector('[data-test=tab-name]')?.textContent.trim() === name)
+  const scroller = $('[data-test=tab-scroller]')
+  const inView = (name) => {
+    const t = tabOf(name)
+    if (!t || !scroller) return null
+    const a = t.getBoundingClientRect()
+    const b = scroller.getBoundingClientRect()
+    return a.left >= b.left - 1 && a.right <= b.right + 1
+  }
+  for (let i = 0; i < 12; i++) {
+    rowOf('smoke-fill-' + i)?.click()
+    await sleep(80)
+  }
+  await waitFor(() => !!tabOf('smoke-fill-11'))
+  await sleep(400)
+  const add = $('[data-test=tab-add]').getBoundingClientRect()
+  const tabsOverflow = !!scroller && scroller.scrollWidth > scroller.clientWidth + 1
+  const lastInView = inView('smoke-fill-11')
+  const addVisible = add.left >= 0 && add.right <= innerWidth + 1
+  rowOf('smoke-fill-0')?.click()
+  await sleep(400)
+  result.tabs = { tabsOverflow, lastInView, addVisible, firstInViewAfterSelect: inView('smoke-fill-0') }
   for (const s of created) await api.session.remove(s.id)
   await waitFor(() => !$$('[data-test=session-row]').some((r) => r.textContent.includes('smoke-fill-')))
   return result
+})()`
+
+/**
+ * 终端文字离左栏 / 路径条的留白（weekly-memo-ui-polish 行为 1）：量可见终端的 .xterm-screen 相对 .term-wrap 的偏移。
+ * 此前 .term 写的是 padding、对绝对定位的 host 不生效，偏移是 0
+ */
+const TERM_GAP_SCRIPT = `(() => {
+  const wrap = document.querySelector('.term-wrap')
+  const host = [...document.querySelectorAll('[data-test=terminal-pane] > div')].find((h) => h.style.display === 'block')
+  const screen = host?.querySelector('.xterm-screen')
+  if (!wrap || !screen) return null
+  const a = wrap.getBoundingClientRect()
+  const b = screen.getBoundingClientRect()
+  return { left: Math.round(b.left - a.left), top: Math.round(b.top - a.top), leftGapOk: b.left - a.left >= 4, topGapOk: b.top - a.top >= 4 }
 })()`
 
 /**
@@ -1233,9 +1281,10 @@ async function runConfigChecks(
       commandsApplied: item(1, '唤起命令：已应用'),
       appearanceApplied: item(2, '外观参数：已应用'),
       shortcutApplied: item(3, '全局快捷键：已应用'),
-      autoLaunchAbsent: item(4, '开机自启：文件里没有'),
-      hooksAbsent: item(5, 'Agent hooks 开关：文件里没有'),
-      fontSizeAbsent: item(6, '终端字号：文件里没有'),
+      memoShortcutAbsent: item(4, '本周备忘快捷键：文件里没有'),
+      autoLaunchAbsent: item(5, '开机自启：文件里没有'),
+      hooksAbsent: item(6, 'Agent hooks 开关：文件里没有'),
+      fontSizeAbsent: item(7, '终端字号：文件里没有'),
       keepTagSameId: keepAfter?.id === keep.id,
       keepTagRestyled: keepAfter?.color === '#D14343' && keepAfter?.hidden === true,
       newTagCreated: tagsAfter.some((t) => t.name === CONFIG_NEW_TAG),
@@ -1437,6 +1486,118 @@ async function runKeyboardChecks(
   }
 }
 
+const MEMO_STATE = `(() => ({
+  open: !!document.querySelector('[data-test=memo-modal]'),
+  inputFocused: document.activeElement?.getAttribute('data-test') === 'memo-input',
+}))()`
+
+/** 在备忘弹窗的输入框里打一条并回车（Vue 的 @keydown.enter 认合成事件） */
+const ADD_MEMO = (text: string): string => `(() => {
+  const input = document.querySelector('[data-test=memo-input]')
+  if (!input) return false
+  input.value = ${JSON.stringify(text)}
+  input.dispatchEvent(new Event('input'))
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+  return true
+})()`
+
+const CHECK_MEMO = (text: string): string => `(() => {
+  const row = [...document.querySelectorAll('[data-test=memo-item]')].find(
+    (r) => r.querySelector('[data-test=memo-text]')?.textContent === ${JSON.stringify(text)},
+  )
+  row?.querySelector('[data-test=memo-done]')?.click()
+  return !!row
+})()`
+
+/** 收尾：删掉烟测加的事项、弹窗还开着就按 Esc 关掉 */
+const MEMO_CLEANUP = `(async () => {
+  for (const m of await window.tagterm.memo.list())
+    if (m.text.startsWith('smoke-memo-')) await window.tagterm.memo.remove(m.id)
+  if (document.querySelector('[data-test=memo-modal]'))
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+  return true
+})()`
+
+/**
+ * 本周备忘（weekly-memo-ui-polish 行为 13）：烟测不注册系统热键，直接调用按下时的那个函数（同 summon）。
+ * 藏着按 → 窗口出来、弹窗打开、焦点在输入框；经界面加一条并勾掉 → memo.json 落盘、带完成时间；
+ * 在前台再按 → 关掉并藏回去。反例：从后台叫出来但用 Esc 关掉，窗口不藏；在前台打开再按，只关不藏
+ */
+async function runMemoChecks(
+  win: BrowserWindow,
+  deps: SmokeDeps,
+): Promise<Record<string, unknown>> {
+  const js = (code: string): Promise<unknown> => win.webContents.executeJavaScript(code)
+  const isOpen = `${MEMO_STATE}.open`
+  const text = `smoke-memo-${Date.now()}`
+  try {
+    win.hide()
+    await pollUntil(() => !win.isVisible(), 3000)
+    deps.toggleMemo()
+    const shownFromHidden = await pollUntil(() => win.isVisible(), 3000)
+    const openedFromHidden = await pollJs(win, isOpen, 3000)
+    const inputFocused = await pollJs(win, `${MEMO_STATE}.inputFocused`, 3000)
+
+    const typed = (await js(ADD_MEMO(text))) as boolean
+    const added = await pollUntil(() => deps.memo.list().some((m) => m.text === text), 3000)
+    const memoFile = join(deps.dataDir, 'memo.json')
+    const persisted = existsSync(memoFile) && readFileSync(memoFile, 'utf8').includes(text)
+    const checked = (await js(CHECK_MEMO(text))) as boolean
+    const doneSaved = await pollUntil(
+      () => deps.memo.list().some((m) => m.text === text && m.done && typeof m.doneAt === 'string'),
+      3000,
+    )
+
+    win.focus()
+    await sleep(200)
+    const focusedBeforeClose = win.isFocused()
+    deps.toggleMemo()
+    const closedByHotkey = await pollJs(win, `!${isOpen}`, 3000)
+    const hiddenAgain = await pollUntil(() => !win.isVisible(), 3000)
+
+    // 反例 1：从后台叫出来、用 Esc 关掉 → 窗口不藏
+    deps.toggleMemo()
+    await pollJs(win, isOpen, 3000)
+    await js(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); true`)
+    const closedByEsc = await pollJs(win, `!${isOpen}`, 3000)
+    await sleep(300)
+    const hiddenAfterEsc = !win.isVisible()
+
+    // 反例 2：窗口在前台时打开的，再按只关不藏
+    win.focus()
+    await sleep(200)
+    deps.toggleMemo()
+    const reopenedInFront = await pollJs(win, isOpen, 3000)
+    deps.toggleMemo()
+    const closedInFront = await pollJs(win, `!${isOpen}`, 3000)
+    await sleep(300)
+    const hiddenAfterFrontClose = !win.isVisible()
+
+    return {
+      shownFromHidden,
+      openedFromHidden,
+      inputFocused,
+      typed,
+      added,
+      persisted,
+      checked,
+      doneSaved,
+      focusedBeforeClose,
+      closedByHotkey,
+      hiddenAgain,
+      closedByEsc,
+      hiddenAfterEsc,
+      reopenedInFront,
+      closedInFront,
+      hiddenAfterFrontClose,
+    }
+  } finally {
+    win.show()
+    win.focus()
+    await js(MEMO_CLEANUP)
+  }
+}
+
 export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
   const consoleErrors: string[] = []
   win.webContents.on('console-message', (event) => {
@@ -1562,6 +1723,8 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         10000,
         '终端区溢出烟测',
       )
+
+      const termGap = await win.webContents.executeJavaScript(TERM_GAP_SCRIPT)
 
       // 关窗 → 只隐藏；pty 存活；托盘「显示窗口」恢复
       win.close()
@@ -1877,6 +2040,14 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         config = { error: errorText(err) }
       }
 
+      // 本周备忘（weekly-memo-ui-polish）：热键「记完就回去」（直接调用按下时的那个函数）、经界面加一条并勾掉、落盘
+      let memo: Record<string, unknown> = {}
+      try {
+        memo = await withTimeout(runMemoChecks(win, deps), 30000, '本周备忘烟测')
+      } catch (err) {
+        memo = { error: errorText(err) }
+      }
+
       // 清理烟测会话：走会话子系统的完整级联（结束 pty → 删记录 → 删关联 → 墓碑，与右键「移除会话」同一条路），
       // 之后 before-quit 的 killAll 对它们是空操作；tags.json 应已落盘且只剩空集合
       for (const id of sessionIds) await deps.sessions.remove(id)
@@ -1908,6 +2079,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         rightClick,
         settings,
         sidebar,
+        termGap,
         termOverflow,
         lifecycle,
         restore,
@@ -1915,6 +2087,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         launchBar,
         keyboard,
         config,
+        memo,
         processTree,
         termBackground,
         hooks,
