@@ -18,7 +18,7 @@ import type {
 } from '@shared/ipc'
 import { AGENT_LABELS, type GlobalShortcutConfig } from '@shared/models'
 import type { AgentSubsystem } from '../agent/AgentSubsystem'
-import { applyGlobalShortcut } from '../shortcut/applyGlobalShortcut'
+import { applyGlobalShortcut, applyMemoShortcut } from '../shortcut/applyGlobalShortcut'
 import type { GlobalShortcut } from '../shortcut/GlobalShortcut'
 import type { SettingsStore } from '../store/SettingsStore'
 import type { TagStore } from '../store/TagStore'
@@ -57,6 +57,8 @@ export interface ConfigServiceDeps {
   >
   tags: Pick<TagStore, 'list' | 'importByName'>
   shortcut: Pick<GlobalShortcut, 'apply' | 'revert' | 'status'>
+  /** 本周备忘的全局快捷键（第二个实例） */
+  memoShortcut: Pick<GlobalShortcut, 'apply' | 'revert' | 'status'>
   autoLaunch: AutoLaunchPort
   hooks: Pick<AgentSubsystem, 'hooksStatus' | 'setHooks'>
   dialogs: ConfigDialogPort
@@ -100,7 +102,8 @@ export class ConfigService {
     const items: ConfigItemResult[] = [
       await this.applyTags(data),
       ...(await this.applySettings(data)),
-      await this.applyGlobalShortcut(data),
+      await this.applyShortcut(data, 'globalShortcut'),
+      await this.applyShortcut(data, 'memoShortcut'),
       this.applyAutoLaunch(data),
       await this.applyHooks(data),
       applyFontSize(data, prefs),
@@ -134,6 +137,7 @@ export class ConfigService {
       launchCommands: currentLaunchCommands(settings.launchCommands),
       appearance,
       globalShortcut: this.deps.settings.getGlobalShortcut(),
+      memoShortcut: this.deps.settings.getMemoShortcut(),
       autoLaunch: this.deps.autoLaunch.get().enabled,
       hooks: { claude: hooks.claude.installed, codex: hooks.codex.installed },
       terminalFontSize: prefs.terminalFontSize,
@@ -215,16 +219,24 @@ export class ConfigService {
     return results
   }
 
-  private async applyGlobalShortcut(data: ConfigFileData): Promise<ConfigItemResult> {
-    if (data.globalShortcut === undefined) return { key: 'globalShortcut', outcome: 'absent' }
-    if (isSameShortcut(this.deps.settings.getGlobalShortcut(), data.globalShortcut)) {
-      return { key: 'globalShortcut', outcome: 'unchanged' }
-    }
+  /** 两个全局快捷键各一项：与本机相同不动；否则走「先注册成功才落盘」的同一套编排（含同键检查） */
+  private async applyShortcut(
+    data: ConfigFileData,
+    key: 'globalShortcut' | 'memoShortcut',
+  ): Promise<ConfigItemResult> {
+    const next = data[key]
+    if (next === undefined) return { key, outcome: 'absent' }
+    const current =
+      key === 'globalShortcut'
+        ? this.deps.settings.getGlobalShortcut()
+        : this.deps.settings.getMemoShortcut()
+    if (isSameShortcut(current, next)) return { key, outcome: 'unchanged' }
     try {
-      await applyGlobalShortcut(this.deps, data.globalShortcut)
-      return { key: 'globalShortcut', outcome: 'applied' }
+      if (key === 'globalShortcut') await applyGlobalShortcut(this.deps, next)
+      else await applyMemoShortcut(this.deps, next)
+      return { key, outcome: 'applied' }
     } catch (err) {
-      return { key: 'globalShortcut', outcome: 'failed', message: messageOf(err) }
+      return { key, outcome: 'failed', message: messageOf(err) }
     }
   }
 

@@ -68,6 +68,7 @@ const CONFIG_ITEM_LABELS: Record<ConfigItemKey, string> = {
   launchCommands: '唤起命令',
   appearance: '外观参数',
   globalShortcut: '全局快捷键',
+  memoShortcut: '本周备忘快捷键',
   autoLaunch: '开机自启',
   hooks: 'Agent hooks 开关',
   terminalFontSize: '终端字号',
@@ -79,7 +80,7 @@ const OUTCOME_LABELS: Record<ConfigItemOutcome, string> = {
   failed: '失败',
 }
 const IMPORT_CONFIRM =
-  '导入会用文件里的内容替换本机的唤起命令、外观参数、全局快捷键、开机自启、Agent hooks 开关和终端字号；' +
+  '导入会用文件里的内容替换本机的唤起命令、外观参数、两个全局快捷键、开机自启、Agent hooks 开关和终端字号；' +
   '标签按名合并，不删本机已有的。\n会话、会话的标签和正在运行的终端不受影响。导入前会先自动备份当前配置。\n继续？'
 
 const emit = defineEmits<{ close: [] }>()
@@ -577,8 +578,9 @@ function onKeydown(e: KeyboardEvent): void {
               即时生效：导出与导入都立刻执行，不经「保存设置」
             </p>
             <p class="hint" data-test="config-scope">
-              包含：标签、唤起命令、全局快捷键、开机自启、Agent hooks 开关、外观参数、终端字号。<br />
-              不包含：会话、会话的标签、背景图片。
+              包含：标签、唤起命令、两个全局快捷键、开机自启、Agent hooks
+              开关、外观参数、终端字号。<br />
+              不包含：会话、会话的标签、背景图片、备忘事项。
             </p>
             <div class="row">
               <button

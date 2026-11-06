@@ -2,7 +2,8 @@
  * 配置文件（导出 / 导入的 JSON）的组装与解析：纯函数，不碰文件系统、不 import electron。
  * 文件带格式标记与版本；解析时整份校验，任一项不合法即整份拒绝并写明是哪一项（中文）；
  * 文件里没有的项就是没有（导入时不动本机），未知的顶层键忽略。带的是用户偏好：标签、唤起命令、外观参数、
- * 全局快捷键、开机自启、hooks 开关、终端字号；不带会话、关联与背景图片。
+ * 两个全局快捷键（唤出窗口 / 本周备忘，后者 2026-11-06 加，仍 v1）、开机自启、hooks 开关、终端字号；
+ * 不带会话、关联、背景图片与备忘事项。
  */
 import type { ConfigItemKey, HookAgent } from '@shared/ipc'
 import {
@@ -35,12 +36,13 @@ export type ConfigAppearance = Omit<AppBackground, 'imagePath'>
 
 export type ConfigHooks = Partial<Record<HookAgent, boolean>>
 
-/** 七项与 shared 的 ConfigItemKey 一一对应（键名漂移时这里的类型检查会报错） */
+/** 八项与 shared 的 ConfigItemKey 一一对应（键名漂移时这里的类型检查会报错） */
 export type ConfigFileData = Partial<{
   tags: ConfigTag[]
   launchCommands: ConfigLaunchCommand[]
   appearance: ConfigAppearance
   globalShortcut: GlobalShortcutConfig
+  memoShortcut: GlobalShortcutConfig
   autoLaunch: boolean
   hooks: ConfigHooks
   terminalFontSize: number
@@ -53,6 +55,7 @@ export const CONFIG_ITEM_KEYS: readonly ConfigItemKey[] = [
   'launchCommands',
   'appearance',
   'globalShortcut',
+  'memoShortcut',
   'autoLaunch',
   'hooks',
   'terminalFontSize',
@@ -106,7 +109,17 @@ export function parseConfigFile(text: string): ConfigFileData {
     data.launchCommands = parseLaunchCommands(raw.launchCommands)
   if (raw.appearance !== undefined) data.appearance = parseAppearance(raw.appearance)
   if (raw.globalShortcut !== undefined)
-    data.globalShortcut = parseGlobalShortcut(raw.globalShortcut)
+    data.globalShortcut = parseShortcut(raw.globalShortcut, '全局快捷键')
+  if (raw.memoShortcut !== undefined)
+    data.memoShortcut = parseShortcut(raw.memoShortcut, '本周备忘快捷键')
+  // 两个都开着又是同一个组合：导进来后必有一个注册不上，整份拒绝
+  if (
+    data.globalShortcut?.enabled &&
+    data.memoShortcut?.enabled &&
+    data.globalShortcut.accelerator === data.memoShortcut.accelerator
+  ) {
+    throw new Error('配置文件里的两个快捷键相同')
+  }
   if (raw.autoLaunch !== undefined) {
     if (typeof raw.autoLaunch !== 'boolean') throw new Error('配置文件里的开机自启格式不正确')
     data.autoLaunch = raw.autoLaunch
@@ -178,13 +191,13 @@ function parseAppearance(value: unknown): ConfigAppearance {
   }
 }
 
-function parseGlobalShortcut(value: unknown): GlobalShortcutConfig {
+function parseShortcut(value: unknown, name: string): GlobalShortcutConfig {
   if (
     !isPlainObject(value) ||
     typeof value.enabled !== 'boolean' ||
     !isValidAccelerator(value.accelerator)
   ) {
-    throw new Error('配置文件里的全局快捷键格式不正确')
+    throw new Error(`配置文件里的${name}格式不正确`)
   }
   return { enabled: value.enabled, accelerator: value.accelerator as string }
 }

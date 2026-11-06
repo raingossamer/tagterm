@@ -60,6 +60,7 @@ export type ConfigItemKey =
   | 'launchCommands'
   | 'appearance'
   | 'globalShortcut'
+  | 'memoShortcut'
   | 'autoLaunch'
   | 'hooks'
   | 'terminalFontSize'

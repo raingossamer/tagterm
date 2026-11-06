@@ -194,6 +194,7 @@ const api = {
           { key: 'launchCommands', outcome: 'applied' },
           { key: 'appearance', outcome: 'unchanged' },
           { key: 'globalShortcut', outcome: 'applied' },
+          { key: 'memoShortcut', outcome: 'unchanged' },
           { key: 'autoLaunch', outcome: 'unchanged' },
           { key: 'hooks', outcome: 'absent' },
           { key: 'terminalFontSize', outcome: 'applied' },
