@@ -87,6 +87,15 @@ onUnmounted(() => {
 .term :deep(.xterm .xterm-viewport) {
   background-color: transparent;
 }
+/* 同一个 .xterm-viewport 还写死了 overflow-y: scroll：xterm 6 的滚动改由自绘滚动条（滑块已在 theme.ts 设透明）接管，
+   这个元素却一直挂着一条系统原生滚动条（带上下箭头）贴在终端右缘。藏起来不影响滚动，与左栏、标签页栏同一写法
+   （用户 2026-11-06 要求）；FitAddon 量列数时预留的是自绘滚动条的宽度，与它无关 */
+.term :deep(.xterm .xterm-viewport) {
+  scrollbar-width: none;
+}
+.term :deep(.xterm .xterm-viewport::-webkit-scrollbar) {
+  display: none;
+}
 /* 右上角浮层：搜索框在上、字号小牌在下；浮层本身不挡点击（搜索框自己接事件） */
 .overlay {
   position: absolute;
