@@ -22,6 +22,7 @@ import { runSmokeCheck } from './smoke'
 import { SessionStore } from './store/SessionStore'
 import { SettingsStore } from './store/SettingsStore'
 import { TagStore } from './store/TagStore'
+import { MemoStore } from './store/MemoStore'
 import { resolveDataDir } from './store/paths'
 import { PtyManager } from './pty/PtyManager'
 import type { AgentSubsystem } from './agent/AgentSubsystem'
@@ -212,11 +213,12 @@ interface Boot {
   availableShells: ShellKind[]
   settings: SettingsStore
   tags: TagStore
+  memo: MemoStore
   subsystem: AgentSubsystem
   pty: PtyManager
   folders: FolderPort
   sessions: SessionSubsystem
-  /** sessions.json → tags.json → 清悬空关联 → settings.json → hooks 端点与补装；坏文件原样 reject，由 whenReady 弹框退出 */
+  /** sessions.json → tags.json → 清悬空关联 → settings.json → memo.json → hooks 端点与补装；坏文件原样 reject，由 whenReady 弹框退出 */
   loaded: Promise<void>
 }
 
@@ -247,6 +249,9 @@ function startBoot(): Boot {
   })
   const tags = new TagStore(dataDir, {
     onChanged: (result) => broadcast('tag:changed', result),
+  })
+  const memo = new MemoStore(dataDir, {
+    onChanged: (items) => broadcast('memo:changed', items),
   })
 
   // agent 运行时子系统：状态机 / 进程树 / hooks 端点与安装器 / 通知 / 角标全在里面，这里只造 Electron 适配器并接线一次；
@@ -287,10 +292,11 @@ function startBoot(): Boot {
     agent: subsystem,
     folders,
   })
-  // sessions.json → tags.json → 清掉崩溃遗留的悬空关联（此时渲染进程尚未订阅，不广播）→ 设置 → hooks 端点（含启动补装）
+  // sessions.json → tags.json → 清掉崩溃遗留的悬空关联（此时渲染进程尚未订阅，不广播）→ 设置 → 备忘 → hooks 端点（含启动补装）
   const loaded = (async () => {
     await sessions.load()
     await settings.load()
+    await memo.load()
     await subsystem.start()
     console.log(`[main] 启动数据与 hooks 端点就绪，用时 ${Date.now() - startedAt} ms`)
   })()
@@ -301,6 +307,7 @@ function startBoot(): Boot {
     availableShells,
     settings,
     tags,
+    memo,
     subsystem,
     pty,
     folders,
@@ -330,7 +337,7 @@ app.whenReady().then(async () => {
     return
   }
   console.log(`[main] app ready 后等待启动数据 ${Date.now() - readyAt} ms`)
-  const { sessions, settings, tags, subsystem, pty, folders, dataDir, logsDir } = boot
+  const { sessions, settings, tags, memo, subsystem, pty, folders, dataDir, logsDir } = boot
   agent = subsystem
   ptyManager = pty
 
@@ -357,6 +364,7 @@ app.whenReady().then(async () => {
     sessions,
     settings,
     tags,
+    memo,
     updater,
     agent: subsystem,
     shortcut,

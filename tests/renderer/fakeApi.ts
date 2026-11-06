@@ -5,6 +5,7 @@ import {
   DEFAULT_BACKGROUND,
   TAG_COLORS,
   type LaunchCommand,
+  type MemoItem,
   type Session,
   type Settings,
   type ShellKind,
@@ -150,6 +151,14 @@ export function createFakeApi(overrides: Overrides = {}): TagTermApi {
       onStatus: vi.fn(() => () => {}),
       ...overrides.agent,
     },
+    memo: {
+      list: vi.fn(async (): Promise<MemoItem[]> => []),
+      create: vi.fn(async (text: string) => makeMemo({ text })),
+      update: vi.fn(async (id: string, patch) => makeMemo({ id, ...patch })),
+      remove: vi.fn(async () => {}),
+      onChanged: vi.fn(() => () => {}),
+      ...overrides.memo,
+    },
     pty: {
       open: vi.fn(async () => ({ created: true, pid: 4242 })),
       write: vi.fn(),
@@ -164,6 +173,19 @@ export function createFakeApi(overrides: Overrides = {}): TagTermApi {
 }
 
 let seq = 0
+
+/** 构造一条测试备忘事项，字段可覆盖（缺省未完成、创建于 2026-11-04 中午） */
+export function makeMemo(partial: Partial<MemoItem> = {}): MemoItem {
+  seq += 1
+  return {
+    id: `m${seq}`,
+    text: `事项 ${seq}`,
+    done: false,
+    createdAt: new Date(2026, 10, 4, 12).toISOString(),
+    ...partial,
+  }
+}
+
 /** 构造一条测试会话，字段可覆盖 */
 export function makeSession(partial: Partial<Session> = {}): Session {
   seq += 1

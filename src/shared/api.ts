@@ -10,6 +10,7 @@ import type {
   HookAgent,
   HooksStatus,
   HooksStatusMap,
+  MemoPatch,
   OutputReport,
   PtyExitEvent,
   PtyOpenResult,
@@ -24,6 +25,7 @@ import type {
 } from './ipc'
 import type {
   GlobalShortcutConfig,
+  MemoItem,
   Session,
   SessionRuntime,
   Settings,
@@ -108,6 +110,15 @@ export interface TagTermApi {
     /** 打开 = 备份并追加我们的 hooks 条目，关闭 = 只删我们的；返回该目标的实际状态 */
     setHooks(agent: HookAgent, enabled: boolean): Promise<HooksStatus>
     onStatus(cb: (runtime: SessionRuntime) => void): Unsubscribe
+  }
+  /** 本周备忘：事项的增删改；归哪一周由 shared/week 推算 */
+  memo: {
+    list(): Promise<MemoItem[]>
+    create(text: string): Promise<MemoItem>
+    /** 勾选完成时主进程写完成时间，取消勾选删掉 */
+    update(id: string, patch: MemoPatch): Promise<MemoItem>
+    remove(id: string): Promise<void>
+    onChanged(cb: (items: MemoItem[]) => void): Unsubscribe
   }
   pty: {
     open(sessionId: string, size: PtySize): Promise<PtyOpenResult>

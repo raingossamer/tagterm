@@ -95,6 +95,13 @@ const api: TagTermApi = {
     setHooks: (agent, enabled) => invoke('agent:set-hooks', agent, enabled),
     onStatus: (cb) => subscribe('agent:status', cb),
   },
+  memo: {
+    list: () => invoke('memo:list'),
+    create: (text) => invoke('memo:create', text),
+    update: (id, patch) => invoke('memo:update', id, patch),
+    remove: (id) => invoke('memo:remove', id),
+    onChanged: (cb) => subscribe('memo:changed', cb),
+  },
   pty: {
     open: (sessionId, size) => invoke('pty:open', sessionId, size),
     write: (sessionId, data) => send('pty:write', sessionId, data),

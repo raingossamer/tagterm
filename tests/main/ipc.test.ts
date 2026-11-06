@@ -6,6 +6,7 @@ import { registerIpc, type IpcDeps } from '../../src/main/ipc'
 import { SessionStore } from '../../src/main/store/SessionStore'
 import { SettingsStore } from '../../src/main/store/SettingsStore'
 import { TagStore } from '../../src/main/store/TagStore'
+import { MemoStore } from '../../src/main/store/MemoStore'
 import { Updater } from '../../src/main/updater/Updater'
 import { FakeAutoUpdater } from './fakeAutoUpdater'
 import { PtyManager } from '../../src/main/pty/PtyManager'
@@ -16,7 +17,7 @@ import { ConfigService } from '../../src/main/config/ConfigService'
 import { FakeConpty } from './fakeConpty'
 import { FakeShortcutPort } from './fakeShortcutPort'
 import type { AutoLaunchStatus, PtyExitEvent, PtyOpenResult, TagListResult } from '@shared/ipc'
-import type { Session, SessionRuntime, Settings, Tag, UpdateStatus } from '@shared/models'
+import type { MemoItem, Session, SessionRuntime, Settings, Tag, UpdateStatus } from '@shared/models'
 import { createFakeIpcMain, type FakeIpcMain } from './fakeIpcMain'
 import { createQuietAgent } from './quietAgent'
 
@@ -27,6 +28,7 @@ describe('IPC 接口层', () => {
   let store: SessionStore
   let settings: SettingsStore
   let tags: TagStore
+  let memo: MemoStore
   let pty: PtyManager
   let agent: AgentSubsystem
   const agentChanges: SessionRuntime[] = []
@@ -57,6 +59,8 @@ describe('IPC 接口层', () => {
     await settings.load()
     tags = new TagStore(dir)
     await tags.load()
+    memo = new MemoStore(dir)
+    await memo.load()
     // 与生产同一条装配（PtyManager 的回调经 wrapPty 串上状态机与探针、会话子系统拿它们装配），只换真外部依赖：
     // node-pty 换假 ConPTY；AgentSubsystem 不 start（不起 HookServer，hooks 状态在端口 0 下同样成立）、进程树为空
     agent = createQuietAgent({
@@ -101,6 +105,7 @@ describe('IPC 接口层', () => {
       sessions: new SessionSubsystem({ store, tags, terminals: pty, agent, folders }),
       settings,
       tags,
+      memo,
       updater,
       agent,
       shortcut,
@@ -145,6 +150,39 @@ describe('IPC 接口层', () => {
     agentRemovals.length = 0
     updateStatuses.length = 0
     rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('memo:create / list / update / remove 落到 MemoStore', async () => {
+    const created = (await ipc.invoke('memo:create', '写周报')) as MemoItem
+    expect(created).toMatchObject({ text: '写周报', done: false })
+    await expect(ipc.invoke('memo:list')).resolves.toEqual([created])
+
+    const done = (await ipc.invoke('memo:update', created.id, { done: true })) as MemoItem
+    expect(done.done).toBe(true)
+    expect(typeof done.doneAt).toBe('string')
+    const renamed = (await ipc.invoke('memo:update', created.id, { text: '写月报' })) as MemoItem
+    expect(renamed.text).toBe('写月报')
+
+    await ipc.invoke('memo:remove', created.id)
+    expect(memo.list()).toEqual([])
+  })
+
+  it('memo:* 守卫：文字非空且不超过 500 字、补丁只认 text / done、id 非空；非法即拒且不落盘', async () => {
+    await expect(ipc.invoke('memo:create', '   ')).rejects.toThrow('备忘内容不能为空')
+    await expect(ipc.invoke('memo:create', 42)).rejects.toThrow('备忘内容不能为空')
+    await expect(ipc.invoke('memo:create', '字'.repeat(501))).rejects.toThrow(
+      '备忘内容不能超过 500 字',
+    )
+    const ok = (await ipc.invoke('memo:create', '字'.repeat(500))) as MemoItem
+
+    await expect(ipc.invoke('memo:update', ok.id, { done: 'yes' })).rejects.toThrow(
+      '备忘修改格式不正确',
+    )
+    await expect(ipc.invoke('memo:update', ok.id, null)).rejects.toThrow('备忘修改格式不正确')
+    await expect(ipc.invoke('memo:update', ok.id, { text: '' })).rejects.toThrow('备忘内容不能为空')
+    await expect(ipc.invoke('memo:update', '', { done: true })).rejects.toThrow('备忘 id 不能为空')
+    await expect(ipc.invoke('memo:remove', '')).rejects.toThrow('备忘 id 不能为空')
+    expect(memo.list()).toEqual([ok])
   })
 
   it('app:get-version / app:get-os-build 返回装配层注入的值', async () => {

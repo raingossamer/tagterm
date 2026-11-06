@@ -12,6 +12,7 @@ import type {
   InvokeArgs,
   InvokeChannel,
   InvokeResult,
+  MemoPatch,
   OutputReport,
   PtySize,
   SendArgs,
@@ -23,6 +24,7 @@ import type {
   ConfigPrefs,
 } from '@shared/ipc'
 import {
+  MEMO_TEXT_MAX,
   SHELL_KINDS,
   TAG_COLORS,
   type AppBackground,
@@ -40,6 +42,7 @@ import type { FolderPort, SessionSubsystem } from './session/SessionSubsystem'
 import type { GlobalShortcut } from './shortcut/GlobalShortcut'
 import { applyGlobalShortcut } from './shortcut/applyGlobalShortcut'
 import type { SettingsStore } from './store/SettingsStore'
+import type { MemoStore } from './store/MemoStore'
 import type { TagStore } from './store/TagStore'
 import type { Updater } from './updater/Updater'
 
@@ -58,6 +61,8 @@ export interface IpcDeps {
   settings: SettingsStore
   /** 标签本身的增删改排（单文件操作，没有编排可藏，直连）；会话 ↔ 标签关联走 sessions */
   tags: TagStore
+  /** 本周备忘的事项（单文件操作，直连） */
+  memo: MemoStore
   updater: Updater
   /** agent 运行时子系统：运行时记录、正被查看、hooks 开关与端口 */
   agent: AgentSubsystem
@@ -160,6 +165,11 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   handle('update:check', () => deps.updater.check())
   handle('update:download', () => deps.updater.download())
   handle('update:install', () => deps.updater.install())
+
+  handle('memo:list', () => deps.memo.list())
+  handle('memo:create', (text) => deps.memo.create(assertMemoText(text)))
+  handle('memo:update', (id, patch) => deps.memo.update(assertMemoId(id), assertMemoPatch(patch)))
+  handle('memo:remove', (id) => deps.memo.remove(assertMemoId(id)))
 
   handle('pty:open', (id, size) => deps.sessions.openTerminal(assertId(id), assertSize(size)))
   handle('pty:resize', (id, size) => {
@@ -319,6 +329,30 @@ function assertConfigPrefs(prefs: unknown): ConfigPrefs {
   const o = (prefs ?? {}) as Record<string, unknown>
   if (!isValidFontSize(o.terminalFontSize)) throw new Error('终端字号参数不正确')
   return { terminalFontSize: o.terminalFontSize }
+}
+
+function assertMemoId(id: unknown): string {
+  if (typeof id !== 'string' || !id) throw new Error('备忘 id 不能为空')
+  return id
+}
+
+function assertMemoText(text: unknown): string {
+  if (typeof text !== 'string' || !text.trim()) throw new Error('备忘内容不能为空')
+  if (text.trim().length > MEMO_TEXT_MAX) throw new Error(`备忘内容不能超过 ${MEMO_TEXT_MAX} 字`)
+  return text
+}
+
+/** 只取认识的字段：text（同 create 的规则）/ done（布尔） */
+function assertMemoPatch(patch: unknown): MemoPatch {
+  if (typeof patch !== 'object' || patch === null) throw new Error('备忘修改格式不正确')
+  const p = patch as Record<string, unknown>
+  const out: MemoPatch = {}
+  if (p.done !== undefined) {
+    if (typeof p.done !== 'boolean') throw new Error('备忘修改格式不正确')
+    out.done = p.done
+  }
+  if (p.text !== undefined) out.text = assertMemoText(p.text)
+  return out
 }
 
 function assertTagId(id: unknown): string {
