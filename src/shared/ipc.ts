@@ -6,6 +6,7 @@ import type {
   AppBackground,
   GlobalShortcutConfig,
   LaunchCommand,
+  MemoItem,
   Session,
   SessionRuntime,
   SessionTag,
@@ -28,6 +29,9 @@ export interface CreateSessionInput {
  * 排序不在这里改，只走 session:reorder（整体重排）
  */
 export type SessionPatch = Partial<Pick<Session, 'name' | 'cwd' | 'shell'>>
+
+/** 改一条备忘：文字（trim 后非空）/ 是否完成（完成时间由主进程写） */
+export type MemoPatch = Partial<Pick<MemoItem, 'text' | 'done'>>
 
 /** 开机自启状态：真相在系统登录项（注册表），不落盘 */
 export interface AutoLaunchStatus {
