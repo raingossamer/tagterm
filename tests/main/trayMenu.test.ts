@@ -2,21 +2,24 @@ import { describe, expect, it, vi } from 'vitest'
 import { buildTrayMenuTemplate, createTrayBadge, trayTooltip } from '../../src/main/trayMenu'
 
 describe('trayMenu（托盘菜单模板与角标，纯函数 + 假 Tray）', () => {
-  it('菜单为「显示窗口 / — / 设置 / — / 退出」，点击各项调用对应回调', () => {
-    const deps = { onShow: vi.fn(), onOpenSettings: vi.fn(), onQuit: vi.fn() }
+  it('菜单为「显示窗口 / 本周备忘 / — / 设置 / — / 退出」，点击各项调用对应回调', () => {
+    const deps = { onShow: vi.fn(), onOpenMemo: vi.fn(), onOpenSettings: vi.fn(), onQuit: vi.fn() }
     const template = buildTrayMenuTemplate(deps)
 
     expect(template.map((item) => item.label ?? item.type)).toEqual([
       '显示窗口',
+      '本周备忘',
       'separator',
       '设置',
       'separator',
       '退出',
     ])
-    template[2]!.click!()
+    template[3]!.click!()
     expect(deps.onOpenSettings).toHaveBeenCalledTimes(1)
+    template[1]!.click!()
+    expect(deps.onOpenMemo).toHaveBeenCalledTimes(1)
     template[0]!.click!()
-    template[4]!.click!()
+    template[5]!.click!()
     expect(deps.onShow).toHaveBeenCalledTimes(1)
     expect(deps.onQuit).toHaveBeenCalledTimes(1)
   })

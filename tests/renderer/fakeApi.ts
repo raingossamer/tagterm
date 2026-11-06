@@ -68,6 +68,8 @@ export function createFakeApi(overrides: Overrides = {}): TagTermApi {
       getDataDir: vi.fn(async () => 'C:/Users/test/AppData/Roaming/TagTerm'),
       openLogsDir: vi.fn(async () => {}),
       reportMemoVisibility: vi.fn(),
+      onOpenMemo: vi.fn(() => () => {}),
+      onCloseMemo: vi.fn(() => () => {}),
       pickImage: vi.fn(async () => null),
       getAutoLaunch: vi.fn(async () => ({ enabled: false, blockedBySystem: false })),
       setAutoLaunch: vi.fn(async (enabled: boolean) => ({ enabled, blockedBySystem: false })),

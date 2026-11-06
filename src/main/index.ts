@@ -35,6 +35,7 @@ import { ConfigService } from './config/ConfigService'
 import { SessionSubsystem, type FolderPort } from './session/SessionSubsystem'
 import { GlobalShortcut } from './shortcut/GlobalShortcut'
 import { decideSummon } from './shortcut/summon'
+import { MemoToggle } from './shortcut/memoToggle'
 import { pickAutoUpdater, Updater } from './updater/Updater'
 import { detectAvailableShells, findOnPath } from './pathProbe'
 import { IMAGE_EXTENSIONS } from './store/backgroundImage'
@@ -187,11 +188,38 @@ const shortcut = new GlobalShortcut({
   port: electronShortcuts({ dryRun: isSmoke }),
   onPress: summonWindow,
 })
-// 本周备忘的全局快捷键：同一个服务类的第二个实例（按下的处理在行为 10 接上）
+/**
+ * 本周备忘热键按下：「记完就回去」—— 开 / 关 / 关掉并藏回去由 MemoToggle 判定，这里只照做
+ *（打开 = 还原、显示、聚焦窗口并让渲染进程打开弹窗）
+ */
+const memoToggle = new MemoToggle()
+function toggleMemo(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  const action = memoToggle.press({
+    isVisible: mainWindow.isVisible(),
+    isMinimized: mainWindow.isMinimized(),
+    isFocused: mainWindow.isFocused(),
+  })
+  if (action === 'open') {
+    showMainWindow(mainWindow)
+    broadcast('app:open-memo')
+    return
+  }
+  broadcast('app:close-memo')
+  if (action === 'close-and-hide') mainWindow.hide()
+}
+
+/** 托盘「本周备忘」：显示窗口并打开（不算热键从后台叫出来，之后按热键只关不藏） */
+function openMemo(): void {
+  showWindow()
+  broadcast('app:open-memo')
+}
+
+// 本周备忘的全局快捷键：同一个服务类的第二个实例
 const memoShortcut = new GlobalShortcut({
   port: electronShortcuts({ dryRun: isSmoke }),
   name: '本周备忘快捷键',
-  onPress: () => {},
+  onPress: toggleMemo,
 })
 
 function quitApp(): void {
@@ -375,6 +403,7 @@ app.whenReady().then(async () => {
     agent: subsystem,
     shortcut,
     memoShortcut,
+    memoToggle,
     config,
     dataDir,
     logsDir,
@@ -400,7 +429,12 @@ app.whenReady().then(async () => {
     if (event.level === 'warning' || event.level === 'error')
       logFile.write(event.level === 'error' ? 'ERROR' : 'WARN', `[renderer] ${event.message}`)
   })
-  tray = createTray({ onShow: showWindow, onOpenSettings: openSettings, onQuit: quitApp })
+  tray = createTray({
+    onShow: showWindow,
+    onOpenMemo: openMemo,
+    onOpenSettings: openSettings,
+    onQuit: quitApp,
+  })
   // 窗口就绪后再注册：按下时要操作它；被别的程序占着只记日志，设置「启动」段显示红字
   shortcut.start(settings.getGlobalShortcut())
   memoShortcut.start(settings.getMemoShortcut())

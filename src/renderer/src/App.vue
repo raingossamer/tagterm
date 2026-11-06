@@ -53,6 +53,8 @@ const isManageTagsOpen = ref(false)
 let unsubscribeOpenSettings: Unsubscribe | null = null
 let unsubscribeSelectSession: Unsubscribe | null = null
 let unsubscribeFocusTerminal: Unsubscribe | null = null
+let unsubscribeOpenMemo: Unsubscribe | null = null
+let unsubscribeCloseMemo: Unsubscribe | null = null
 const loadError = ref('')
 
 // 工厂惰性读取：终端只会在会话列表加载之后创建，而列表加载在 getOsBuild 之后
@@ -96,6 +98,9 @@ onMounted(async () => {
   })
   // 全局快捷键唤出窗口 → 主进程已显示并聚焦窗口 → 焦点交给当前终端，可直接打字
   unsubscribeFocusTerminal = window.tagterm.app.onFocusTerminal(() => core.focusActive())
+  // 本周备忘热键 / 托盘菜单 → 主进程已显示窗口（或要藏回去）→ 开 / 关弹窗
+  unsubscribeOpenMemo = window.tagterm.app.onOpenMemo(() => memo.open())
+  unsubscribeCloseMemo = window.tagterm.app.onCloseMemo(() => memo.close())
   try {
     // 七次 IPC 互不依赖，并行发出（读背景图那次最慢，会话 / 标签不再排在它后面）；全部到位才恢复标签页并打开当前页
     const [build] = await Promise.all([
@@ -118,6 +123,8 @@ onUnmounted(() => {
   unsubscribeOpenSettings?.()
   unsubscribeSelectSession?.()
   unsubscribeFocusTerminal?.()
+  unsubscribeOpenMemo?.()
+  unsubscribeCloseMemo?.()
   detachCore()
   core.dispose()
 })
