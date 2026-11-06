@@ -226,10 +226,15 @@ function onDrop(group: SessionGroup, targetId: string): void {
 </template>
 
 <style scoped>
+/* 滚动条完全隐藏（用户 2026-11-06 要求，与标签页栏、终端同一取舍），滚轮 / 触控板 / 键盘照常滚 */
 .groups {
   flex: 1;
   overflow: auto;
   padding: 6px 6px 8px;
+  scrollbar-width: none;
+}
+.groups::-webkit-scrollbar {
+  display: none;
 }
 .group {
   margin-bottom: 4px;
