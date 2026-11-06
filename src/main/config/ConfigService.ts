@@ -46,7 +46,15 @@ export interface AutoLaunchPort {
 }
 
 export interface ConfigServiceDeps {
-  settings: Pick<SettingsStore, 'get' | 'getGlobalShortcut' | 'update' | 'setGlobalShortcut'>
+  settings: Pick<
+    SettingsStore,
+    | 'get'
+    | 'getGlobalShortcut'
+    | 'update'
+    | 'setGlobalShortcut'
+    | 'getMemoShortcut'
+    | 'setMemoShortcut'
+  >
   tags: Pick<TagStore, 'list' | 'importByName'>
   shortcut: Pick<GlobalShortcut, 'apply' | 'revert' | 'status'>
   autoLaunch: AutoLaunchPort

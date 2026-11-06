@@ -187,6 +187,12 @@ const shortcut = new GlobalShortcut({
   port: electronShortcuts({ dryRun: isSmoke }),
   onPress: summonWindow,
 })
+// 本周备忘的全局快捷键：同一个服务类的第二个实例（按下的处理在行为 10 接上）
+const memoShortcut = new GlobalShortcut({
+  port: electronShortcuts({ dryRun: isSmoke }),
+  name: '本周备忘快捷键',
+  onPress: () => {},
+})
 
 function quitApp(): void {
   isQuitting = true
@@ -368,6 +374,7 @@ app.whenReady().then(async () => {
     updater,
     agent: subsystem,
     shortcut,
+    memoShortcut,
     config,
     dataDir,
     logsDir,
@@ -396,6 +403,7 @@ app.whenReady().then(async () => {
   tray = createTray({ onShow: showWindow, onOpenSettings: openSettings, onQuit: quitApp })
   // 窗口就绪后再注册：按下时要操作它；被别的程序占着只记日志，设置「启动」段显示红字
   shortcut.start(settings.getGlobalShortcut())
+  memoShortcut.start(settings.getMemoShortcut())
   if (isSmoke)
     runSmokeCheck(mainWindow, {
       sessions,
@@ -419,6 +427,7 @@ app.on('before-quit', () => {
   isQuitting = true
   ptyManager?.killAll()
   shortcut.dispose()
+  memoShortcut.dispose()
   void agent?.stop()
   agent = null
   tray?.destroy()

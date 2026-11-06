@@ -4,6 +4,9 @@
  */
 export const DEFAULT_GLOBAL_SHORTCUT = 'Ctrl+Alt+T'
 
+/** 本周备忘的全局快捷键缺省（2026-11-06）：在别的程序里也能一按就记 */
+export const DEFAULT_MEMO_SHORTCUT = 'Ctrl+Alt+M'
+
 /**
  * 合法 = 必须含 Ctrl 或 Alt（只带 Shift 的组合会吃掉普通打字），可加 Shift；修饰键按 Ctrl、Alt、Shift 的顺序各出现一次；
  * 键为大写字母、数字或 F1–F12。不收 Win 键组合（大多被 Windows 占着）

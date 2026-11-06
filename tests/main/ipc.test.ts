@@ -46,6 +46,9 @@ describe('IPC 接口层', () => {
   /** 假的系统热键表：全局快捷键服务注册到这里 */
   let shortcutPort: FakeShortcutPort
   let shortcut: GlobalShortcut
+  /** 本周备忘的热键：单独一张假热键表，免得与「唤出窗口」那组断言互相掺杂 */
+  let memoPort: FakeShortcutPort
+  let memoShortcut: GlobalShortcut
   /** 会话列表广播（session:changed）的次数 */
   let sessionBroadcasts = 0
   /** 假的配置文件对话框给的路径（null = 取消） */
@@ -81,6 +84,9 @@ describe('IPC 接口层', () => {
     shortcutPort = new FakeShortcutPort()
     shortcut = new GlobalShortcut({ port: shortcutPort, onPress: () => {} })
     shortcut.start(settings.getGlobalShortcut())
+    memoPort = new FakeShortcutPort()
+    memoShortcut = new GlobalShortcut({ port: memoPort, onPress: () => {} })
+    memoShortcut.start(settings.getMemoShortcut())
     ipc = createFakeIpcMain()
     autoUpdater = new FakeAutoUpdater()
     const updater = new Updater({
@@ -109,6 +115,7 @@ describe('IPC 接口层', () => {
       updater,
       agent,
       shortcut,
+      memoShortcut,
       // 配置导入导出：假对话框固定给临时目录里的路径（取消由各用例改 configPaths）
       config: new ConfigService({
         settings,
@@ -301,6 +308,36 @@ describe('IPC 接口层', () => {
       blockedBySystem: false,
     })
     await expect(ipc.invoke('app:set-auto-launch', 'yes')).rejects.toThrow('开机自启参数必须是布尔')
+  })
+
+  it('app:get-memo-shortcut / app:set-memo-shortcut：缺省开启 + Ctrl+Alt+M；换键先注册成功才落盘；与唤出窗口的同键拒绝；守卫同一套', async () => {
+    await expect(ipc.invoke('app:get-memo-shortcut')).resolves.toEqual({
+      enabled: true,
+      accelerator: 'Ctrl+Alt+M',
+      registered: true,
+    })
+    await expect(
+      ipc.invoke('app:set-memo-shortcut', { enabled: true, accelerator: 'Ctrl+Alt+N' }),
+    ).resolves.toEqual({ enabled: true, accelerator: 'Ctrl+Alt+N', registered: true })
+    expect([...memoPort.registered.keys()]).toEqual(['Ctrl+Alt+N'])
+    expect(settings.getMemoShortcut()).toEqual({ enabled: true, accelerator: 'Ctrl+Alt+N' })
+
+    await expect(
+      ipc.invoke('app:set-memo-shortcut', { enabled: true, accelerator: 'Ctrl+Alt+T' }),
+    ).rejects.toThrow('与「唤出 / 隐藏窗口」的快捷键相同')
+    await expect(ipc.invoke('app:set-memo-shortcut', { enabled: 1 })).rejects.toThrow(
+      '快捷键设置格式不正确',
+    )
+    expect(settings.getMemoShortcut()).toEqual({ enabled: true, accelerator: 'Ctrl+Alt+N' })
+  })
+
+  it('app:pause-global-shortcut 暂停 / 恢复两个热键（设置里录键位期间）', async () => {
+    await ipc.invoke('app:pause-global-shortcut', true)
+    expect(shortcutPort.registered.size).toBe(0)
+    expect(memoPort.registered.size).toBe(0)
+    await ipc.invoke('app:pause-global-shortcut', false)
+    expect([...shortcutPort.registered.keys()]).toEqual(['Ctrl+Alt+T'])
+    expect([...memoPort.registered.keys()]).toEqual(['Ctrl+Alt+M'])
   })
 
   it('app:get-global-shortcut 返回全局快捷键状态（缺省开启 + Ctrl+Alt+T，已注册）', async () => {

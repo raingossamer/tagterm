@@ -159,7 +159,9 @@ export interface IpcInvokeMap {
   'app:set-auto-launch': { args: [enabled: boolean]; result: AutoLaunchStatus } // 写登录项并返回实际状态；未打包 reject
   'app:get-global-shortcut': { args: []; result: GlobalShortcutStatus } // 全局快捷键配置与是否注册上
   'app:set-global-shortcut': { args: [config: GlobalShortcutConfig]; result: GlobalShortcutStatus } // 先注册新的，被占用 reject 且旧的保留、不落盘；成功才写 settings.json
-  'app:pause-global-shortcut': { args: [paused: boolean]; result: void } // 设置里录新键位期间暂停当前热键（只在内存）
+  'app:pause-global-shortcut': { args: [paused: boolean]; result: void } // 设置里录新键位期间暂停两个热键（只在内存）
+  'app:get-memo-shortcut': { args: []; result: GlobalShortcutStatus } // 本周备忘的全局快捷键配置与是否注册上
+  'app:set-memo-shortcut': { args: [config: GlobalShortcutConfig]; result: GlobalShortcutStatus } // 同 set-global-shortcut；与唤出窗口的同键 reject
   'app:export-config': { args: [prefs: ConfigPrefs]; result: ConfigExportResult | null } // 导出用户偏好：主进程弹保存对话框（取消为 null）→ 原子写 → 返回路径
   'app:import-config': { args: [prefs: ConfigPrefs]; result: ConfigImportResult | null } // 导入：打开对话框（取消为 null）→ 整份校验（不过 reject、什么都不动）→ 备份当前偏好 → 逐项应用 → 逐项结果
   'session:list': { args: []; result: Session[] }

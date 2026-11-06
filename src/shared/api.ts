@@ -52,8 +52,12 @@ export interface TagTermApi {
     getGlobalShortcut(): Promise<GlobalShortcutStatus>
     /** 改全局快捷键：先注册新的，被占用 reject「该快捷键已被其他程序占用」（旧的保留）；成功才落盘 */
     setGlobalShortcut(config: GlobalShortcutConfig): Promise<GlobalShortcutStatus>
-    /** 设置里录新键位期间暂停当前热键（true）/ 恢复（false） */
+    /** 设置里录新键位期间暂停两个热键（true）/ 恢复（false） */
     pauseGlobalShortcut(paused: boolean): Promise<void>
+    /** 本周备忘的全局快捷键（缺省开启 + Ctrl+Alt+M） */
+    getMemoShortcut(): Promise<GlobalShortcutStatus>
+    /** 改本周备忘的快捷键：同 setGlobalShortcut；与唤出窗口的快捷键相同 reject */
+    setMemoShortcut(config: GlobalShortcutConfig): Promise<GlobalShortcutStatus>
     /** 导出配置（用户偏好）：主进程弹保存对话框，取消为 null；渲染进程只交出终端字号 */
     exportConfig(prefs: ConfigPrefs): Promise<ConfigExportResult | null>
     /** 导入配置：主进程弹打开对话框（取消为 null）；文件不对 reject 中文原因、什么都不动；返回逐项结果与备份路径 */

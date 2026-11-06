@@ -181,6 +181,8 @@ const api = {
     getGlobalShortcut: () => ok({ enabled: true, accelerator: 'Ctrl+Alt+T', registered: true }),
     setGlobalShortcut: (config) => ok({ ...config, registered: config.enabled }),
     pauseGlobalShortcut: () => ok(undefined),
+    getMemoShortcut: () => ok({ enabled: true, accelerator: 'Ctrl+Alt+M', registered: true }),
+    setMemoShortcut: (config) => ok({ ...config, registered: config.enabled }),
     exportConfig: () => ok({ path: 'C:\\Users\\demo\\Documents\\tagterm-config-20260924.json' }),
     importConfig: () =>
       ok({

@@ -206,6 +206,46 @@ describe('SettingsStore', () => {
     expectAll(reloaded.get())
   })
 
+  describe('本周备忘快捷键（可选字段 memoShortcut，settings.json 仍为 v2）', () => {
+    const readFile = () => JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'))
+
+    it('缺省 = 开启 + Ctrl+Alt+M、不写键；改了落盘并回调、重启仍在；改回缺省删键；与唤出窗口的快捷键互不影响', async () => {
+      const received: Settings[] = []
+      const store = new SettingsStore(dir, {
+        seedCommands: [],
+        onChanged: (settings) => received.push(settings),
+      })
+      await store.load()
+      expect(store.getMemoShortcut()).toEqual({ enabled: true, accelerator: 'Ctrl+Alt+M' })
+      expect('memoShortcut' in readFile()).toBe(false)
+
+      await store.setMemoShortcut({ enabled: true, accelerator: 'Ctrl+Alt+N' })
+      expect(readFile().memoShortcut).toEqual({ enabled: true, accelerator: 'Ctrl+Alt+N' })
+      expect(received.at(-1)?.memoShortcut).toEqual({ enabled: true, accelerator: 'Ctrl+Alt+N' })
+      expect(store.getGlobalShortcut()).toEqual({ enabled: true, accelerator: 'Ctrl+Alt+T' })
+      expect('globalShortcut' in readFile()).toBe(false)
+
+      const reloaded = new SettingsStore(dir, { seedCommands: [] })
+      await reloaded.load()
+      expect(reloaded.getMemoShortcut()).toEqual({ enabled: true, accelerator: 'Ctrl+Alt+N' })
+
+      await reloaded.setMemoShortcut({ enabled: true, accelerator: 'Ctrl+Alt+M' })
+      expect('memoShortcut' in readFile()).toBe(false)
+    })
+
+    it('文件里不合法：按缺省处理、不拒绝加载', async () => {
+      const store = new SettingsStore(dir, { seedCommands: [] })
+      await store.load()
+      writeFileSync(
+        join(dir, 'settings.json'),
+        JSON.stringify({ ...readFile(), memoShortcut: { enabled: true, accelerator: 'Shift+M' } }),
+      )
+      const reloaded = new SettingsStore(dir, { seedCommands: [] })
+      await reloaded.load()
+      expect(reloaded.getMemoShortcut()).toEqual({ enabled: true, accelerator: 'Ctrl+Alt+M' })
+    })
+  })
+
   describe('全局快捷键（可选字段 globalShortcut，settings.json 仍为 v2）', () => {
     const readFile = () => JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'))
 
