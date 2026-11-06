@@ -438,16 +438,33 @@ const SIDEBAR_SCRIPT = `(async () => {
 
 /**
  * 终端文字离左栏 / 路径条的留白（weekly-memo-ui-polish 行为 1）：量可见终端的 .xterm-screen 相对 .term-wrap 的偏移。
- * 此前 .term 写的是 padding、对绝对定位的 host 不生效，偏移是 0
+ * 此前 .term 写的是 padding、对绝对定位的 host 不生效，偏移是 0。
+ * 同时量终端右缘的系统原生滚动条（xterm.css 给 .xterm-viewport 写死了 overflow-y: scroll）：先临时设 thin 作对照组，
+ * 证明这个元素确实会长出占宽度的滚动条（核查不空转；thin 不是 auto，盖过 ::-webkit-scrollbar 规则），
+ * 再按样式表原样量一次：不占宽度
  */
 const TERM_GAP_SCRIPT = `(() => {
   const wrap = document.querySelector('.term-wrap')
   const host = [...document.querySelectorAll('[data-test=terminal-pane] > div')].find((h) => h.style.display === 'block')
   const screen = host?.querySelector('.xterm-screen')
-  if (!wrap || !screen) return null
+  const viewport = host?.querySelector('.xterm-viewport')
+  if (!wrap || !screen || !viewport) return null
   const a = wrap.getBoundingClientRect()
   const b = screen.getBoundingClientRect()
-  return { left: Math.round(b.left - a.left), top: Math.round(b.top - a.top), leftGapOk: b.left - a.left >= 4, topGapOk: b.top - a.top >= 4 }
+  const barWidth = () => viewport.offsetWidth - viewport.clientWidth
+  viewport.style.scrollbarWidth = 'thin'
+  const controlBarWidth = barWidth()
+  viewport.style.scrollbarWidth = ''
+  const nativeBarWidth = barWidth()
+  return {
+    left: Math.round(b.left - a.left),
+    top: Math.round(b.top - a.top),
+    leftGapOk: b.left - a.left >= 4,
+    topGapOk: b.top - a.top >= 4,
+    controlBarWidth,
+    nativeBarWidth,
+    nativeScrollbarHidden: controlBarWidth > 0 && nativeBarWidth === 0,
+  }
 })()`
 
 /**
