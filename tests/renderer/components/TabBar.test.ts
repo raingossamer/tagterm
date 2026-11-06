@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import TabBar from '../../../src/renderer/src/components/TabBar.vue'
@@ -58,7 +59,7 @@ describe('TabBar', () => {
     expect(wrapper.emitted('newSession')).toHaveLength(1)
   })
 
-  it('标签页的状态点取 agent store：无记录为 idle，有记录按状态加类名；等你确认时 tooltip 为「等你确认：<提示>」', async () => {
+  it('标签页的状态点取 agent store：无记录为 idle，有记录按状态加类名；tooltip 恒为完整会话名，等你确认时再加一行「等你确认：<提示>」', async () => {
     const agent = useAgentStore()
     agent.runtime = {
       [b.id]: {
@@ -75,7 +76,60 @@ describe('TabBar', () => {
 
     expect(dots[0]!.classes()).toContain('idle')
     expect(dots[1]!.classes()).toContain('blocked')
-    expect(tabs[0]!.attributes('title')).toBeUndefined()
-    expect(tabs[1]!.attributes('title')).toBe('等你确认：Allow?')
+    expect(tabs[0]!.attributes('title')).toBe('simba-api')
+    expect(tabs[1]!.attributes('title')).toBe('iot\n等你确认：Allow?')
+  })
+
+  describe('标签页一多：定位与滚动', () => {
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('☰ 与 ＋ 钉在两端，只有中间的标签页区滚动', () => {
+      const wrapper = mount(TabBar)
+      const scroller = wrapper.find('[data-test=tab-scroller]')
+
+      expect(scroller.findAll('[data-test=tab]')).toHaveLength(2)
+      expect(scroller.find('[data-test=tab-side]').exists()).toBe(false)
+      expect(scroller.find('[data-test=tab-add]').exists()).toBe(false)
+      expect(wrapper.find('[data-test=tab-side]').exists()).toBe(true)
+      expect(wrapper.find('[data-test=tab-add]').exists()).toBe(true)
+    })
+
+    it('当前页变化时把它滚进视野（只滚最近的那一侧，不动整页）', async () => {
+      const calls: { name: string; options: unknown }[] = []
+      vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(function (
+        this: HTMLElement,
+        options?: boolean | ScrollIntoViewOptions,
+      ) {
+        calls.push({ name: this.querySelector('[data-test=tab-name]')?.textContent ?? '', options })
+      })
+      mount(TabBar, { attachTo: document.body })
+      await nextTick()
+      calls.length = 0
+
+      await useWorkspaceStore().select(b.id)
+      await nextTick()
+
+      expect(calls).toEqual([{ name: 'iot', options: { block: 'nearest', inline: 'nearest' } }])
+    })
+
+    it('竖向滚轮在标签页区上转成横向滚动；本来就横向的（触控板、Shift+滚轮）交给浏览器', async () => {
+      const wrapper = mount(TabBar, { attachTo: document.body })
+      const el = wrapper.find('[data-test=tab-scroller]').element as HTMLElement
+      const scrollBy = vi.fn()
+      el.scrollBy = scrollBy as unknown as typeof el.scrollBy
+
+      const vertical = new WheelEvent('wheel', { deltaY: 120, cancelable: true })
+      el.dispatchEvent(vertical)
+      expect(scrollBy).toHaveBeenCalledWith({ left: 120 })
+      expect(vertical.defaultPrevented).toBe(true)
+
+      const horizontal = new WheelEvent('wheel', { deltaX: 80, deltaY: 10, cancelable: true })
+      el.dispatchEvent(horizontal)
+      expect(scrollBy).toHaveBeenCalledTimes(1)
+      expect(horizontal.defaultPrevented).toBe(false)
+      wrapper.unmount()
+    })
   })
 })
