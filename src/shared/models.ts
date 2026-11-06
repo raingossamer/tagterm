@@ -153,3 +153,26 @@ export interface TagsFile {
   tags: Tag[]
   sessionTags: SessionTag[]
 }
+
+// ---- 本周备忘（2026-11-06，weekly-memo-ui-polish）----
+
+/**
+ * 一条备忘事项。归哪一周不存，由时间推算（shared/week）：未完成一律属于本周，已完成属于 doneAt 所在周 ——
+ * TagTerm 常驻托盘，周一零点没有任何事件，存周号就得有人在跨周时改数据
+ */
+export interface MemoItem {
+  id: string // uuid v4
+  text: string // trim 后非空，≤ MEMO_TEXT_MAX 字
+  done: boolean
+  createdAt: string // ISO 8601
+  doneAt?: string // ISO 8601；done 为 true 时由主进程写入，取消勾选删键
+}
+
+export const MEMO_TEXT_MAX = 500
+
+export const MEMO_FILE_VERSION = 1
+
+export interface MemoFile {
+  version: typeof MEMO_FILE_VERSION
+  items: MemoItem[]
+}
