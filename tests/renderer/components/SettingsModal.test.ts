@@ -415,6 +415,40 @@ describe('SettingsModal', () => {
       wrapper.unmount()
     })
 
+    it('第二行：全局快捷键打开 / 关闭本周备忘（Ctrl+Alt+M），录制提交走 setMemoShortcut；与唤出窗口同键的拒绝原因红字', async () => {
+      const api = installFakeApi()
+      vi.mocked(api.app.setMemoShortcut).mockRejectedValueOnce(
+        new Error('与「唤出 / 隐藏窗口」的快捷键相同'),
+      )
+      const wrapper = await openStartup()
+      const memoKey = wrapper.find('[data-test=memo-shortcut-key]')
+      expect(wrapper.find('[data-test=memo-shortcut-label]').text()).toBe(
+        '全局快捷键打开 / 关闭本周备忘',
+      )
+      expect(memoKey.text()).toBe('Ctrl+Alt+M')
+      expect(wrapper.find('[data-test=memo-shortcut-hint]').text()).toContain('记完再按')
+
+      await memoKey.trigger('click')
+      expect(api.app.pauseGlobalShortcut).toHaveBeenCalledWith(true)
+      await memoKey.trigger('keydown', { key: 't', code: 'KeyT', ctrlKey: true, altKey: true })
+      await flushPromises()
+      expect(api.app.setMemoShortcut).toHaveBeenCalledWith({
+        enabled: true,
+        accelerator: 'Ctrl+Alt+T',
+      })
+      expect(wrapper.find('[data-test=memo-shortcut-error]').text()).toBe(
+        '与「唤出 / 隐藏窗口」的快捷键相同',
+      )
+      expect(memoKey.text()).toBe('Ctrl+Alt+M')
+
+      await memoKey.trigger('click')
+      await memoKey.trigger('keydown', { key: 'n', code: 'KeyN', ctrlKey: true, altKey: true })
+      await flushPromises()
+      expect(memoKey.text()).toBe('Ctrl+Alt+N')
+      expect(api.app.setGlobalShortcut).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
     it('录制中关掉弹窗：恢复热键', async () => {
       const api = installFakeApi()
       const wrapper = await openStartup()

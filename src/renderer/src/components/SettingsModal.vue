@@ -19,19 +19,19 @@ import type {
 } from '@shared/ipc'
 import type { AppBackground, BackgroundFit, GlobalShortcutConfig } from '@shared/models'
 import { MAX_BLUR_PX, MIN_PANEL_OPACITY } from '@shared/models'
-import { DEFAULT_GLOBAL_SHORTCUT } from '@shared/accelerator'
+import { DEFAULT_GLOBAL_SHORTCUT, DEFAULT_MEMO_SHORTCUT } from '@shared/accelerator'
 import { useSettingsStore } from '../stores/settings'
 import { useUpdateStore } from '../stores/update'
 import { useWorkspaceStore } from '../stores/workspace'
 import { useConfirmStore } from '../stores/confirm'
 import { describeUpdateStatus } from '../composables/updateStatus'
 import { createCooldown } from '../composables/cooldown'
-import { captureAccelerator } from '../composables/shortcutCapture'
+import ShortcutField from './ShortcutField.vue'
 
-const SHORTCUT_OCCUPIED = '该快捷键已被其他程序占用，换一个组合'
-const SHORTCUT_RULE = '需要包含 Ctrl 或 Alt，再加字母、数字或 F1–F12'
 const SHORTCUT_HINT =
   '窗口在前台时按下藏到托盘，否则唤出并把焦点交给当前终端。点击键位框后按下新组合，Esc 取消'
+const MEMO_SHORTCUT_HINT =
+  '在哪儿按都行：唤出窗口并打开本周备忘，记完再按一次关掉（从托盘叫出来的会藏回去）'
 
 type SectionKey = 'appearance' | 'startup' | 'agent' | 'update' | 'config' | 'about'
 
@@ -100,14 +100,17 @@ const shortcut = ref<GlobalShortcutStatus>({
   accelerator: DEFAULT_GLOBAL_SHORTCUT,
   registered: true,
 })
-const isCapturing = ref(false)
-const shortcutError = ref('')
-/** 键位框下的红字：这次操作的错误优先，否则启动时没注册上（被别的程序占着）也要说 */
-const shortcutProblem = computed(
-  () =>
-    shortcutError.value ||
-    (shortcut.value.enabled && !shortcut.value.registered ? SHORTCUT_OCCUPIED : ''),
-)
+/** 本周备忘的全局快捷键：同上 */
+const memoShortcut = ref<GlobalShortcutStatus>({
+  enabled: true,
+  accelerator: DEFAULT_MEMO_SHORTCUT,
+  registered: true,
+})
+/** 两个键位框的提交（主进程先注册、成功才落盘；被占用 / 与另一个同键 reject） */
+const submitGlobalShortcut = (config: GlobalShortcutConfig): Promise<GlobalShortcutStatus> =>
+  window.tagterm.app.setGlobalShortcut(config)
+const submitMemoShortcut = (config: GlobalShortcutConfig): Promise<GlobalShortcutStatus> =>
+  window.tagterm.app.setMemoShortcut(config)
 /** hooks 安装状态：打开弹窗时取一次，切换开关后以返回的实际状态回填；两个目标各自的错误红字 */
 const hooks = ref<HooksStatusMap | null>(null)
 const hooksError = ref<Record<HookAgent, string>>({ claude: '', codex: '' })
@@ -200,10 +203,11 @@ async function importConfig(): Promise<void> {
 }
 
 async function refreshAfterImport(): Promise<void> {
-  ;[autoLaunch.value, hooks.value, shortcut.value] = await Promise.all([
+  ;[autoLaunch.value, hooks.value, shortcut.value, memoShortcut.value] = await Promise.all([
     window.tagterm.app.getAutoLaunch(),
     window.tagterm.agent.getHooksStatus(),
     window.tagterm.app.getGlobalShortcut(),
+    window.tagterm.app.getMemoShortcut(),
   ])
   await settings.previewBackground(null)
   draft.value = { ...settings.settings.background }
@@ -212,14 +216,21 @@ async function refreshAfterImport(): Promise<void> {
 onMounted(async () => {
   document.addEventListener('keydown', onKeydown)
   try {
-    ;[version.value, dataDir.value, autoLaunch.value, hooks.value, shortcut.value] =
-      await Promise.all([
-        window.tagterm.app.getVersion(),
-        window.tagterm.app.getDataDir(),
-        window.tagterm.app.getAutoLaunch(),
-        window.tagterm.agent.getHooksStatus(),
-        window.tagterm.app.getGlobalShortcut(),
-      ])
+    ;[
+      version.value,
+      dataDir.value,
+      autoLaunch.value,
+      hooks.value,
+      shortcut.value,
+      memoShortcut.value,
+    ] = await Promise.all([
+      window.tagterm.app.getVersion(),
+      window.tagterm.app.getDataDir(),
+      window.tagterm.app.getAutoLaunch(),
+      window.tagterm.agent.getHooksStatus(),
+      window.tagterm.app.getGlobalShortcut(),
+      window.tagterm.app.getMemoShortcut(),
+    ])
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   }
@@ -242,8 +253,6 @@ async function onHooksChange(agent: HookAgent, e: Event): Promise<void> {
 }
 onUnmounted(() => {
   document.removeEventListener('keydown', onKeydown)
-  // 录制中关掉弹窗：把暂停的热键恢复
-  if (isCapturing.value) void window.tagterm.app.pauseGlobalShortcut(false)
   setDraftImage(null) // 草稿缩略图的对象 URL 随弹窗收掉
 })
 
@@ -313,67 +322,6 @@ async function onAutoLaunchChange(e: Event): Promise<void> {
     error.value = err instanceof Error ? err.message : String(err)
     input.checked = autoLaunch.value.enabled
   }
-}
-
-/** 提交全局快捷键配置（主进程先注册、成功才落盘）；被占用等失败红字，返回是否成功 */
-async function submitShortcut(config: GlobalShortcutConfig): Promise<boolean> {
-  shortcutError.value = ''
-  try {
-    shortcut.value = await window.tagterm.app.setGlobalShortcut(config)
-    return true
-  } catch (err) {
-    shortcutError.value = err instanceof Error ? err.message : String(err)
-    return false
-  }
-}
-
-async function onShortcutEnabledChange(e: Event): Promise<void> {
-  const input = e.target as HTMLInputElement
-  const isOk = await submitShortcut({
-    enabled: input.checked,
-    accelerator: shortcut.value.accelerator,
-  })
-  if (!isOk) input.checked = shortcut.value.enabled
-}
-
-/** 点键位框开始录制：先暂停当前热键，免得按到旧键把窗口藏掉；关着开关时框是置灰的，点了不录 */
-function startCapture(): void {
-  if (!shortcut.value.enabled || isCapturing.value) return
-  shortcutError.value = ''
-  isCapturing.value = true
-  void window.tagterm.app.pauseGlobalShortcut(true)
-}
-
-async function stopCapture(): Promise<void> {
-  if (!isCapturing.value) return
-  isCapturing.value = false
-  await window.tagterm.app.pauseGlobalShortcut(false)
-}
-
-/** 录制中的按键全部截下（Esc 也不冒泡到弹窗的关闭监听）：只按修饰键继续等、不合法提示规则、合法即提交 */
-async function onShortcutKeydown(e: KeyboardEvent): Promise<void> {
-  if (!isCapturing.value) return
-  e.preventDefault()
-  e.stopPropagation()
-  if (e.key === 'Escape') {
-    shortcutError.value = ''
-    await stopCapture()
-    return
-  }
-  const result = captureAccelerator(e)
-  if (result.kind === 'pending') return
-  if (result.kind === 'invalid') {
-    shortcutError.value = SHORTCUT_RULE
-    return
-  }
-  await stopCapture()
-  await submitShortcut({ enabled: true, accelerator: result.value })
-}
-
-function onShortcutBlur(): void {
-  if (!isCapturing.value) return
-  shortcutError.value = ''
-  void stopCapture()
 }
 
 async function save(): Promise<void> {
@@ -542,38 +490,20 @@ function onKeydown(e: KeyboardEvent): void {
               已在系统「启动应用」中被禁用
             </p>
 
-            <div class="shortcut" data-test="global-shortcut-section">
-              <label class="check" data-test="global-shortcut-label">
-                <input
-                  type="checkbox"
-                  :checked="shortcut.enabled"
-                  data-test="global-shortcut-enabled"
-                  @change="onShortcutEnabledChange"
-                />
-                <span v-text="'全局快捷键唤出 / 隐藏窗口'"></span>
-              </label>
-              <div class="row">
-                <button
-                  class="key-box mono"
-                  :class="{ capturing: isCapturing }"
-                  type="button"
-                  data-test="global-shortcut-key"
-                  :aria-disabled="shortcut.enabled ? undefined : 'true'"
-                  :title="shortcut.enabled ? '点击后按下新的组合键' : '先打开左边的开关'"
-                  @click="startCapture"
-                  @keydown="onShortcutKeydown"
-                  @blur="onShortcutBlur"
-                  v-text="isCapturing ? '按下新的组合键…' : shortcut.accelerator"
-                ></button>
-              </div>
-              <p class="hint" data-test="global-shortcut-hint" v-text="SHORTCUT_HINT"></p>
-              <p
-                v-if="shortcutProblem"
-                class="error"
-                data-test="global-shortcut-error"
-                v-text="shortcutProblem"
-              ></p>
-            </div>
+            <ShortcutField
+              v-model:status="shortcut"
+              test-id="global-shortcut"
+              label="全局快捷键唤出 / 隐藏窗口"
+              :hint="SHORTCUT_HINT"
+              :submit="submitGlobalShortcut"
+            />
+            <ShortcutField
+              v-model:status="memoShortcut"
+              test-id="memo-shortcut"
+              label="全局快捷键打开 / 关闭本周备忘"
+              :hint="MEMO_SHORTCUT_HINT"
+              :submit="submitMemoShortcut"
+            />
           </section>
 
           <section v-else-if="section === 'agent'" data-test="agent-section">
@@ -919,26 +849,6 @@ section h4 {
   margin: 10px 0 0;
   font-size: 12px;
   color: #b42318;
-}
-.shortcut {
-  margin-top: 18px;
-}
-.key-box {
-  min-width: 140px;
-  padding: 4px 10px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: #fff;
-  font-size: 13px;
-  text-align: left;
-}
-.key-box.capturing {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.key-box[aria-disabled='true'] {
-  opacity: 0.45;
-  cursor: default;
 }
 .hooks-row {
   padding: 8px 0;

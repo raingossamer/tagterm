@@ -1,8 +1,16 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import SideFoot from '../../../src/renderer/src/components/SideFoot.vue'
+import { useSettingsStore } from '../../../src/renderer/src/stores/settings'
+import { installFakeApi, makeSettings } from '../fakeApi'
 
 describe('SideFoot', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    installFakeApi()
+  })
+
   it('「新建会话」与「管理标签」各自发出事件', async () => {
     const wrapper = mount(SideFoot)
     expect(wrapper.find('[data-test=new-session]').text()).toBe('新建会话')
@@ -22,10 +30,19 @@ describe('SideFoot', () => {
     expect(wrapper.emitted('settings')).toHaveLength(1)
   })
 
-  it('齿轮左边的「本周备忘」按钮发出 memo', async () => {
+  it('齿轮左边的「本周备忘」按钮发出 memo；tooltip 带当前键位（缺省 Ctrl+Alt+M，关掉热键时不带）', async () => {
     const wrapper = mount(SideFoot)
     const memo = wrapper.find('[data-test=open-memo]')
+    const settings = useSettingsStore()
 
+    expect(memo.attributes('title')).toBe('本周备忘　Ctrl+Alt+M')
+    settings.settings = makeSettings({ memoShortcut: { enabled: true, accelerator: 'Ctrl+Alt+N' } })
+    await wrapper.vm.$nextTick()
+    expect(memo.attributes('title')).toBe('本周备忘　Ctrl+Alt+N')
+    settings.settings = makeSettings({
+      memoShortcut: { enabled: false, accelerator: 'Ctrl+Alt+N' },
+    })
+    await wrapper.vm.$nextTick()
     expect(memo.attributes('title')).toBe('本周备忘')
     await memo.trigger('click')
     expect(wrapper.emitted('memo')).toHaveLength(1)
