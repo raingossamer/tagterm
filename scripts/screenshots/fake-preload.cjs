@@ -43,8 +43,26 @@ let sessionTags = [
   ['s-dotfiles', 't-tools'],
 ].map(([sessionId, tagId]) => ({ sessionId, tagId }))
 
-// 本周备忘的演示事项（memo.png 场景用）
-let memos = []
+// 本周备忘的演示事项（memo.png 场景用）：时间相对截图当天，保证「本周」里有延续来的、新加的和做完的
+const DAY_MS = 86400000
+const daysAgo = (days, hour = 10) => {
+  const d = new Date(Date.now() - days * DAY_MS)
+  d.setHours(hour, 0, 0, 0)
+  return d.toISOString()
+}
+let memos = [
+  { id: 'm-1', text: '整理 simba-api 的接口文档', done: false, createdAt: daysAgo(9) },
+  { id: 'm-2', text: '评审 tagterm 拖拽排序的 PR', done: false, createdAt: daysAgo(0, 9) },
+  { id: 'm-3', text: '升级 node-pty 后跑一遍回归', done: false, createdAt: daysAgo(0, 9) },
+  {
+    id: 'm-4',
+    text: '周会：同步 simba 迭代进度',
+    done: true,
+    createdAt: daysAgo(2),
+    doneAt: daysAgo(0, 8),
+  },
+  { id: 'm-5', text: '修复托盘图标闪烁', done: true, createdAt: daysAgo(10), doneAt: daysAgo(8) },
+]
 
 let settings = {
   launchCommands: [
