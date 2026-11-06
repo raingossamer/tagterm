@@ -1,5 +1,5 @@
 /**
- * 托盘菜单模板（纯函数，不 import electron）：显示窗口 / 设置 / 退出。
+ * 托盘菜单模板（纯函数，不 import electron）：显示窗口 / 本周备忘 / 设置 / 退出。
  * 与 electron 的 MenuItemConstructorOptions 结构兼容，由 tray.ts 交给 Menu.buildFromTemplate。
  * 另有角标：按 等你确认（黄）> 已完成（蓝）> 运行中（绿）> 原图标 的优先级换图标 + 计数 tooltip；
  * 有人等你确认时图标黄 ↔ 红每 500 ms 交替（提醒人去处理），归 0 即停。
@@ -9,6 +9,8 @@ import type { BadgeCounts } from './agent/AgentSubsystem'
 
 export interface TrayMenuDeps {
   onShow: () => void
+  /** 显示窗口并打开本周备忘（不算热键从后台叫出来：之后按热键只关不藏） */
+  onOpenMemo: () => void
   onOpenSettings: () => void
   onQuit: () => void
 }
@@ -117,6 +119,7 @@ export function createTrayBadge<Image>(
 export function buildTrayMenuTemplate(deps: TrayMenuDeps): TrayMenuItem[] {
   return [
     { label: '显示窗口', click: () => deps.onShow() },
+    { label: '本周备忘', click: () => deps.onOpenMemo() },
     { type: 'separator' },
     { label: '设置', click: () => deps.onOpenSettings() },
     { type: 'separator' },

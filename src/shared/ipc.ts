@@ -221,6 +221,8 @@ export interface IpcEventMap {
   'app:select-session': [sessionId: string] // 系统通知被点击：显示窗口并切到该会话
   'app:focus-terminal': [] // 全局快捷键唤出窗口后：把焦点交给当前终端，可直接打字
   'memo:changed': [items: MemoItem[]] // 备忘事项变更后广播全量
+  'app:open-memo': [] // 本周备忘热键 / 托盘菜单：主进程已显示窗口，打开备忘录弹窗
+  'app:close-memo': [] // 本周备忘热键在前台再按：关掉备忘录弹窗（窗口是否藏回去由主进程定）
 }
 
 export type SendChannel = keyof IpcSendMap

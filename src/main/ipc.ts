@@ -40,6 +40,7 @@ import { isValidAccelerator } from '@shared/accelerator'
 import type { AgentSubsystem } from './agent/AgentSubsystem'
 import type { FolderPort, SessionSubsystem } from './session/SessionSubsystem'
 import type { GlobalShortcut } from './shortcut/GlobalShortcut'
+import type { MemoToggle } from './shortcut/memoToggle'
 import { applyGlobalShortcut, applyMemoShortcut } from './shortcut/applyGlobalShortcut'
 import type { SettingsStore } from './store/SettingsStore'
 import type { MemoStore } from './store/MemoStore'
@@ -70,6 +71,8 @@ export interface IpcDeps {
   shortcut: GlobalShortcut
   /** 本周备忘的全局快捷键服务（同一个类的第二个实例） */
   memoShortcut: GlobalShortcut
+  /** 本周备忘热键的开关判定：渲染进程报来的弹窗开关喂给它 */
+  memoToggle: Pick<MemoToggle, 'visibilityChanged'>
   /** 配置导入导出的编排（路径只从主进程的对话框来） */
   config: ConfigService
   /** 数据目录（设置「关于」显示） */
@@ -191,6 +194,10 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   handle('pty:is-alive', (id) => deps.sessions.isTerminalAlive(assertId(id)))
   on('pty:write', (id, data) => {
     if (typeof id === 'string' && typeof data === 'string') deps.sessions.writeTerminal(id, data)
+  })
+  // 备忘录弹窗开关（单向）：非布尔静默忽略
+  on('app:memo-visibility', (open) => {
+    if (typeof open === 'boolean') deps.memoToggle.visibilityChanged(open)
   })
   // 静默末尾报告（单向）：非法参数静默忽略；未知会话由子系统静默丢弃
   on('agent:report-output', (id, report) => {

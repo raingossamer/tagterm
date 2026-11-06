@@ -13,6 +13,7 @@ import { PtyManager } from '../../src/main/pty/PtyManager'
 import type { AgentSubsystem } from '../../src/main/agent/AgentSubsystem'
 import { SessionSubsystem } from '../../src/main/session/SessionSubsystem'
 import { GlobalShortcut } from '../../src/main/shortcut/GlobalShortcut'
+import { MemoToggle } from '../../src/main/shortcut/memoToggle'
 import { ConfigService } from '../../src/main/config/ConfigService'
 import { FakeConpty } from './fakeConpty'
 import { FakeShortcutPort } from './fakeShortcutPort'
@@ -49,6 +50,7 @@ describe('IPC 接口层', () => {
   /** 本周备忘的热键：单独一张假热键表，免得与「唤出窗口」那组断言互相掺杂 */
   let memoPort: FakeShortcutPort
   let memoShortcut: GlobalShortcut
+  let memoToggle: MemoToggle
   /** 会话列表广播（session:changed）的次数 */
   let sessionBroadcasts = 0
   /** 假的配置文件对话框给的路径（null = 取消） */
@@ -87,6 +89,7 @@ describe('IPC 接口层', () => {
     memoPort = new FakeShortcutPort()
     memoShortcut = new GlobalShortcut({ port: memoPort, onPress: () => {} })
     memoShortcut.start(settings.getMemoShortcut())
+    memoToggle = new MemoToggle()
     ipc = createFakeIpcMain()
     autoUpdater = new FakeAutoUpdater()
     const updater = new Updater({
@@ -116,6 +119,7 @@ describe('IPC 接口层', () => {
       agent,
       shortcut,
       memoShortcut,
+      memoToggle,
       // 配置导入导出：假对话框固定给临时目录里的路径（取消由各用例改 configPaths）
       config: new ConfigService({
         settings,
@@ -329,6 +333,15 @@ describe('IPC 接口层', () => {
       '快捷键设置格式不正确',
     )
     expect(settings.getMemoShortcut()).toEqual({ enabled: true, accelerator: 'Ctrl+Alt+N' })
+  })
+
+  it('app:memo-visibility（单向）把备忘录开关告诉热键判定；非布尔静默忽略', () => {
+    const front = { isVisible: true, isMinimized: false, isFocused: true }
+    ipc.send('app:memo-visibility', 'yes')
+    expect(memoToggle.press(front)).toBe('open')
+    ipc.send('app:memo-visibility', false)
+    ipc.send('app:memo-visibility', true)
+    expect(memoToggle.press(front)).toBe('close')
   })
 
   it('app:pause-global-shortcut 暂停 / 恢复两个热键（设置里录键位期间）', async () => {

@@ -204,6 +204,8 @@ const api = {
     onFocusTerminal: on('app:focus-terminal'),
     onOpenSettings: on('app:open-settings'),
     onSelectSession: on('app:select-session'),
+    onOpenMemo: on('app:open-memo'),
+    onCloseMemo: on('app:close-memo'),
   },
   memo: {
     list: () => ok(memos),

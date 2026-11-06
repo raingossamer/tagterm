@@ -64,6 +64,10 @@ export interface TagTermApi {
     importConfig(prefs: ConfigPrefs): Promise<ConfigImportResult | null>
     /** 备忘录弹窗开 / 关时告诉主进程（单向）：备忘录热键据此决定是打开还是关掉 */
     reportMemoVisibility(open: boolean): void
+    /** 本周备忘热键 / 托盘菜单要打开备忘录弹窗 */
+    onOpenMemo(cb: () => void): Unsubscribe
+    /** 本周备忘热键要关掉备忘录弹窗 */
+    onCloseMemo(cb: () => void): Unsubscribe
     /** 全局快捷键唤出窗口后：把焦点交给当前终端 */
     onFocusTerminal(cb: () => void): Unsubscribe
     onOpenSettings(cb: () => void): Unsubscribe
