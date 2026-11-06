@@ -380,6 +380,7 @@ app.whenReady().then(async () => {
     settings,
     tags,
     shortcut,
+    memoShortcut,
     autoLaunch: { get: getAutoLaunch, set: setAutoLaunch },
     hooks: subsystem,
     dialogs: isSmoke

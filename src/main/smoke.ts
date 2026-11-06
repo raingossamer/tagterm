@@ -1270,6 +1270,7 @@ const CONFIG_ITEM_NAMES = [
   'launchCommands',
   'appearance',
   'globalShortcut',
+  'memoShortcut',
   'autoLaunch',
   'hooks',
   'terminalFontSize',

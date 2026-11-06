@@ -125,6 +125,7 @@ describe('IPC 接口层', () => {
         settings,
         tags,
         shortcut,
+        memoShortcut,
         autoLaunch: autoLaunchPort,
         hooks: agent,
         dialogs: {
@@ -489,6 +490,7 @@ describe('IPC 接口层', () => {
       ['launchCommands', 'applied'],
       ['appearance', 'absent'],
       ['globalShortcut', 'absent'],
+      ['memoShortcut', 'absent'],
       ['autoLaunch', 'absent'],
       ['hooks', 'absent'],
       ['terminalFontSize', 'applied'],

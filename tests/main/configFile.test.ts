@@ -18,6 +18,7 @@ const FULL: ConfigFileData = {
   ],
   appearance: { fit: 'cover', imageOpacity: 0.5, panelOpacity: 0.8, blurPx: 6 },
   globalShortcut: { enabled: true, accelerator: 'Ctrl+Alt+Y' },
+  memoShortcut: { enabled: true, accelerator: 'Ctrl+Alt+N' },
   autoLaunch: true,
   hooks: { claude: true, codex: false },
   terminalFontSize: 16,
@@ -45,6 +46,7 @@ describe('配置文件（导出 / 导入的 JSON）', () => {
       'launchCommands',
       'appearance',
       'globalShortcut',
+      'memoShortcut',
       'autoLaunch',
       'hooks',
       'terminalFontSize',
@@ -136,6 +138,17 @@ describe('配置文件（导出 / 导入的 JSON）', () => {
       [
         { globalShortcut: { enabled: 'yes', accelerator: 'Ctrl+Alt+T' } },
         '配置文件里的全局快捷键格式不正确',
+      ],
+      [
+        { memoShortcut: { enabled: true, accelerator: 'Shift+M' } },
+        '配置文件里的本周备忘快捷键格式不正确',
+      ],
+      [
+        {
+          globalShortcut: { enabled: true, accelerator: 'Ctrl+Alt+M' },
+          memoShortcut: { enabled: true, accelerator: 'Ctrl+Alt+M' },
+        },
+        '配置文件里的两个快捷键相同',
       ],
       [{ autoLaunch: 1 }, '配置文件里的开机自启格式不正确'],
       [{ hooks: { claude: 'on' } }, '配置文件里的 hooks 开关格式不正确'],
