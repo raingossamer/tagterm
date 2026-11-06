@@ -98,6 +98,8 @@ export interface Settings {
   launchCommands: LaunchCommand[]
   background: AppBackground
   globalShortcut?: GlobalShortcutConfig
+  /** 本周备忘的全局快捷键（2026-11-06）：缺省（不写键）= 开启 + Ctrl+Alt+M；只经 app:set-memo-shortcut 写入 */
+  memoShortcut?: GlobalShortcutConfig
 }
 
 /** v2：terminalBackground（终端局部背景 + 黑色遮罩）整体换成全局 background */

@@ -3,7 +3,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { GlobalShortcut } from '../../src/main/shortcut/GlobalShortcut'
-import { applyGlobalShortcut } from '../../src/main/shortcut/applyGlobalShortcut'
+import { applyGlobalShortcut, applyMemoShortcut } from '../../src/main/shortcut/applyGlobalShortcut'
 import { SettingsStore } from '../../src/main/store/SettingsStore'
 import { FakeShortcutPort } from './fakeShortcutPort'
 
@@ -12,6 +12,7 @@ describe('applyGlobalShortcut', () => {
   let dir: string
   let port: FakeShortcutPort
   let shortcut: GlobalShortcut
+  let memoShortcut: GlobalShortcut
   let settings: SettingsStore
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), 'tagterm-apply-shortcut-'))
@@ -20,9 +21,13 @@ describe('applyGlobalShortcut', () => {
     settings = new SettingsStore(dir, { seedCommands: [] })
     await settings.load()
     shortcut.start(settings.getGlobalShortcut())
+    // 两个热键注册在同一张系统热键表上
+    memoShortcut = new GlobalShortcut({ port, onPress: () => {} })
+    memoShortcut.start(settings.getMemoShortcut())
   })
   afterEach(() => {
     shortcut.dispose()
+    memoShortcut.dispose()
     rmSync(dir, { recursive: true, force: true })
   })
 
@@ -30,7 +35,7 @@ describe('applyGlobalShortcut', () => {
     await expect(
       applyGlobalShortcut({ shortcut, settings }, { enabled: true, accelerator: 'Ctrl+Alt+Y' }),
     ).resolves.toEqual({ enabled: true, accelerator: 'Ctrl+Alt+Y', registered: true })
-    expect([...port.registered.keys()]).toEqual(['Ctrl+Alt+Y'])
+    expect([...port.registered.keys()].sort()).toEqual(['Ctrl+Alt+M', 'Ctrl+Alt+Y'])
     expect(settings.getGlobalShortcut()).toEqual({ enabled: true, accelerator: 'Ctrl+Alt+Y' })
     expect(JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8')).globalShortcut).toEqual({
       enabled: true,
@@ -43,7 +48,7 @@ describe('applyGlobalShortcut', () => {
     await expect(
       applyGlobalShortcut({ shortcut, settings }, { enabled: true, accelerator: 'Alt+F9' }),
     ).rejects.toThrow('该快捷键已被其他程序占用')
-    expect([...port.registered.keys()]).toEqual(['Ctrl+Alt+T'])
+    expect([...port.registered.keys()].sort()).toEqual(['Ctrl+Alt+M', 'Ctrl+Alt+T'])
     expect(settings.get().globalShortcut).toBeUndefined()
   })
 
@@ -57,12 +62,40 @@ describe('applyGlobalShortcut', () => {
     } finally {
       chmodSync(file, 0o666)
     }
-    expect([...port.registered.keys()]).toEqual(['Ctrl+Alt+T'])
+    expect([...port.registered.keys()].sort()).toEqual(['Ctrl+Alt+M', 'Ctrl+Alt+T'])
     expect(shortcut.status()).toEqual({
       enabled: true,
       accelerator: 'Ctrl+Alt+T',
       registered: true,
     })
     expect(settings.getGlobalShortcut()).toEqual({ enabled: true, accelerator: 'Ctrl+Alt+T' })
+  })
+
+  it('本周备忘的键位走同一套：先注册成功才写 memoShortcut', async () => {
+    await expect(
+      applyMemoShortcut({ memoShortcut, settings }, { enabled: true, accelerator: 'Ctrl+Alt+N' }),
+    ).resolves.toEqual({ enabled: true, accelerator: 'Ctrl+Alt+N', registered: true })
+    expect([...port.registered.keys()].sort()).toEqual(['Ctrl+Alt+N', 'Ctrl+Alt+T'])
+    expect(settings.getMemoShortcut()).toEqual({ enabled: true, accelerator: 'Ctrl+Alt+N' })
+  })
+
+  it('两个热键不能设成同一个组合（反之亦然）：拒绝且什么都不动；对方关着时不算冲突', async () => {
+    await expect(
+      applyMemoShortcut({ memoShortcut, settings }, { enabled: true, accelerator: 'Ctrl+Alt+T' }),
+    ).rejects.toThrow('与「唤出 / 隐藏窗口」的快捷键相同')
+    await expect(
+      applyGlobalShortcut({ shortcut, settings }, { enabled: true, accelerator: 'Ctrl+Alt+M' }),
+    ).rejects.toThrow('与「本周备忘」的快捷键相同')
+    expect([...port.registered.keys()].sort()).toEqual(['Ctrl+Alt+M', 'Ctrl+Alt+T'])
+    expect(settings.get().globalShortcut).toBeUndefined()
+    expect(settings.get().memoShortcut).toBeUndefined()
+
+    await applyMemoShortcut(
+      { memoShortcut, settings },
+      { enabled: false, accelerator: 'Ctrl+Alt+M' },
+    )
+    await expect(
+      applyGlobalShortcut({ shortcut, settings }, { enabled: true, accelerator: 'Ctrl+Alt+M' }),
+    ).resolves.toMatchObject({ accelerator: 'Ctrl+Alt+M', registered: true })
   })
 })

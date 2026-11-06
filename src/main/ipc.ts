@@ -40,7 +40,7 @@ import { isValidAccelerator } from '@shared/accelerator'
 import type { AgentSubsystem } from './agent/AgentSubsystem'
 import type { FolderPort, SessionSubsystem } from './session/SessionSubsystem'
 import type { GlobalShortcut } from './shortcut/GlobalShortcut'
-import { applyGlobalShortcut } from './shortcut/applyGlobalShortcut'
+import { applyGlobalShortcut, applyMemoShortcut } from './shortcut/applyGlobalShortcut'
 import type { SettingsStore } from './store/SettingsStore'
 import type { MemoStore } from './store/MemoStore'
 import type { TagStore } from './store/TagStore'
@@ -68,6 +68,8 @@ export interface IpcDeps {
   agent: AgentSubsystem
   /** 全局快捷键服务（唤出 / 隐藏窗口）：注册与暂停；「先注册成功才落盘」的编排在 shortcut/applyGlobalShortcut */
   shortcut: GlobalShortcut
+  /** 本周备忘的全局快捷键服务（同一个类的第二个实例） */
+  memoShortcut: GlobalShortcut
   /** 配置导入导出的编排（路径只从主进程的对话框来） */
   config: ConfigService
   /** 数据目录（设置「关于」显示） */
@@ -116,9 +118,17 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   handle('app:set-global-shortcut', (config) =>
     applyGlobalShortcut(deps, assertGlobalShortcut(config)),
   )
+  handle('app:get-memo-shortcut', () => deps.memoShortcut.status())
+  handle('app:set-memo-shortcut', (config) => applyMemoShortcut(deps, assertGlobalShortcut(config)))
+  // 录键位期间两个热键都暂停：免得按到旧键把窗口藏掉或开出备忘录
   handle('app:pause-global-shortcut', (paused) => {
-    if (assertPaused(paused)) deps.shortcut.pause()
-    else deps.shortcut.resume()
+    if (assertPaused(paused)) {
+      deps.shortcut.pause()
+      deps.memoShortcut.pause()
+    } else {
+      deps.shortcut.resume()
+      deps.memoShortcut.resume()
+    }
   })
   handle('app:export-config', (prefs) => deps.config.exportConfig(assertConfigPrefs(prefs)))
   handle('app:import-config', (prefs) => deps.config.importConfig(assertConfigPrefs(prefs)))

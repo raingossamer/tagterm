@@ -81,6 +81,12 @@ export function createFakeApi(overrides: Overrides = {}): TagTermApi {
         registered: config.enabled,
       })),
       pauseGlobalShortcut: vi.fn(async () => {}),
+      getMemoShortcut: vi.fn(async () => ({
+        enabled: true,
+        accelerator: 'Ctrl+Alt+M',
+        registered: true,
+      })),
+      setMemoShortcut: vi.fn(async (config) => ({ ...config, registered: config.enabled })),
       exportConfig: vi.fn(async () => ({ path: 'C:/Users/test/Documents/tagterm-config.json' })),
       importConfig: vi.fn(async () => ({
         path: 'C:/Users/test/Documents/tagterm-config.json',

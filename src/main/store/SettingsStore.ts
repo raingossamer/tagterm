@@ -16,7 +16,11 @@ import {
   type Settings,
   type SettingsFile,
 } from '@shared/models'
-import { DEFAULT_GLOBAL_SHORTCUT, isValidAccelerator } from '@shared/accelerator'
+import {
+  DEFAULT_GLOBAL_SHORTCUT,
+  DEFAULT_MEMO_SHORTCUT,
+  isValidAccelerator,
+} from '@shared/accelerator'
 import { readJson, writeJsonAtomic } from './jsonFile'
 import { assertImageReadable, readImageBytes, type ShrinkImage } from './backgroundImage'
 import { createSerialQueue } from './serialQueue'
@@ -28,6 +32,16 @@ const DEFAULT_GLOBAL_SHORTCUT_CONFIG: GlobalShortcutConfig = {
   enabled: true,
   accelerator: DEFAULT_GLOBAL_SHORTCUT,
 }
+
+/** 两个全局快捷键在 settings.json 里的键与缺省（文件里不写缺省值） */
+const SHORTCUT_FIELDS = {
+  globalShortcut: { label: '全局快捷键', fallback: DEFAULT_GLOBAL_SHORTCUT_CONFIG },
+  memoShortcut: {
+    label: '本周备忘快捷键',
+    fallback: { enabled: true, accelerator: DEFAULT_MEMO_SHORTCUT },
+  },
+} as const satisfies Record<string, { label: string; fallback: GlobalShortcutConfig }>
+type ShortcutField = keyof typeof SHORTCUT_FIELDS
 
 export interface SettingsStoreDeps {
   /** 首次运行的唤起命令来源（已安装的工具名） */
@@ -71,6 +85,7 @@ export class SettingsStore {
     const file = raw as Partial<SettingsFile> & {
       terminalBackground?: unknown
       globalShortcut?: unknown
+      memoShortcut?: unknown
     }
     if (typeof file.version !== 'number' || !Array.isArray(file.launchCommands)) {
       throw new Error(`设置文件格式不正确：${this.file}`)
@@ -94,10 +109,14 @@ export class SettingsStore {
       background: { ...DEFAULT_BACKGROUND, ...(file.background ?? {}) },
     }
     // 可选字段：不合法（手改坏了）按缺省处理、下次写入时丢掉，不因它拒绝加载整份设置
-    if (file.globalShortcut !== undefined) {
-      if (isGlobalShortcutConfig(file.globalShortcut))
-        this.settings.globalShortcut = { ...file.globalShortcut }
-      else console.warn(`[store] 设置里的全局快捷键格式不正确，按缺省处理：${this.file}`)
+    for (const field of Object.keys(SHORTCUT_FIELDS) as ShortcutField[]) {
+      const value = file[field]
+      if (value === undefined) continue
+      if (isGlobalShortcutConfig(value)) this.settings[field] = { ...value }
+      else
+        console.warn(
+          `[store] 设置里的${SHORTCUT_FIELDS[field].label}格式不正确，按缺省处理：${this.file}`,
+        )
     }
     console.log(
       `[store] 已加载设置（${this.settings.launchCommands.length} 条唤起命令）：${this.file}`,
@@ -105,28 +124,47 @@ export class SettingsStore {
   }
 
   get(): Settings {
-    const { globalShortcut } = this.settings
+    const { globalShortcut, memoShortcut } = this.settings
     return {
       launchCommands: [...this.settings.launchCommands],
       background: { ...this.settings.background },
       ...(globalShortcut ? { globalShortcut: { ...globalShortcut } } : {}),
+      ...(memoShortcut ? { memoShortcut: { ...memoShortcut } } : {}),
     }
   }
 
   /** 全局快捷键配置（文件里没有即缺省：开启 + Ctrl+Alt+T） */
   getGlobalShortcut(): GlobalShortcutConfig {
-    return { ...(this.settings.globalShortcut ?? DEFAULT_GLOBAL_SHORTCUT_CONFIG) }
+    return this.getShortcut('globalShortcut')
   }
 
   /** 写全局快捷键配置（接口层在注册成功后才调）：等于缺省值时删键；落盘成功才改内存并回调全量设置 */
   setGlobalShortcut(config: GlobalShortcutConfig): Promise<void> {
+    return this.setShortcut('globalShortcut', config)
+  }
+
+  /** 本周备忘的全局快捷键（文件里没有即缺省：开启 + Ctrl+Alt+M） */
+  getMemoShortcut(): GlobalShortcutConfig {
+    return this.getShortcut('memoShortcut')
+  }
+
+  /** 同 setGlobalShortcut，写 memoShortcut */
+  setMemoShortcut(config: GlobalShortcutConfig): Promise<void> {
+    return this.setShortcut('memoShortcut', config)
+  }
+
+  private getShortcut(field: ShortcutField): GlobalShortcutConfig {
+    return { ...(this.settings[field] ?? SHORTCUT_FIELDS[field].fallback) }
+  }
+
+  private setShortcut(field: ShortcutField, config: GlobalShortcutConfig): Promise<void> {
     return this.queue.run(async () => {
+      const { fallback } = SHORTCUT_FIELDS[field]
       const isDefault =
-        config.enabled === DEFAULT_GLOBAL_SHORTCUT_CONFIG.enabled &&
-        config.accelerator === DEFAULT_GLOBAL_SHORTCUT_CONFIG.accelerator
+        config.enabled === fallback.enabled && config.accelerator === fallback.accelerator
       const next: Settings = { ...this.settings }
-      if (isDefault) delete next.globalShortcut
-      else next.globalShortcut = { ...config }
+      if (isDefault) delete next[field]
+      else next[field] = { ...config }
       await this.commit(next)
       this.onChanged(this.get())
     })

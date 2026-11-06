@@ -17,6 +17,8 @@ export interface ShortcutPort {
 
 export interface GlobalShortcutDeps {
   port: ShortcutPort
+  /** 日志里的称呼（缺省「全局快捷键」）：两个热键各一个实例 */
+  name?: string
   /** 热键按下：装配层据窗口状态唤出或藏起主窗口 */
   onPress: () => void
 }
@@ -36,7 +38,8 @@ export class GlobalShortcut {
     this.config = { ...config }
     if (!config.enabled) return
     if (this.tryRegister(config.accelerator)) this.registered = config.accelerator
-    else console.warn(`[shortcut] 全局快捷键 ${config.accelerator} 注册失败，可能已被其他程序占用`)
+    else
+      console.warn(`[shortcut] ${this.name} ${config.accelerator} 注册失败，可能已被其他程序占用`)
   }
 
   /** 换成新配置；新键位注册不上返回 false（旧的保留、配置不变）。暂停中先恢复再换 */
@@ -80,7 +83,7 @@ export class GlobalShortcut {
     this.paused = null
     if (accelerator === null) return
     if (this.tryRegister(accelerator)) this.registered = accelerator
-    else console.warn(`[shortcut] 全局快捷键 ${accelerator} 恢复注册失败，可能已被其他程序占用`)
+    else console.warn(`[shortcut] ${this.name} ${accelerator} 恢复注册失败，可能已被其他程序占用`)
   }
 
   /** 暂停中按暂停前的注册情况报告：录键位期间设置里不该冒出「被占用」红字 */
@@ -94,6 +97,10 @@ export class GlobalShortcut {
     this.release()
     this.isPaused = false
     this.paused = null
+  }
+
+  private get name(): string {
+    return this.deps.name ?? '全局快捷键'
   }
 
   private tryRegister(accelerator: string): boolean {
