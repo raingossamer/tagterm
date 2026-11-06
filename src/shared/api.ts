@@ -58,6 +58,8 @@ export interface TagTermApi {
     exportConfig(prefs: ConfigPrefs): Promise<ConfigExportResult | null>
     /** 导入配置：主进程弹打开对话框（取消为 null）；文件不对 reject 中文原因、什么都不动；返回逐项结果与备份路径 */
     importConfig(prefs: ConfigPrefs): Promise<ConfigImportResult | null>
+    /** 备忘录弹窗开 / 关时告诉主进程（单向）：备忘录热键据此决定是打开还是关掉 */
+    reportMemoVisibility(open: boolean): void
     /** 全局快捷键唤出窗口后：把焦点交给当前终端 */
     onFocusTerminal(cb: () => void): Unsubscribe
     onOpenSettings(cb: () => void): Unsubscribe

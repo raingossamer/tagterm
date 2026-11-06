@@ -21,4 +21,15 @@ describe('SideFoot', () => {
     await gear.trigger('click')
     expect(wrapper.emitted('settings')).toHaveLength(1)
   })
+
+  it('齿轮左边的「本周备忘」按钮发出 memo', async () => {
+    const wrapper = mount(SideFoot)
+    const memo = wrapper.find('[data-test=open-memo]')
+
+    expect(memo.attributes('title')).toBe('本周备忘')
+    await memo.trigger('click')
+    expect(wrapper.emitted('memo')).toHaveLength(1)
+    const buttons = wrapper.findAll('button').map((b) => b.attributes('data-test'))
+    expect(buttons.indexOf('open-memo')).toBe(buttons.indexOf('open-settings') - 1)
+  })
 })
