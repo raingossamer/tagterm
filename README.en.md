@@ -12,7 +12,7 @@ A small Windows desktop tool: **save the project folders you use most as termina
 
 When you use AI coding tools in several projects at once, every time you have to find the project folder, type `cmd` in the address bar, then type `claude`; once a pile of terminal windows is open, you can no longer tell which tool has stopped and is waiting for your approval. TagTerm folds both into one window: a session is a path, and the status is visible at a glance.
 
-## Features (v0.4.1)
+## Features (v0.4.2)
 
 ### Sessions and terminals
 
@@ -45,7 +45,7 @@ Every open session has a status dot, shown in the sidebar, on the tab and in the
 
 - The **tray icon** follows the status that needs you most: yellow > blue > green. While a session is waiting for you the tray icon flashes yellow / red, and a small dot appears on the taskbar button as well.
 - **System notifications**: a notification pops up when a session enters "waiting for you" (while you are not looking at it) or when a turn finishes; clicking it switches straight to that session.
-- **How it is detected**: the process tree tells which tool is running in a session; for Claude Code and Codex you can install hooks with one click in "Settings → Agent", which gives the most accurate status. Without hooks, only signals the screen can prove are used (a running timer, a retry banner counting down), never matching UI wording.
+- **How it is detected**: the process tree tells which tool is running in a session; for Claude Code and Codex you can install hooks with one click in "Settings → Agent", which gives the most accurate status; each event is credited to the terminal that sent it (Claude Code or Codex running in other programs does not affect sessions in TagTerm). Without hooks, only signals the screen can prove are used (a running timer, a retry banner counting down), never matching UI wording.
 
 ### Path strip and launch commands
 
@@ -104,6 +104,7 @@ If the hooks cannot be installed on the new computer (for example Claude Code is
 ## Known limitations
 
 - Without hooks, status can only be judged from screen signals: during a Claude Code permission dialog the dot may still show "working", and a turn that ended with an API error cannot be told apart from a normal finish.
+- After the window has been hidden in the tray for more than 5 minutes, the system slows down its background timers, so status judged from screen signals can lag by up to 1 minute; hooks events are not affected.
 - Greying out the launch buttons relies on a process-tree scan every 2 seconds, so the change lands up to 2 seconds after a program starts or exits; a command that finishes in a flash is never greyed out.
 - A windowed program started from the terminal and left open (such as `start notepad`) also counts as "a program is running", so the buttons stay grey until it is closed.
 - When another program already owns a global hotkey (summon or weekly memo), pressing it does nothing at all (the system hands it to that program); look for the notice in "Settings → Startup" and pick another combination.
