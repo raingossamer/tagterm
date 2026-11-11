@@ -40,7 +40,7 @@ describe('HookServer（回环 HTTP，接收 Claude / Codex hooks 的 stdin JSON�
 
   function start(preferred: number): Promise<number> {
     hooks = []
-    server = new HookServer({ onHook: (agent, payload) => hooks.push([agent, payload]) })
+    server = new HookServer({ onHook: (agent, payload) => void hooks.push([agent, payload]) })
     return server.start(preferred)
   }
 
@@ -66,6 +66,41 @@ describe('HookServer（回环 HTTP，接收 Claude / Codex hooks 的 stdin JSON�
     expect((await post(port, '/tagterm/hook/gemini', '{}')).status).toBe(404)
     expect((await post(port, '/other', '{}')).status).toBe(404)
     expect(hooks).toHaveLength(2)
+  })
+
+  it('等 onHook 处理完才应答 204（归属要在进程表里找到还活着的 curl，应答一发它就退出了）；onHook 出错也照常 204', async () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((r) => (release = r))
+    let isAnswered = false
+    server = new HookServer({ onHook: () => gate })
+    const port = await server.start(0)
+    const answered = post(port, '/tagterm/hook/claude', '{"hook_event_name":"Stop"}').then((r) => {
+      isAnswered = true
+      return r
+    })
+    await new Promise((r) => setTimeout(r, 80))
+    expect(isAnswered).toBe(false)
+    release()
+    expect((await answered).status).toBe(204)
+    await server.stop()
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      server = new HookServer({ onHook: () => Promise.reject(new Error('boom')) })
+      const failing = await server.start(0)
+      expect((await post(failing, '/tagterm/hook/claude', '{}')).status).toBe(204)
+      expect(warn).toHaveBeenCalled()
+      await server.stop()
+      server = new HookServer({
+        onHook: () => {
+          throw new Error('sync boom')
+        },
+      })
+      const throwing = await server.start(0)
+      expect((await post(throwing, '/tagterm/hook/claude', '{}')).status).toBe(204)
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   it('请求体超过 64 KB → 413 不回调', async () => {
@@ -100,7 +135,7 @@ describe('HookServer（回环 HTTP，接收 Claude / Codex hooks 的 stdin JSON�
     const free = await freePort()
     hooks = []
     server = new HookServer({
-      onHook: (agent, payload) => hooks.push([agent, payload]),
+      onHook: (agent, payload) => void hooks.push([agent, payload]),
       maxPortAttempts: 1,
     })
 

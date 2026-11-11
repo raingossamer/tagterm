@@ -11,7 +11,7 @@ import type { HookAgent } from '@shared/ipc'
 import { AgentSubsystem, type AgentSubsystemOptions } from './AgentSubsystem'
 import { HOOK_CONTRACTS } from './hookContract'
 import type { HookTarget } from './HookInstaller'
-import { listSubtree } from './windowsProcessTree'
+import { listProcesses, listSubtree } from './windowsProcessTree'
 
 export type ProductionAgentOptions = Pick<
   AgentSubsystemOptions,
@@ -42,5 +42,6 @@ export function createProductionAgent(opts: ProductionAgentOptions): AgentSubsys
     ...opts,
     hookTargets: { claude: hookTargetOf('claude', home), codex: hookTargetOf('codex', home) },
     listSubtree,
+    listProcesses,
   })
 }

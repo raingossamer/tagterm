@@ -23,6 +23,8 @@ const ELAPSED_IN_PARENS = /\((?:[^()\d]{0,24})?(?:(\d+)\s*h\s*)?(?:(\d+)\s*m\s*)
 
 /** 相邻两次采样间计时器最多认几秒的前进：正常一秒一跳，留点抖动余量；跳太远说明不是同一个计时器 */
 const MAX_TICK_STEP = 4
+/** 采样间隔拉长时（窗口隐藏，渲染进程的定时器被 Chromium 节流）在实际间隔之上再认几秒的抖动 */
+const TICK_JITTER = 3
 
 /**
  * 重试横幅的行：含 retry / next try / reconnect 字样（大小写不敏感）。文案在这里只是**筛选条件**（降噪，与计时器用括号同理），
@@ -89,12 +91,31 @@ export function parseElapsedSeconds(tail: readonly string[]): number[] {
 
 /**
  * 计时器是否在走：新采样里出现了「比上次某个读数大 1…MAX_TICK_STEP 秒、且上次没有过」的读数。
- * 静态文字每次读数一模一样 → 不算；行滚出屏幕只会让读数变少 → 不算；工具停下来后状态行换成「跑完」文案 → 读数消失 → 不算
+ * 静态文字每次读数一模一样 → 不算；行滚出屏幕只会让读数变少 → 不算；工具停下来后状态行换成「跑完」文案 → 读数消失 → 不算。
+ * elapsedSec = 两次采样之间实际过去的秒数：窗口隐藏时渲染进程的定时器被节流（实测隐藏后前 5 分钟约 2 s 一次、之后 60 s 一次），
+ *   前进的上限随之放到「实际间隔 + TICK_JITTER」—— 计时器走得不会比时间快；间隔 1 s 上下时仍是 MAX_TICK_STEP
  */
-export function hasTicked(prev: readonly number[], next: readonly number[]): boolean {
-  if (prev.length === 0 || next.length === 0) return false
+export function hasTicked(
+  prev: readonly number[],
+  next: readonly number[],
+  elapsedSec = 1,
+): boolean {
+  return tickedReadings(prev, next, elapsedSec).length > 0
+}
+
+/**
+ * 新采样里「走过来」的那些读数（判据同 hasTicked），没有返回空数组。AgentDetector 记下其中最大的一个：
+ * 之后屏幕静默时，它还原样在屏幕上 = 只是卡了一下；它没了 = 状态行被换掉，回合结束或被中断了
+ */
+export function tickedReadings(
+  prev: readonly number[],
+  next: readonly number[],
+  elapsedSec = 1,
+): number[] {
+  if (prev.length === 0 || next.length === 0) return []
+  const maxStep = Math.max(MAX_TICK_STEP, Math.floor(elapsedSec) + TICK_JITTER)
   const before = new Set(prev)
-  return next.some((v) => !before.has(v) && prev.some((u) => v - u >= 1 && v - u <= MAX_TICK_STEP))
+  return next.filter((v) => !before.has(v) && prev.some((u) => v - u >= 1 && v - u <= maxStep))
 }
 
 /** 这一屏里重试横幅的倒数读数（秒），按出现顺序：只看含 retry 字样的行、只取括号外的时长；没有返回空数组 */

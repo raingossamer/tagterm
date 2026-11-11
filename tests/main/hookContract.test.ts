@@ -96,7 +96,7 @@ describe('hookContract（装什么 = 识别什么 = 处理什么）', () => {
       expect(isOurHook(cmd)).toBe(true)
     }
     const hooks: string[] = []
-    const server = new HookServer({ onHook: (agent) => hooks.push(agent) })
+    const server = new HookServer({ onHook: (agent) => void hooks.push(agent) })
     const port = await server.start(0)
     try {
       for (const agent of HOOK_AGENTS) {

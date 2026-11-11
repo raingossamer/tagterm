@@ -224,6 +224,20 @@ describe('AgentDetector（运行时状态机）', () => {
     expect(changes.at(-1)).not.toHaveProperty('pendingHint')
   })
 
+  it('采样被节流（窗口隐藏，报告一分钟才来一份）：计时器前进约等于两份报告之间实际过去的时间 → working；静态读数隔多久都不算', () => {
+    detector.ptySpawned('s1')
+    detector.processSnapshot(new Map([['s1', inTree('claude')]]))
+    changes.length = 0
+
+    detector.reportOutput('s1', busy(100))
+    now += 60_000
+    detector.reportOutput('s1', busy(100)) // 一分钟后读数没变：静态文字
+    expect(changes).toEqual([])
+    now += 60_000
+    detector.reportOutput('s1', busy(160))
+    expect(changes.at(-1)).toMatchObject({ status: 'working' })
+  })
+
   it('重试横幅：有 agent 且倒数在走 → blocked、提示 = 横幅那一行（两种报告都认，从 working / idle 都转）；同屏计时器也在走时倒数优先；静态引用的横幅不转移；倒数还在屏上时不放行；倒数消失后计时器走起来 → working（清提示）、静默 → done / idle', () => {
     detector.ptySpawned('s1')
     detector.processSnapshot(new Map([['s1', inTree('claude')]]))
@@ -320,7 +334,7 @@ describe('AgentDetector（运行时状态机）', () => {
     })
   })
 
-  it('Claude hooks：UserPromptSubmit → working；Notification 契约表里的阻塞类型 → blocked + message（截断 200）；其他类型忽略；Stop → 被查看 idle / 否则 done；SessionStart 记 claude；SessionEnd 清 agent 回 idle', () => {
+  it('Claude hooks：UserPromptSubmit → working；Notification 契约表里的阻塞类型 → blocked + message（截断 200）；其他类型忽略；Stop → 被查看 idle / 否则 done；SessionStart 记 claude；SessionEnd 回 idle 但不动 agent（在不在由进程树说了算）', () => {
     detector.ptySpawned('s1')
     changes.length = 0
     const hook = (payload: Record<string, unknown>): void =>
@@ -387,10 +401,33 @@ describe('AgentDetector（运行时状态机）', () => {
     })
 
     hook({ hook_event_name: 'UserPromptSubmit' })
+    hook({ hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'm' })
     hook({ hook_event_name: 'SessionEnd' })
+    expect(changes.at(-1)).toEqual({
+      sessionId: 's1',
+      alive: true,
+      agent: 'claude',
+      status: 'idle',
+    })
+    // 工具真退出：进程树发现它没了才清 agent，之后的事件忽略
+    detector.processSnapshot(new Map([['s1', inTree('claude')]]))
+    detector.processSnapshot(new Map([['s1', inTree(null)]]))
     expect(changes.at(-1)).toEqual({ sessionId: 's1', alive: true, agent: null, status: 'idle' })
-    hook({ hook_event_name: 'Stop' }) // 没有 agent 了：忽略
+    hook({ hook_event_name: 'Stop' })
     expect(changes.at(-1)).toMatchObject({ agent: null, status: 'idle' })
+  })
+
+  it('/clear 连发 SessionEnd 与 SessionStart（两条都是异步 hook）：到达顺序颠倒也不影响，之后提问照样 → working', () => {
+    detector.ptySpawned('s1')
+    detector.processSnapshot(new Map([['s1', inTree('claude')]]))
+    const hook = (event: string): void =>
+      detector.hookEvent(['s1'], 'claude', { hook_event_name: event })
+
+    hook('SessionStart')
+    hook('SessionEnd') // 迟到的那一条
+    expect(detector.list()[0]).toMatchObject({ agent: 'claude', status: 'idle' })
+    hook('UserPromptSubmit')
+    expect(detector.list()[0]).toMatchObject({ agent: 'claude', status: 'working' })
   })
 
   it('Codex hooks：UserPromptSubmit → working；PermissionRequest → blocked（tool_input.description 优先，其次 tool_name）；Interrupt → idle；Stop / SessionStart / SessionEnd 同 Claude；多会话同时命中各自转移', () => {
@@ -420,15 +457,135 @@ describe('AgentDetector（运行时状态机）', () => {
     detector.hookEvent(['s1'], 'codex', { hook_event_name: 'UserPromptSubmit' })
     detector.hookEvent(['s1'], 'codex', { hook_event_name: 'Stop', last_assistant_message: 'ok' })
     expect(changes.at(-1)).toMatchObject({ sessionId: 's1', status: 'done' })
+    detector.hookEvent(['s2'], 'codex', { hook_event_name: 'UserPromptSubmit' })
     detector.hookEvent(['s2'], 'codex', { hook_event_name: 'SessionEnd' })
-    expect(changes.at(-1)).toEqual({ sessionId: 's2', alive: true, agent: null, status: 'idle' })
+    expect(changes.at(-1)).toEqual({ sessionId: 's2', alive: true, agent: 'codex', status: 'idle' })
     detector.hookEvent(['ghost'], 'codex', { hook_event_name: 'UserPromptSubmit' })
     detector.hookEvent([], 'codex', { hook_event_name: 'UserPromptSubmit' })
     detector.hookEvent(['s1'], 'codex', {})
     expect(changes.at(-1)).toMatchObject({ sessionId: 's2' })
   })
 
-  it('hooks 抑制窗：收到 hook 后 30 s 内，屏幕在动与静默两种报告都不改状态（cwdNow 照常）；30 s 后恢复', () => {
+  it('回合结束后又接着干活（后台任务跑完把工具唤醒，没有新的提问）：Stop 后 30 s 内，已完成 / 空闲时计时器一走即 working', () => {
+    detector.ptySpawned('s1')
+    const hook = (event: string): void =>
+      detector.hookEvent(['s1'], 'claude', { hook_event_name: event })
+    hook('SessionStart')
+    hook('UserPromptSubmit')
+    hook('Stop')
+    expect(changes.at(-1)).toMatchObject({ status: 'done' })
+
+    detector.reportOutput('s1', busy(1)) // 第一份只作基线
+    expect(changes.at(-1)).toMatchObject({ status: 'done' })
+    now += 1000
+    detector.reportOutput('s1', busy(2))
+    expect(changes.at(-1)).toEqual({
+      sessionId: 's1',
+      alive: true,
+      agent: 'claude',
+      status: 'working',
+    })
+
+    // 正被查看时结束的回合是 idle：同样一走就回 working
+    detector.setViewed('s1')
+    hook('Stop')
+    expect(changes.at(-1)).toMatchObject({ status: 'idle' })
+    now += 1000
+    detector.reportOutput('s1', busy(3))
+    expect(changes.at(-1)).toMatchObject({ status: 'working' })
+  })
+
+  it('静默时看走过的那个计时器还在不在屏幕上：还在（只是卡了一下）→ 不转移；状态行被换掉、读数消失 → 跑完', () => {
+    detector.ptySpawned('s1')
+    detector.processSnapshot(new Map([['s1', inTree('pi')]]))
+    detector.reportOutput('s1', busy(39))
+    detector.reportOutput('s1', busy(40))
+    expect(changes.at(-1)).toMatchObject({ status: 'working' })
+    const count = changes.length
+
+    // 屏幕停了 1.5 s，计时器原样停在 40s：工具还在干活，只是这一下没输出
+    detector.reportOutput('s1', busy(40, 1500))
+    expect(changes).toHaveLength(count)
+    // 屏幕上别的静态时长文字不算数，只认走过的那个读数
+    detector.reportOutput('s1', {
+      tail: ['⏺ Bash(pnpm test) (timeout 2m 0s)', '✻ Cooked for 41s · done 13:57', '> '],
+      silentMs: 1500,
+    })
+    expect(changes.at(-1)).toMatchObject({ status: 'done' })
+  })
+
+  it('收到过 hook 的会话，静默判跑完只在正被查看时生效：按 Esc 中断（没有 Stop，只可能发生在正看着的终端）→ 约 1.5 s 回 idle；没人看的会话只认 Stop —— 权限对话框的 Notification 要 6 s 后才来，期间屏幕与中断一模一样，不能先报一次已完成', () => {
+    detector.ptySpawned('s1')
+    const hook = (payload: Record<string, unknown>): void =>
+      detector.hookEvent(['s1'], 'claude', payload)
+    hook({ hook_event_name: 'SessionStart' })
+    const interrupted = {
+      tail: ['⎿ Interrupted · What should Claude do instead?', '> '],
+      silentMs: 1500,
+    }
+    const dialog = { tail: ['Do you want to run this command?', '1. Yes'], silentMs: 1500 }
+    const tickTwice = (): void => {
+      detector.reportOutput('s1', busy(1))
+      now += 1000
+      detector.reportOutput('s1', busy(2))
+      now += 1500
+    }
+
+    // 正被查看、刚提问、计时器还没走过：静默不判（提问后头一两秒屏幕上本来就没有计时器）
+    detector.setViewed('s1')
+    hook({ hook_event_name: 'UserPromptSubmit' })
+    detector.reportOutput('s1', interrupted)
+    expect(changes.at(-1)).toMatchObject({ status: 'working' })
+    // 计时器走过、又从屏幕上消失：窗内也判跑完
+    tickTwice()
+    detector.reportOutput('s1', interrupted)
+    expect(changes.at(-1)).toEqual({
+      sessionId: 's1',
+      alive: true,
+      agent: 'claude',
+      status: 'idle',
+    })
+
+    // 没人看：对话框盖住状态行，窗内窗外都不靠静默判跑完，等 hooks 开口
+    detector.setViewed(null)
+    hook({ hook_event_name: 'UserPromptSubmit' })
+    tickTwice()
+    detector.reportOutput('s1', dialog)
+    expect(changes.at(-1)).toMatchObject({ status: 'working' })
+    now += 31_000
+    detector.reportOutput('s1', dialog)
+    expect(changes.at(-1)).toMatchObject({ status: 'working' })
+    hook({ hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'm' })
+    expect(changes.at(-1)).toMatchObject({ status: 'blocked', pendingHint: 'm' })
+
+    // 正被查看时，计时器走过之后才来的「等你确认」：hook 把走过的读数清掉，对话框盖住状态行不算跑完
+    detector.setViewed('s1')
+    hook({ hook_event_name: 'UserPromptSubmit' })
+    tickTwice()
+    hook({ hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'm' })
+    detector.reportOutput('s1', dialog)
+    expect(changes.at(-1)).toMatchObject({ status: 'blocked', pendingHint: 'm' })
+  })
+
+  it('关掉某个工具的 hooks 开关后，它的会话不再算「收到过 hook」：没人看时又靠静默判跑完；别的工具的会话不受影响', () => {
+    detector.ptySpawned('s1')
+    detector.ptySpawned('s2')
+    detector.hookEvent(['s1'], 'claude', { hook_event_name: 'SessionStart' })
+    detector.hookEvent(['s2'], 'codex', { hook_event_name: 'SessionStart' })
+    detector.hookEvent(['s1'], 'claude', { hook_event_name: 'UserPromptSubmit' })
+    detector.hookEvent(['s2'], 'codex', { hook_event_name: 'UserPromptSubmit' })
+    const finished = { tail: ['✻ Cooked for 3s · done 13:57', '> '], silentMs: 1500 }
+
+    detector.hooksDisabled('claude')
+    detector.reportOutput('s1', finished)
+    detector.reportOutput('s2', finished)
+    expect(detector.list()).toMatchObject([
+      { sessionId: 's1', status: 'done' },
+      { sessionId: 's2', status: 'working' },
+    ])
+  })
+
+  it('hooks 抑制窗：收到 hook 后 30 s 内，末行提示与没见过计时器走的静默都不改状态（cwdNow 照常）；等你确认在窗内计时器在走也不放行；30 s 后恢复', () => {
     detector.ptySpawned('s1')
     detector.hookEvent(['s1'], 'claude', { hook_event_name: 'SessionStart' })
     detector.hookEvent(['s1'], 'claude', { hook_event_name: 'UserPromptSubmit' })
@@ -438,15 +595,20 @@ describe('AgentDetector（运行时状态机）', () => {
     expect(changes).toEqual([])
     detector.reportOutput('s1', { tail: ['C:\\p>'], silentMs: 1500 })
     expect(changes.at(-1)).toMatchObject({ status: 'working', cwdNow: 'C:\\p' })
-    detector.hookEvent(['s1'], 'claude', { hook_event_name: 'Stop' })
-    expect(changes.at(-1)).toMatchObject({ status: 'done' })
+    // 等你确认：窗内计时器在走也不放行 —— 权限对话框期间计时器是否还在跳没核实，不能把刚变黄的提醒冲掉
+    detector.hookEvent(['s1'], 'claude', {
+      hook_event_name: 'Notification',
+      notification_type: 'permission_prompt',
+      message: 'm',
+    })
+    expect(changes.at(-1)).toMatchObject({ status: 'blocked' })
     detector.reportOutput('s1', busy(1))
     detector.reportOutput('s1', busy(2))
-    expect(changes.at(-1)).toMatchObject({ status: 'done' })
+    expect(changes.at(-1)).toMatchObject({ status: 'blocked' })
 
     now += 29_000
     detector.reportOutput('s1', busy(3))
-    expect(changes.at(-1)).toMatchObject({ status: 'done' })
+    expect(changes.at(-1)).toMatchObject({ status: 'blocked' })
     now += 2_000
     detector.reportOutput('s1', busy(4))
     expect(changes.at(-1)).toMatchObject({ status: 'working' })

@@ -52,6 +52,9 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
   let sessions: Session[]
   let subtrees: Map<number, ProcessNode[]>
   let queried: number[]
+  /** 假的全机进程表（hook 归属用）：缺省空表 = 找不到发请求的 curl，退回按目录；isProcessListBroken 时查询抛错 */
+  let processes: ProcessNode[]
+  let isProcessListBroken: boolean
   let pending: Array<() => void>
   let now: number
   let dir: string
@@ -91,6 +94,8 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
     sessions = []
     subtrees = new Map()
     queried = []
+    processes = []
+    isProcessListBroken = false
     pending = []
     now = 1_000_000
     pty = null
@@ -122,6 +127,10 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
       listSubtree: async (pid) => {
         queried.push(pid)
         return subtrees.get(pid) ?? []
+      },
+      listProcesses: async () => {
+        if (isProcessListBroken) throw new Error('native query failed')
+        return processes
       },
       now: () => now,
       timers: {
@@ -321,14 +330,16 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
     await new Promise((r) => setTimeout(r, 50))
     expect(changes).toHaveLength(count)
 
-    // 抑制窗：30 s 内静默报告不转移（cwdNow 照常更新），30 s 后恢复
+    // 抑制窗：30 s 内静默报告不转移（cwdNow 照常更新），30 s 后恢复 ——
+    // 但收到过 hook 的会话只在正被查看时才靠静默判跑完（没人看的只认 Stop，权限对话框的 hook 要 6 s 才来）
     agent.reportOutput('s1', { tail: ['C:\\now>'], silentMs: 1500 })
     expect(runtimeOf('s1')).toMatchObject({ status: 'blocked', cwdNow: 'C:\\now' })
     now += 31_000
     agent.reportOutput('s1', { tail: ['Done.'], silentMs: 1500 })
-    expect(runtimeOf('s1')).toMatchObject({ status: 'done' })
+    expect(runtimeOf('s1')).toMatchObject({ status: 'blocked' })
 
     agent.setViewed('s1')
+    agent.reportOutput('s1', { tail: ['Done.'], silentMs: 1500 })
     expect(runtimeOf('s1')).toMatchObject({ status: 'idle' })
     await postHook(agent.port, 'claude', { hook_event_name: 'UserPromptSubmit', cwd: api })
     await waitFor(() => runtimeOf('s1')?.status === 'working')
@@ -432,6 +443,26 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
       error: expect.stringContaining('未找到'),
     })
     expect(status.codex).toEqual({ installed: false, port: agent.port, settingsPath: codexFile })
+  })
+
+  it('关掉 hooks 开关后，该工具的会话回到靠屏幕判定：没人看时静默也判跑完（开着时只认 Stop）', async () => {
+    const cwd = 'D:\\repo\\codex'
+    sessions.push(sessionOf('s1', cwd))
+    agent.wrapPty({ onData: () => {}, onExit: () => {}, isFile: existsSync }).onSpawn?.('s1', 100)
+    await agent.start()
+    await agent.setHooks('codex', true)
+    await postHook(agent.port, 'codex', { hook_event_name: 'SessionStart', cwd })
+    await postHook(agent.port, 'codex', { hook_event_name: 'UserPromptSubmit', cwd })
+    expect(runtimeOf('s1')).toMatchObject({ agent: 'codex', status: 'working' })
+
+    now += 31_000
+    const finished = { tail: ['Done.'], silentMs: 1500 }
+    agent.reportOutput('s1', finished)
+    expect(runtimeOf('s1')).toMatchObject({ status: 'working' })
+
+    await agent.setHooks('codex', false)
+    agent.reportOutput('s1', finished)
+    expect(runtimeOf('s1')).toMatchObject({ status: 'done' })
   })
 
   it('系统通知：未查看进入 blocked → 「<名> 等你确认」一次，同状态不重复、正被查看不弹；未查看跑完 → 「<名> 完成」，被查看跑完不弹；通知中心不可用一律不弹', async () => {
@@ -546,6 +577,67 @@ describe('AgentSubsystem（主进程 agent 运行时子系统）', () => {
     await postHook(agent.port, 'codex', { hook_event_name: 'SessionStart', cwd })
     await waitFor(() => runtimeOf('s3')?.agent === 'codex')
     expect(runtimeOf('s1')).toMatchObject({ agent: 'codex' })
+  })
+
+  it('hooks 按进程归属：发请求的 curl 落在哪个终端底下就记给哪个会话（载荷里的目录对不上也一样）；TagTerm 之外的丢弃；找不到 curl 或查询出错退回按目录；几个终端同时在发用目录挑；终端退出后不再是候选', async () => {
+    const repo = 'D:\\repo'
+    const web = 'D:\\repo\\web'
+    sessions.push(sessionOf('s1', repo), sessionOf('s2', web))
+    const wrapped = agent.wrapPty({ onData: () => {}, onExit: () => {}, isFile: existsSync })
+    wrapped.onSpawn?.('s1', 100)
+    wrapped.onSpawn?.('s2', 200)
+    subtrees.set(100, [{ pid: 101, ppid: 100, name: 'claude.exe' }])
+    subtrees.set(200, [{ pid: 201, ppid: 200, name: 'claude.exe' }])
+    await tick()
+    await agent.start()
+    const curl = (pid: number, ppid: number): ProcessNode => ({
+      pid,
+      ppid,
+      name: 'curl.exe',
+      commandLine: `curl.exe -s -m 3 -X POST -T - http://127.0.0.1:${agent.port}/tagterm/hook/claude`,
+    })
+    const post = (event: string, cwd: string): Promise<number> =>
+      postHook(agent.port, 'claude', { hook_event_name: event, cwd })
+    const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 50))
+
+    // s1 里的 claude cd 进了 web：载荷目录是 s2 的，但发请求的 curl 在 s1 的终端底下 → 记给 s1
+    processes = [{ pid: 101, ppid: 100, name: 'claude.exe' }, curl(102, 101)]
+    expect(await post('UserPromptSubmit', web)).toBe(204)
+    expect(runtimeOf('s1')).toMatchObject({ status: 'working' })
+    expect(runtimeOf('s2')).toMatchObject({ status: 'idle' })
+
+    // TagTerm 之外跑的 claude（目录与 s1 相同）：丢弃
+    processes = [{ pid: 900, ppid: 1, name: 'claude.exe' }, curl(901, 900)]
+    expect(await post('Stop', repo)).toBe(204)
+    await settle()
+    expect(runtimeOf('s1')).toMatchObject({ status: 'working' })
+
+    // 进程表里找不到发请求的 curl → 退回按目录；查询出错同样
+    processes = []
+    await post('Stop', repo)
+    expect(runtimeOf('s1')).toMatchObject({ status: 'done' })
+    isProcessListBroken = true
+    expect(await post('UserPromptSubmit', web)).toBe(204)
+    expect(runtimeOf('s2')).toMatchObject({ status: 'working' })
+    isProcessListBroken = false
+    await post('UserPromptSubmit', repo)
+    expect(runtimeOf('s1')).toMatchObject({ status: 'working' })
+
+    // 两个终端同一瞬间都在发：用载荷的目录在这两个里挑；目录也分不清就都记
+    processes = [curl(102, 100), curl(202, 200)]
+    await post('Stop', web)
+    expect(runtimeOf('s2')).toMatchObject({ status: 'done' })
+    expect(runtimeOf('s1')).toMatchObject({ status: 'working' })
+    await post('Stop', 'D:\\elsewhere')
+    expect(runtimeOf('s1')).toMatchObject({ status: 'done' })
+
+    // 终端退出后它的 shell 不再是候选：还挂在那个 pid 底下的 curl 按 TagTerm 之外处理
+    wrapped.onExit({ sessionId: 's1', exitCode: 0, pid: 100 })
+    processes = [curl(102, 100)]
+    const count = changes.length
+    expect(await post('UserPromptSubmit', web)).toBe(204)
+    await settle()
+    expect(changes).toHaveLength(count)
   })
 
   it('端点首选端口由数据目录派生：同一目录的两种写法得到同一端口，落在 49152–65535', () => {

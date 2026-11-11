@@ -65,6 +65,18 @@ describe('OutputHeuristics（屏幕末尾启发式，纯函数）', () => {
     expect(hasTicked([19], [])).toBe(false)
   })
 
+  it('hasTicked 带采样间隔：窗口隐藏时采样被节流到一分钟一次，读数前进约等于实际过去的时间也算在走；间隔 1 秒时与不传一样严', () => {
+    expect(hasTicked([100], [160], 60)).toBe(true) // 隔 60 s、前进 60 s
+    expect(hasTicked([100], [158], 60)).toBe(true) // 缓冲区略滞后
+    expect(hasTicked([100], [163], 60)).toBe(true) // 间隔 + 3 s 余量以内
+    expect(hasTicked([100], [164], 60)).toBe(false) // 比实际过去的时间走得还多：不是同一个计时器
+    expect(hasTicked([100], [100], 60)).toBe(false) // 静态文字隔多久都不变
+    expect(hasTicked([100], [40], 60)).toBe(false) // 变小不算
+    expect(hasTicked([19], [23], 1)).toBe(true) // 间隔 1 s：仍是 1–4 秒
+    expect(hasTicked([19], [24], 1)).toBe(false)
+    expect(hasTicked([19], [24], 2)).toBe(true) // 隔 2 s（隐藏后前 5 分钟的节拍）：放到 5 秒
+  })
+
   it('parseRetryCountdown：只认含 retry / next try / reconnect 字样的行里、不在括号内的时长读数（Claude Code 2.1.258 三种重试横幅的实测形态）；括号内的耗时归计时器；没有这些字样的行不算', () => {
     // 网络断（stalled 横幅）
     expect(

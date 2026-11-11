@@ -1,7 +1,8 @@
 /**
  * 服务层：只绑 127.0.0.1 的小 HTTP 服务，接收 Claude Code / Codex hooks 经 curl 转发来的 stdin JSON。
  * POST /tagterm/hook/<agent>（路径即来源，认哪些 agent 见 hookContract）→ 204；坏 JSON / 非对象 400；超过体积上限 413；其余 404。
- * 载荷原样交给 onHook（cwd → 会话的映射在装配层做，服务层之间不互相引用）。不 import electron。
+ * 载荷原样交给 onHook（事件归属到哪个会话由 AgentSubsystem 做，服务层之间不互相引用），**等它处理完才应答**：
+ * 归属要在进程表里找到发请求的 curl，应答一发 curl 就退出了；onHook 出错也照常 204，不让 curl 挂到超时。不 import electron。
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { HookAgent } from '@shared/ipc'
@@ -12,7 +13,8 @@ const DEFAULT_MAX_BODY_BYTES = 64 * 1024
 const MAX_PORT_ATTEMPTS = 20
 
 export interface HookServerDeps {
-  onHook: (agent: HookAgent, payload: Record<string, unknown>) => void
+  /** 可返回 Promise：端点等它落定（成功或失败）才应答 204 */
+  onHook: (agent: HookAgent, payload: Record<string, unknown>) => void | Promise<void>
   maxBodyBytes?: number
   /** 首选端口被占时最多试几个（缺省 MAX_PORT_ATTEMPTS；测试用 1 构造「全部失败」） */
   maxPortAttempts?: number
@@ -135,8 +137,10 @@ export class HookServer {
         res.writeHead(400).end()
         return
       }
-      res.writeHead(204).end()
-      this.deps.onHook(agent, payload as Record<string, unknown>)
+      void Promise.resolve()
+        .then(() => this.deps.onHook(agent, payload as Record<string, unknown>))
+        .catch((err) => console.warn('[agent] 处理 hook 事件出错', err))
+        .finally(() => res.writeHead(204).end())
     })
     req.on('error', () => res.writeHead(400).end())
   }

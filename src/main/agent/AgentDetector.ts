@@ -15,11 +15,11 @@ import type { ProcessState } from './ProcessTreeProbe'
 import {
   classify,
   hasCountedDown,
-  hasTicked,
   parseElapsedSeconds,
   parsePromptCwd,
   parseRetryCountdown,
   retryBannerLine,
+  tickedReadings,
 } from './OutputHeuristics'
 
 /** 收到 hooks 事件后多久内输出启发式不产生状态转移（最可靠的信号说了算） */
@@ -43,6 +43,13 @@ export class AgentDetector {
   private readonly hookSeenAt = new Map<string, number>()
   /** 每会话上一份屏幕末尾报告里的计时器读数（秒）：与新报告比较即知工具是否在干活 */
   private readonly elapsedSeen = new Map<string, number[]>()
+  /** 每会话上一份屏幕末尾报告到达的时间：采样被节流时（窗口隐藏）按实际间隔放宽「计时器在走」的上限 */
+  private readonly reportSeenAt = new Map<string, number>()
+  /**
+   * 每会话最近一次判为「在走」时走到的读数：屏幕静默时它还原样在屏幕上 = 只是卡了一下，它没了 = 状态行被换掉（跑完 / 被中断）。
+   * 任一 hooks 事件到达即清（之后要重新见到计时器走才算数：对话框盖住状态行不是跑完），判跑完后也清
+   */
+  private readonly tickedSeen = new Map<string, number>()
   /** 每会话上一份报告里重试横幅的倒数读数（秒）：与新报告比较即知工具是否在等网络 / 重试 */
   private readonly countdownSeen = new Map<string, number[]>()
   /**
@@ -72,8 +79,13 @@ export class AgentDetector {
    *   因倒数而 blocked 且倒数还在屏上（这一秒采样读数没变）→ 不放行，等横幅消失；
    *   静默且末行命中提示模式 → blocked（pendingHint = 那一行；屏幕在动时不判，重绘中途的一帧不算等人）；
    *   计时器比上一次采样往前走了 → working（两种报告都认；从 blocked 也转 = 用户回答后 / 重试成功后工具继续干活，提示清掉）；
-   *   静默且计时器没动 → 只有此前是 working / blocked 才算「跑完」（正被查看则 idle，否则 done），空闲的 shell 永远不会变成「已完成」；
-   *   屏幕在动但计时器没动（欢迎画面、在工具里打字、静态文字）→ 不转移
+   *     「往前走」按两份报告之间实际过去的时间判：窗口隐藏时渲染进程的定时器被节流，一分钟才来一份报告；
+   *   静默、且最近走到的那个读数已不在屏幕上 → 只有此前是 working / blocked 才算「跑完」（正被查看则 idle，否则 done），
+   *     空闲的 shell 永远不会变成「已完成」；读数还原样在屏幕上 = 只是卡了一下，不转移；
+   *   屏幕在动但计时器没动（欢迎画面、在工具里打字、静态文字）→ 不转移。
+   * 被 hooks 抑制（30 s 窗内）时只留两条：已完成 / 空闲而计时器在走 → working；working、上一个 hook 之后见过计时器走、
+   *   它又消失了的静默 → 跑完（Esc 中断不发 Stop）。
+   * 收到过 hook 的会话，上面两处「跑完」都只在正被查看时才判（见 canFinishSilently）
    */
   reportOutput(sessionId: string, report: OutputReport): void {
     const current = this.runtimes.get(sessionId)
@@ -84,20 +96,51 @@ export class AgentDetector {
     const seconds = parseElapsedSeconds(report.tail)
     const previous = this.elapsedSeen.get(sessionId)
     this.elapsedSeen.set(sessionId, seconds)
-    const isTicking = previous !== undefined && hasTicked(previous, seconds)
+    const now = this.deps.now()
+    const elapsedSec = (now - (this.reportSeenAt.get(sessionId) ?? now)) / 1000
+    this.reportSeenAt.set(sessionId, now)
+    const ticked = previous === undefined ? [] : tickedReadings(previous, seconds, elapsedSec)
+    const isTicking = ticked.length > 0
+    if (isTicking) this.tickedSeen.set(sessionId, Math.max(...ticked))
+    const lastTicked = this.tickedSeen.get(sessionId)
+    const isTimerOnScreen = lastTicked !== undefined && seconds.includes(lastTicked)
     const countdown = parseRetryCountdown(report.tail)
     const previousCountdown = this.countdownSeen.get(sessionId)
     this.countdownSeen.set(sessionId, countdown)
     const isCountingDown =
       previousCountdown !== undefined && hasCountedDown(previousCountdown, countdown)
     const isRetryBlocked = this.retryBlocked.has(sessionId)
-    if (
-      current.agent !== null &&
-      (isCountingDown || isRetryBlocked || !this.isSuppressed(current))
-    ) {
+    const isSilent = report.silentMs > 0
+    const { pendingHint: _hint, ...bare } = next
+    /** 判跑完：正被查看回空闲，否则已完成；走过的读数随之作废 */
+    const finished = (): SessionRuntime => {
+      this.tickedSeen.delete(sessionId)
+      return { ...bare, status: this.viewedId === sessionId ? 'idle' : 'done' }
+    }
+    // 收到过 hook 的会话只在正被查看时才靠静默判跑完：Claude Code 弹权限对话框后要 6 s 才发 Notification hook
+    //（claude-code 2.1.321 的程序里写死 6000 ms，期间回答了就不发），这 6 s 里屏幕与按 Esc 中断一模一样（计时器消失、静默），
+    // 没人看的会话若照判就会先报一次「已完成」再变「等你确认」；中断只可能发生在正看着的终端，没人看的只认 Stop
+    const canFinishSilently = !this.hookSeenAt.has(sessionId) || this.viewedId === sessionId
+    if (current.agent === null) {
+      // 没有 agent：只更新 cwdNow
+    } else if (!isCountingDown && !isRetryBlocked && this.isSuppressed(current)) {
+      // 抑制窗内只留自证最强的一条：回合已结束（已完成 / 空闲）而计时器又走起来 = 工具自己接着干活了
+      //（后台任务跑完把它唤醒，没有新的 UserPromptSubmit）；跑完后的状态行不带括号，这时在走的只可能是新一轮。
+      // 「等你确认」不认：权限对话框期间计时器是否还在跳没核实，认了会把刚变黄的提醒冲掉
+      if (isTicking && (current.status === 'done' || current.status === 'idle')) {
+        next = { ...bare, status: 'working' }
+      } else if (
+        isSilent &&
+        canFinishSilently &&
+        current.status === 'working' &&
+        lastTicked !== undefined &&
+        !isTimerOnScreen
+      ) {
+        // 窗内判跑完要有证据：上一个 hook 之后亲眼见过计时器走，而它现在从屏幕上消失了（Esc 中断不发 Stop）
+        next = finished()
+      }
+    } else {
       const result = classify(report.tail)
-      const isSilent = report.silentMs > 0
-      const { pendingHint: _hint, ...bare } = next
       if (isCountingDown) {
         const banner = (retryBannerLine(report.tail) ?? '').slice(0, HINT_MAX_LENGTH)
         next = { ...bare, status: 'blocked', pendingHint: banner }
@@ -108,8 +151,13 @@ export class AgentDetector {
         next = { ...next, status: 'blocked', pendingHint: result.hint }
       } else if (isTicking) {
         next = { ...bare, status: 'working' }
-      } else if (isSilent && (current.status === 'working' || current.status === 'blocked')) {
-        next = { ...bare, status: this.viewedId === sessionId ? 'idle' : 'done' }
+      } else if (
+        isSilent &&
+        canFinishSilently &&
+        !isTimerOnScreen &&
+        (current.status === 'working' || current.status === 'blocked')
+      ) {
+        next = finished()
       }
     }
     if (!isSameRuntime(current, next)) this.commit(next)
@@ -144,7 +192,7 @@ export class AgentDetector {
   }
 
   /**
-   * hooks 事件（装配层已按 cwd 映射到会话，可能多个）。共通规则在这里：SessionStart → 记 agent；SessionEnd → 清 agent、idle；
+   * hooks 事件（装配层已归属到会话，可能多个）。共通规则在这里：SessionStart → 记 agent；SessionEnd → idle（agent 不动）；
    * 其余事件要求会话已有 agent（进程树或 SessionStart 给的），转移规则见 hookContract 各 agent 的 interpret。
    * 任一事件都刷新该会话的抑制窗。
    */
@@ -159,6 +207,7 @@ export class AgentDetector {
       const current = this.runtimes.get(sessionId)
       if (!current) continue
       this.hookSeenAt.set(sessionId, this.deps.now())
+      this.tickedSeen.delete(sessionId)
       this.retryBlocked.delete(sessionId) // hooks 开口了就回到常规：倒数那条路的例外撤销
       const next = this.applyHook(current, agent, event, payload)
       if (next && !isSameRuntime(current, next)) this.commit(next)
@@ -173,11 +222,23 @@ export class AgentDetector {
   ): SessionRuntime | null {
     const { pendingHint: _hint, ...bare } = current
     if (event === 'SessionStart') return { ...current, agent }
-    if (event === 'SessionEnd') return { ...bare, agent: null, status: 'idle' }
+    // SessionEnd 不动 agent：工具在不在只由进程树说了算。/clear 会连发 SessionEnd 与 SessionStart 两条异步 hook，
+    // 到达顺序颠倒时若在这里清掉 agent，进程树快照没变就不会再上报，之后的 hooks 与屏幕信号全被忽略，直到重启工具
+    if (event === 'SessionEnd') return { ...bare, status: 'idle' }
     if (current.agent === null) return null
     return HOOK_CONTRACTS[agent].interpret(event, payload, current, {
       isViewed: this.viewedId === current.sessionId,
     })
+  }
+
+  /**
+   * 设置里关掉了某个工具的 hooks 开关：该工具的会话不再算「收到过 hook」，回到只靠屏幕与进程树判定
+   *（否则没人看的会话既等不到 Stop、又不靠静默判跑完，会一直停在运行中）
+   */
+  hooksDisabled(agent: HookAgent): void {
+    for (const runtime of this.runtimes.values()) {
+      if (runtime.agent === agent) this.hookSeenAt.delete(runtime.sessionId)
+    }
   }
 
   /** 渲染进程上报正被查看的会话（不可见 / 失焦为 null）；「已完成未查看」一旦被查看即回空闲 */
@@ -205,6 +266,8 @@ export class AgentDetector {
   private remove(sessionId: string): void {
     this.hookSeenAt.delete(sessionId)
     this.elapsedSeen.delete(sessionId)
+    this.reportSeenAt.delete(sessionId)
+    this.tickedSeen.delete(sessionId)
     this.countdownSeen.delete(sessionId)
     this.retryBlocked.delete(sessionId)
     if (!this.runtimes.delete(sessionId)) return

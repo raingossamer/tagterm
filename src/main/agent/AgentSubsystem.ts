@@ -2,14 +2,15 @@
  * 服务层（深模块）：主进程 agent 运行时子系统的唯一拥有者。从五路输入（pty 事件、进程树、hooks 载荷、屏幕末尾报告、
  * 正被查看）到三路输出（agent:status 广播、系统通知、角标）之间的全部因果都在这里，装配层只造适配器、接线一次。
  * 内部协作者：AgentDetector（状态机）、ProcessTreeProbe（进程树节拍）、HookServer（回环端点）、两个 HookInstaller（hooks 目标文件）。
- * 不 import electron：原生进程树以 listSubtree 注入，hooks 目标路径以 hookTargets 注入（测试指向临时目录），
+ * 不 import electron：原生进程树以 listSubtree / listProcesses 注入，hooks 目标路径以 hookTargets 注入（测试指向临时目录），
  * 系统通知与角标以两个命名端口注入（生产 platform/agentPorts.ts 的 Electron 适配器，测试记录数组）。
- * 文件末尾是本模块的内部纯函数：端口派生、cwd 匹配、通知判定。
+ * 文件末尾是本模块的内部纯函数：端口派生、cwd 匹配、通知判定；hook 请求来自哪个终端的判定在 hookAttribution。
  */
 import type { HookAgent, HooksStatus, HooksStatusMap, OutputReport } from '@shared/ipc'
 import type { AgentKind, AgentStatus, Session, SessionRuntime } from '@shared/models'
 import type { PtyManagerDeps } from '../pty/PtyManager'
 import { AgentDetector } from './AgentDetector'
+import { attributeHook, type HookOrigin } from './hookAttribution'
 import { HookInstaller, type HookTarget } from './HookInstaller'
 import { HookServer } from './HookServer'
 import type { ProcessNode } from './processMatch'
@@ -61,6 +62,8 @@ export interface AgentSubsystemOptions {
   hookTargets: Record<HookAgent, HookTarget>
   /** 某 pid 的全部后代进程（装配层传 windowsProcessTree.listSubtree，测试传假子树） */
   listSubtree: (pid: number) => Promise<ProcessNode[]>
+  /** 全机进程表（装配层传 windowsProcessTree.listProcesses，测试传假表）：hook 事件按「发请求的 curl 在哪个终端底下」归属 */
+  listProcesses: () => Promise<ProcessNode[]>
   now?: () => number
   probeIntervalMs?: number
   /** 探针定时器（测试注入手动触发的假定时器） */
@@ -81,6 +84,8 @@ export class AgentSubsystem {
   private readonly installers: Record<HookAgent, HookInstaller>
   /** HookServer 实际监听的端口；未 start 或启动失败为 0 */
   private hookPort = 0
+  /** 每个在跑的终端的 shell pid（spawn 记、exit 删）：hook 归属时顺着父进程链找到它即知是哪个会话 */
+  private readonly shellPids = new Map<string, number>()
   /** 每会话上次记录变化时的状态：同会话同状态只弹一次通知，记录删除时清 */
   private readonly lastNotifiedStatus = new Map<string, AgentStatus>()
   /** 上次交给角标端口的三个计数：都没变不重复设置 */
@@ -107,10 +112,10 @@ export class AgentSubsystem {
       ...opts.timers,
     })
     this.probe.onSnapshot((snapshot) => this.detector.processSnapshot(snapshot))
-    // hooks 载荷按 cwd 映射到会话（多命中优先 agent 已是该工具的会话），零命中静默丢弃
+    // hooks 载荷先归属到会话（按进程、目录兜底，见 attribute），零命中静默丢弃；端点等这里处理完才应答
     this.hookServer = new HookServer({
-      onHook: (agent, payload) => {
-        const ids = matchSessionsByCwd(payload['cwd'], opts.sessions(), this.detector.list(), agent)
+      onHook: async (agent, payload) => {
+        const ids = await this.attribute(agent, payload)
         if (ids.length > 0) this.detector.hookEvent(ids, agent, payload)
       },
       ...(opts.maxPortAttempts !== undefined ? { maxPortAttempts: opts.maxPortAttempts } : {}),
@@ -131,11 +136,13 @@ export class AgentSubsystem {
       ...deps,
       onExit: (e) => {
         deps.onExit(e)
+        this.shellPids.delete(e.sessionId)
         this.probe.unwatch(e.sessionId)
         this.detector.ptyExited(e.sessionId)
       },
       onSpawn: (sessionId, pid) => {
         this.detector.ptySpawned(sessionId)
+        this.shellPids.set(sessionId, pid)
         this.probe.watch(sessionId, pid)
         deps.onSpawn?.(sessionId, pid)
       },
@@ -192,7 +199,11 @@ export class AgentSubsystem {
   /** 设置「Agent」段的开关：安装 / 卸载某目标的 hooks，返回该目标的状态；失败 reject 中文 message */
   setHooks(agent: HookAgent, enabled: boolean): Promise<HooksStatus> {
     const installer = this.installers[agent]
-    return enabled ? installer.install(this.hookPort) : installer.uninstall(this.hookPort)
+    if (enabled) return installer.install(this.hookPort)
+    return installer.uninstall(this.hookPort).then((status) => {
+      this.detector.hooksDisabled(agent)
+      return status
+    })
   }
 
   /**
@@ -227,6 +238,33 @@ export class AgentSubsystem {
   async stop(): Promise<void> {
     this.probe.dispose()
     await this.hookServer.stop()
+  }
+
+  /**
+   * 一条 hook 事件该记给哪些会话。先看发请求的 curl 在哪个终端底下（进程祖先关系，见 hookAttribution）：
+   *   恰好一个终端 → 就是它，不看载荷里的目录（工具在会话里 cd 到别处也不会记错）；
+   *   几个终端同一瞬间都在发 → 用目录在这几个里挑，目录也分不清就都记；
+   *   curl 不在任何终端底下（TagTerm 之外跑的工具）→ 丢弃；
+   *   进程表里找不到这样的 curl、或查询出错 → 退回按目录匹配，整条链路不至于失效。
+   * 此前只按目录：父目录会话里的工具 cd 进子目录、别的程序里同目录跑的工具，事件都会记到别的会话头上
+   */
+  private async attribute(agent: HookAgent, payload: Record<string, unknown>): Promise<string[]> {
+    let origin: HookOrigin = { kind: 'unknown' }
+    try {
+      origin = attributeHook(await this.opts.listProcesses(), this.shellPids, this.hookPort)
+    } catch (err) {
+      console.warn('[agent] 查询进程表失败，这条 hook 事件退回按目录归属', err)
+    }
+    if (origin.kind === 'outside') return []
+    const runtimes = this.detector.list()
+    const cwd = payload['cwd']
+    if (origin.kind === 'unknown') {
+      return matchSessionsByCwd(cwd, this.opts.sessions(), runtimes, agent)
+    }
+    if (origin.sessionIds.length === 1) return origin.sessionIds
+    const candidates = this.opts.sessions().filter((s) => origin.sessionIds.includes(s.id))
+    const byCwd = matchSessionsByCwd(cwd, candidates, runtimes, agent)
+    return byCwd.length > 0 ? byCwd : origin.sessionIds
   }
 
   /** 进入 blocked（没人看）/ done → 系统通知；同会话同状态只弹一次（离开后再进入再弹）；通知中心不可用不弹 */

@@ -9,6 +9,7 @@
  * 以 JSON 打印到 stdout。生产运行不触发。
  */
 import { app, Menu, nativeImage, type BrowserWindow } from 'electron'
+import { execFile } from 'node:child_process'
 import { copyFileSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { join } from 'node:path'
@@ -1922,6 +1923,100 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         selectedByBroadcast,
       }
 
+      // hook 事件按进程归属（2026-11-11 agent-status-accuracy）走真实链路核查，带反例：
+      //   正例：在 r4 的终端里真跑 hooks 那条 curl，载荷的目录故意写成 r3 的 → 事件记给 r4（发请求的 curl 在它的 shell 底下），r3 不动；
+      //   反例：主进程自己起同一条 curl（不在任何终端底下 = TagTerm 之外跑的工具），目录写 r3 的 → r3 不得转移（此前按目录会记给它）；
+      //   回合结束后又接着干活：r3 收到 Stop 后（抑制窗内）经真实 IPC 送两份计时器递增的屏幕 → 立刻回运行中。
+      // 上面 hooks 段的事件由主进程直接 POST（不经 curl），走的是「进程表里找不到 curl → 退回按目录」那条兜底，两条路都在核查里
+      let hookOrigin: Record<string, unknown> = {}
+      try {
+        const [r3Id, r4Id] = [prepare.ids[0]!, prepare.ids[1]!]
+        const statusById = (id: string): string | null =>
+          deps.agent.list().find((r) => r.sessionId === id)?.status ?? null
+        const until = async (cond: () => boolean, timeoutMs: number): Promise<boolean> => {
+          const start = Date.now()
+          while (Date.now() - start < timeoutMs) {
+            if (cond()) return true
+            await sleep(100)
+          }
+          return false
+        }
+        const hookCurlArgs = [
+          ...['-s', '-m', '3', '--noproxy', '127.0.0.1', '-X', 'POST', '-T', '-'],
+          `http://127.0.0.1:${deps.agent.port}/tagterm/hook/claude`,
+        ]
+        const payloadOf = (event: string): string =>
+          JSON.stringify({ hook_event_name: event, cwd: claudeCwd })
+        // cmd 的 echo 原样输出引号，管道给 curl 的 stdin 就是这段 JSON（载荷里没有 cmd 的特殊字符）
+        const curlInTerminal = (event: string): void =>
+          deps.sessions.writeTerminal(
+            r4Id,
+            `echo ${payloadOf(event)} | curl.exe ${hookCurlArgs.join(' ')}\r`,
+          )
+        // 这一段的核查都写成「与发事件之前相同 / 离开运行中」，不写死空闲：回合结束是空闲还是已完成取决于会话是否正被查看，
+        // 而窗口被别的窗口挡住时页面不可见、谁都不算被查看（烟测常见的环境抖动），不该让归属核查跟着假失败
+        await clickTab('smoke-r4') // r4 正被查看时稍后的 Stop 直接回空闲，不留「已完成」给后面的角标核查
+        const r3Before = statusById(r3Id)
+        const r3RestingBefore = r3Before === 'idle' || r3Before === 'done'
+        curlInTerminal('UserPromptSubmit')
+        const inTerminalAttributed = await until(() => statusById(r4Id) === 'working', 6000)
+        const cwdOwnerUntouched = statusById(r3Id) === r3Before
+        curlInTerminal('Stop')
+        const inTerminalStopped = await until(
+          () => ['idle', 'done'].includes(statusById(r4Id) ?? ''),
+          6000,
+        )
+
+        const outsideHttp = await new Promise<string>((resolve) => {
+          const child = execFile(
+            'curl.exe',
+            [...hookCurlArgs, '-o', 'NUL', '-w', '%{http_code}'],
+            { windowsHide: true },
+            (err, stdout) => resolve(err ? `error: ${err.message}` : stdout.trim()),
+          )
+          child.stdin?.end(payloadOf('UserPromptSubmit'))
+        })
+        await sleep(500)
+        const outsideIgnored = statusById(r3Id) === r3Before
+
+        await postHook(deps.agent.port, 'claude', {
+          hook_event_name: 'UserPromptSubmit',
+          cwd: claudeCwd,
+        })
+        await postHook(deps.agent.port, 'claude', { hook_event_name: 'Stop', cwd: claudeCwd })
+        const stoppedBeforeResume = ['idle', 'done'].includes(statusById(r3Id) ?? '')
+        const reportFor = (id: string, tail: string[]): Promise<unknown> =>
+          win.webContents.executeJavaScript(
+            `window.tagterm.agent.reportOutput(${JSON.stringify(id)}, { tail: ${JSON.stringify(tail)}, silentMs: 0 })`,
+          )
+        await reportFor(r3Id, ['✻ Cogitating… (3s · ↓ 1.2k tokens)', '> '])
+        await reportFor(r3Id, ['✻ Cogitating… (4s · ↓ 1.3k tokens)', '> '])
+        const resumedAfterStop = await until(() => statusById(r3Id) === 'working', 3000)
+        await postHook(deps.agent.port, 'claude', { hook_event_name: 'Stop', cwd: claudeCwd })
+        const stoppedAgain = await until(
+          () => ['idle', 'done'].includes(statusById(r3Id) ?? ''),
+          3000,
+        )
+        // 把两个会话的「已完成」看掉（窗口可见时生效），不留给后面的角标核查；被挡住时这一步不起作用，也不在这里判
+        await clickTab('smoke-r4')
+        await clickTab('smoke-r3')
+        hookOrigin = {
+          r3Before,
+          r3RestingBefore,
+          inTerminalAttributed,
+          cwdOwnerUntouched,
+          inTerminalStopped,
+          outsideHttp,
+          outsidePosted: outsideHttp === '204',
+          outsideIgnored,
+          stoppedBeforeResume,
+          resumedAfterStop,
+          stoppedAgain,
+        }
+      } catch (err) {
+        hookOrigin = { error: errorText(err) }
+      }
+
       // 没装 hooks 时的「运行中」判定走真实链路核查（0.3.1 的回归就出在这里，单测的合成屏幕守不住装配）：
       //   把 ping.exe 复制成 claude.exe 在 s1 里跑起来 → 进程树认出 agent（s1 从未收到 hook，不在抑制窗里）
       //   → 经真实 IPC 送两份计时器递增的屏幕 → 运行中；送一份只是「提到提示文案」的屏幕 → 不得转移；
@@ -2108,6 +2203,7 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         processTree,
         termBackground,
         hooks,
+        hookOrigin,
         remaining,
         tagsFile,
         logFile: logFileCheck,

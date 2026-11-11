@@ -36,6 +36,7 @@ export function createQuietAgent(opts: QuietAgentOptions): AgentSubsystem {
       },
     },
     listSubtree: opts.listSubtree ?? (async () => []),
+    listProcesses: async () => [],
     timers: { setTimer: () => 0, clearTimer: () => {} },
     preferredPort: 0,
   })
