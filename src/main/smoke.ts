@@ -8,7 +8,7 @@
  * 最后经会话子系统移除烟测会话（与右键「移除会话」同一条级联），再走正常退出路径。
  * 以 JSON 打印到 stdout。生产运行不触发。
  */
-import { app, Menu, nativeImage, type BrowserWindow } from 'electron'
+import { app, Menu, nativeImage, screen, type BrowserWindow } from 'electron'
 import { execFile } from 'node:child_process'
 import { copyFileSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
@@ -38,8 +38,10 @@ export interface SmokeDeps {
   badgeCounts: () => BadgeCounts | null
   /** 全局快捷键按下时的动作（唤出 / 隐藏窗口）：烟测不注册系统热键，直接调用它核查 */
   summon: () => void
-  /** 本周备忘热键按下时的动作（开 / 关 / 关掉并藏回去）：同上，直接调用 */
+  /** 本周备忘热键按下时的动作（打开 / 聚焦 / 关掉小窗）：同上，直接调用 */
   toggleMemo: () => void
+  /** 备忘小窗建好后的 BrowserWindow（还没建为 null）：只读检查安全基线、置顶、位置；开关一律经 toggleMemo 与界面 */
+  memoWindow: () => BrowserWindow | null
   /** 备忘事项只读：核查经界面加的一条落了盘 */
   memo: Pick<MemoStore, 'list'>
   quit: () => void
@@ -1301,8 +1303,9 @@ async function runConfigChecks(
       shortcutApplied: item(3, '全局快捷键：已应用'),
       memoShortcutAbsent: item(4, '本周备忘快捷键：文件里没有'),
       autoLaunchAbsent: item(5, '开机自启：文件里没有'),
-      hooksAbsent: item(6, 'Agent hooks 开关：文件里没有'),
-      fontSizeAbsent: item(7, '终端字号：文件里没有'),
+      memoOpenOnStartAbsent: item(6, '启动时打开本周备忘：文件里没有'),
+      hooksAbsent: item(7, 'Agent hooks 开关：文件里没有'),
+      fontSizeAbsent: item(8, '终端字号：文件里没有'),
       keepTagSameId: keepAfter?.id === keep.id,
       keepTagRestyled: keepAfter?.color === '#D14343' && keepAfter?.hidden === true,
       newTagCreated: tagsAfter.some((t) => t.name === CONFIG_NEW_TAG),
@@ -1505,11 +1508,12 @@ async function runKeyboardChecks(
 }
 
 const MEMO_STATE = `(() => ({
-  open: !!document.querySelector('[data-test=memo-modal]'),
+  panel: !!document.querySelector('[data-test=memo-panel]'),
   inputFocused: document.activeElement?.getAttribute('data-test') === 'memo-input',
+  pageFocused: document.hasFocus(),
 }))()`
 
-/** 在备忘弹窗的输入框里打一条并回车（Vue 的 @keydown.enter 认合成事件） */
+/** 在备忘小窗的输入框里打一条并回车（Vue 的 @keydown.enter 认合成事件） */
 const ADD_MEMO = (text: string): string => `(() => {
   const input = document.querySelector('[data-test=memo-input]')
   if (!input) return false
@@ -1527,92 +1531,246 @@ const CHECK_MEMO = (text: string): string => `(() => {
   return !!row
 })()`
 
-/** 收尾：删掉烟测加的事项、弹窗还开着就按 Esc 关掉 */
+/** 收尾：删掉烟测加的事项（经小窗自己的 window.tagterm） */
 const MEMO_CLEANUP = `(async () => {
   for (const m of await window.tagterm.memo.list())
     if (m.text.startsWith('smoke-memo-')) await window.tagterm.memo.remove(m.id)
-  if (document.querySelector('[data-test=memo-modal]'))
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
   return true
 })()`
 
+const MEMO_ESC = `document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); true`
+
 /**
- * 本周备忘（weekly-memo-ui-polish 行为 13）：烟测不注册系统热键，直接调用按下时的那个函数（同 summon）。
- * 藏着按 → 窗口出来、弹窗打开、焦点在输入框；经界面加一条并勾掉 → memo.json 落盘、带完成时间；
- * 在前台再按 → 关掉并藏回去。反例：从后台叫出来但用 Esc 关掉，窗口不藏；在前台打开再按，只关不藏
+ * 在主窗口终端区上模拟一次拖放（真实的跨窗口系统拖放已在 memo-floating-window 行为 1 用真鼠标验证过；
+ * 这里用 Chromium 的 DataTransfer 走同一组事件处理）。kind：text = 拖文字；file = 拖文件（反例）
+ */
+const DROP_ON_TERMINAL = (text: string, kind: 'text' | 'file'): string => `(async () => {
+  const wrap = document.querySelector('.term-wrap')
+  if (!wrap) return { found: false, hint: null, overAccepted: false, dropHandled: false, hintGone: false }
+  const make = () => {
+    const dt = new DataTransfer()
+    if (${JSON.stringify(kind)} === 'file') dt.items.add(new File(['x'], 'notes.txt', { type: 'text/plain' }))
+    else dt.setData('text/plain', ${JSON.stringify(text)})
+    return dt
+  }
+  const fire = (type) => {
+    const e = new DragEvent(type, { dataTransfer: make(), bubbles: true, cancelable: true })
+    wrap.dispatchEvent(e)
+    return e
+  }
+  fire('dragenter')
+  const over = fire('dragover')
+  await new Promise((r) => setTimeout(r, 50)) // 落点提示由 Vue 在下一拍渲染出来
+  const hint = document.querySelector('[data-test=terminal-drop]')?.textContent ?? null
+  const drop = fire('drop')
+  await new Promise((r) => setTimeout(r, 50)) // 提示的消失同样在下一拍渲染
+  return { found: true, hint, overAccepted: over.defaultPrevented, dropHandled: drop.defaultPrevented, hintGone: !document.querySelector('[data-test=terminal-drop]') }
+})()`
+
+interface DropResult {
+  found: boolean
+  hint: string | null
+  overAccepted: boolean
+  dropHandled: boolean
+  hintGone: boolean
+}
+
+/**
+ * 本周备忘小窗（memo-floating-window 行为 12）：烟测不注册系统热键，直接调用按下时的那个函数（同 summon）。
+ * 热键打开独立小窗（主窗口不动、始终在最前、小窗里拿不到 Node 且 window.tagterm 只有备忘那两组）→ 经小窗界面加一条并勾掉 → memo.json 落盘；
+ * 焦点在小窗里再按 → 关掉；Esc 关掉；左栏 📋 开 / 关；开着但焦点在主窗口时按热键不关；关掉时写 memo-window.json、重开回到原位；
+ * 主窗口终端收拖进来的文字（插到提示符后、不按回车），反例：拖文件、空文字不收。
+ * 焦点类核查写成「小窗有焦点时……」：用户在用电脑时焦点本来就可能不在烟测窗口上，焦点在哪只作排查字段（diag，不判）
  */
 async function runMemoChecks(
   win: BrowserWindow,
   deps: SmokeDeps,
+  s1: string,
 ): Promise<Record<string, unknown>> {
   const js = (code: string): Promise<unknown> => win.webContents.executeJavaScript(code)
-  const isOpen = `${MEMO_STATE}.open`
   const text = `smoke-memo-${Date.now()}`
+  const dropText = `smoke-drop-${Date.now()}`
+  const memoFile = join(deps.dataDir, 'memo.json')
+  const boundsFile = join(deps.dataDir, 'memo-window.json')
+  const mw = (): BrowserWindow | null => {
+    const w = deps.memoWindow()
+    return w && !w.isDestroyed() ? w : null
+  }
+  const mwJs = async (code: string): Promise<unknown> => {
+    const w = mw()
+    return w ? w.webContents.executeJavaScript(code) : null
+  }
+  const memoVisible = (): boolean => mw()?.isVisible() ?? false
+  const pollMw = async (expr: string, timeoutMs: number): Promise<boolean> => {
+    const start = Date.now()
+    while (Date.now() - start < timeoutMs) {
+      const w = mw()
+      if (w && !w.webContents.isLoading() && (await mwJs(`!!(${expr})`))) return true
+      await sleep(100)
+    }
+    return false
+  }
+  const diag: Record<string, unknown> = {}
   try {
-    win.hide()
-    await pollUntil(() => !win.isVisible(), 3000)
-    deps.toggleMemo()
-    const shownFromHidden = await pollUntil(() => win.isVisible(), 3000)
-    const openedFromHidden = await pollJs(win, isOpen, 3000)
-    const inputFocused = await pollJs(win, `${MEMO_STATE}.inputFocused`, 3000)
+    win.show()
+    win.focus()
+    await sleep(200)
+    const mainVisibleBefore = win.isVisible()
 
-    const typed = (await js(ADD_MEMO(text))) as boolean
+    // 热键：没开 → 打开（第一次才建窗口），焦点给输入框；主窗口不动
+    deps.toggleMemo()
+    const shownByHotkey = await pollUntil(memoVisible, 5000)
+    const panelLoaded = await pollMw(`${MEMO_STATE}.panel`, 5000)
+    const mainUntouched = win.isVisible() === mainVisibleBefore
+    const alwaysOnTop = mw()?.isAlwaysOnTop() ?? false
+    await sleep(200)
+    const winFocused = mw()?.isFocused() ?? false
+    const state = (await mwJs(MEMO_STATE)) as { inputFocused: boolean } | null
+    diag.openFocus = { winFocused, ...state }
+    const inputFocusedWhenFocused = !winFocused || state?.inputFocused === true
+    const security = (await mwJs(
+      `({ hasProcess: typeof window.process !== 'undefined', hasRequire: typeof window.require !== 'undefined', api: Object.keys(window.tagterm ?? {}).sort().join(',') })`,
+    )) as { hasProcess: boolean; hasRequire: boolean; api: string } | null
+    diag.memoApi = security?.api ?? null
+
+    // 经小窗界面加一条并勾掉 → memo.json 落盘、带完成时间
+    const typed = (await mwJs(ADD_MEMO(text))) === true
     const added = await pollUntil(() => deps.memo.list().some((m) => m.text === text), 3000)
-    const memoFile = join(deps.dataDir, 'memo.json')
     const persisted = existsSync(memoFile) && readFileSync(memoFile, 'utf8').includes(text)
-    const checked = (await js(CHECK_MEMO(text))) as boolean
+    const checked = (await mwJs(CHECK_MEMO(text))) === true
     const doneSaved = await pollUntil(
       () => deps.memo.list().some((m) => m.text === text && m.done && typeof m.doneAt === 'string'),
       3000,
     )
 
-    win.focus()
+    // 位置往返：改到主屏工作区里一处，关掉时写 memo-window.json，重开回到原位
+    const area = screen.getPrimaryDisplay().workArea
+    mw()?.setBounds({ x: area.x + 40, y: area.y + 40, width: 380, height: 540 })
     await sleep(200)
-    const focusedBeforeClose = win.isFocused()
-    deps.toggleMemo()
-    const closedByHotkey = await pollJs(win, `!${isOpen}`, 3000)
-    const hiddenAgain = await pollUntil(() => !win.isVisible(), 3000)
+    const boundsAtClose = mw()?.getBounds() ?? null
 
-    // 反例 1：从后台叫出来、用 Esc 关掉 → 窗口不藏
-    deps.toggleMemo()
-    await pollJs(win, isOpen, 3000)
-    await js(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); true`)
-    const closedByEsc = await pollJs(win, `!${isOpen}`, 3000)
+    // 焦点在小窗里再按 → 关掉（小窗没拿到焦点时这一按是「聚焦」，不判）
+    mw()?.focus()
     await sleep(300)
-    const hiddenAfterEsc = !win.isVisible()
+    const focusedBeforePress = mw()?.isFocused() ?? false
+    diag.focusedBeforePress = focusedBeforePress
+    deps.toggleMemo()
+    const closedByHotkey = !focusedBeforePress || (await pollUntil(() => !memoVisible(), 3000))
+    if (memoVisible()) await mwJs(MEMO_ESC)
+    await pollUntil(() => !memoVisible(), 3000)
+    await sleep(300)
+    const saved = existsSync(boundsFile)
+      ? (JSON.parse(readFileSync(boundsFile, 'utf8')) as { version?: number; bounds?: unknown })
+      : null
+    diag.bounds = { boundsAtClose, saved }
+    const boundsSaved =
+      saved?.version === 1 && JSON.stringify(saved.bounds) === JSON.stringify(boundsAtClose)
 
-    // 反例 2：窗口在前台时打开的，再按只关不藏
+    // 重开：复用同一个窗口、回到原位
+    const created = mw()
+    deps.toggleMemo()
+    const reopened = await pollUntil(memoVisible, 3000)
+    const sameWindow = mw() === created
+    const boundsKept = JSON.stringify(mw()?.getBounds() ?? null) === JSON.stringify(boundsAtClose)
+
+    // Esc 关掉（不看焦点）
+    await mwJs(MEMO_ESC)
+    const closedByEsc = await pollUntil(() => !memoVisible(), 3000)
+
+    // 左栏 📋：没开就打开、开着就关掉
+    await js(`document.querySelector('[data-test=open-memo]')?.click(); true`)
+    const sideOpened = await pollUntil(memoVisible, 3000)
+    await js(`document.querySelector('[data-test=open-memo]')?.click(); true`)
+    const sideClosed = await pollUntil(() => !memoVisible(), 3000)
+
+    // 开着但焦点在主窗口：按热键只把焦点交给小窗、不关（主窗口没抢到焦点、小窗仍有焦点时这一按是「关掉」，不判）
+    deps.toggleMemo()
+    await pollUntil(memoVisible, 3000)
     win.focus()
-    await sleep(200)
-    deps.toggleMemo()
-    const reopenedInFront = await pollJs(win, isOpen, 3000)
-    deps.toggleMemo()
-    const closedInFront = await pollJs(win, `!${isOpen}`, 3000)
     await sleep(300)
-    const hiddenAfterFrontClose = !win.isVisible()
+    const memoFocusedBefore = mw()?.isFocused() ?? false
+    diag.memoFocusedBeforeFocusPress = memoFocusedBefore
+    deps.toggleMemo()
+    await sleep(300)
+    const stillOpenWhenUnfocused = memoFocusedBefore || memoVisible()
+    await mwJs(MEMO_ESC)
+    await pollUntil(() => !memoVisible(), 3000)
 
+    // 拖文字进主窗口终端：插到提示符后、不按回车；反例：拖文件、松手时文字为空都不收
+    const s1Name = deps.sessions.list().find((s) => s.id === s1)?.name ?? ''
+    win.show()
+    win.focus()
+    await js(
+      `[...document.querySelectorAll('[data-test=tab]')].find((t) => t.textContent.includes(${JSON.stringify(s1Name)}))?.click(); true`,
+    )
+    await pollUntil(() => deps.pty.has(s1), 5000)
+    await sleep(800)
+    await js(
+      `(() => { window.__memoDropOutput = ''; window.__memoDropOff?.(); window.__memoDropOff = window.tagterm.pty.onData((id, d) => { if (id === ${JSON.stringify(s1)}) window.__memoDropOutput += d }); return true })()`,
+    )
+    const output = async (): Promise<string> =>
+      stripAnsi(((await js(`window.__memoDropOutput ?? ''`)) as string | null) ?? '')
+    const textDrop = (await js(DROP_ON_TERMINAL(dropText, 'text'))) as DropResult
+    diag.textDrop = textDrop
+    let dropInserted = false
+    const start = Date.now()
+    while (Date.now() - start < 3000) {
+      if ((await output()).includes(dropText)) {
+        dropInserted = true
+        break
+      }
+      await sleep(100)
+    }
+    await sleep(500)
+    const afterDrop = await output()
+    // 没按回车：插进去的文字后面没有换行（cmd 没执行它，也就没有新的提示符）
+    const noEnterAfterDrop =
+      dropInserted && !afterDrop.slice(afterDrop.indexOf(dropText)).includes('\n')
+    deps.sessions.writeTerminal(s1, '\x1b') // cmd 里 Esc 清掉这一行，不执行
+    await sleep(300)
+    const lenBeforeNegatives = (await output()).length
+    const fileDrop = (await js(DROP_ON_TERMINAL('smoke-file', 'file'))) as DropResult
+    const emptyDrop = (await js(DROP_ON_TERMINAL('   ', 'text'))) as DropResult
+    await sleep(500)
+    diag.negativeDrops = { fileDrop, emptyDrop }
+    const negativeDropsInsertNothing = (await output()).length === lenBeforeNegatives
     return {
-      shownFromHidden,
-      openedFromHidden,
-      inputFocused,
+      shownByHotkey,
+      panelLoaded,
+      mainUntouched,
+      alwaysOnTop,
+      inputFocusedWhenFocused,
+      memoHasProcess: security?.hasProcess ?? null,
+      memoHasRequire: security?.hasRequire ?? null,
+      memoApiOnlyMemo: security?.api === 'memo,memoWindow',
       typed,
       added,
       persisted,
       checked,
       doneSaved,
-      focusedBeforeClose,
       closedByHotkey,
-      hiddenAgain,
+      boundsSaved,
+      reopened,
+      sameWindow,
+      boundsKept,
       closedByEsc,
-      hiddenAfterEsc,
-      reopenedInFront,
-      closedInFront,
-      hiddenAfterFrontClose,
+      sideOpened,
+      sideClosed,
+      stillOpenWhenUnfocused,
+      dropHintShown: textDrop.found && textDrop.hint === `松开插入到「${s1Name}」`,
+      dropAccepted: textDrop.overAccepted && textDrop.dropHandled && textDrop.hintGone,
+      dropInserted,
+      noEnterAfterDrop,
+      fileDropRefused: fileDrop.hint === null && !fileDrop.overAccepted,
+      negativeDropsInsertNothing,
+      diag,
     }
   } finally {
+    if (memoVisible()) await mwJs(MEMO_ESC)
+    if (mw()) await mwJs(MEMO_CLEANUP)
+    await js(`window.__memoDropOff?.(); true`)
     win.show()
     win.focus()
-    await js(MEMO_CLEANUP)
   }
 }
 
@@ -2152,10 +2310,11 @@ export function runSmokeCheck(win: BrowserWindow, deps: SmokeDeps): void {
         config = { error: errorText(err) }
       }
 
-      // 本周备忘（weekly-memo-ui-polish）：热键「记完就回去」（直接调用按下时的那个函数）、经界面加一条并勾掉、落盘
+      // 本周备忘小窗（memo-floating-window）：热键开 / 聚焦 / 关（直接调用按下时的那个函数）、经小窗界面加一条并勾掉、落盘、
+      // Esc 与左栏 📋 开关、位置往返、小窗安全基线；主窗口终端收拖进来的文字（含反例）
       let memo: Record<string, unknown> = {}
       try {
-        memo = await withTimeout(runMemoChecks(win, deps), 30000, '本周备忘烟测')
+        memo = await withTimeout(runMemoChecks(win, deps, sessionIds[0]!), 60000, '本周备忘烟测')
       } catch (err) {
         memo = { error: errorText(err) }
       }

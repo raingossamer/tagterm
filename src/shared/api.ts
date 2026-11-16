@@ -62,12 +62,10 @@ export interface TagTermApi {
     exportConfig(prefs: ConfigPrefs): Promise<ConfigExportResult | null>
     /** 导入配置：主进程弹打开对话框（取消为 null）；文件不对 reject 中文原因、什么都不动；返回逐项结果与备份路径 */
     importConfig(prefs: ConfigPrefs): Promise<ConfigImportResult | null>
-    /** 备忘录弹窗开 / 关时告诉主进程（单向）：备忘录热键据此决定是打开还是关掉 */
-    reportMemoVisibility(open: boolean): void
-    /** 本周备忘热键 / 托盘菜单要打开备忘录弹窗 */
-    onOpenMemo(cb: () => void): Unsubscribe
-    /** 本周备忘热键要关掉备忘录弹窗 */
-    onCloseMemo(cb: () => void): Unsubscribe
+    /** 左栏 📋：本周备忘小窗没开就打开（并聚焦），开着就关掉（单向） */
+    toggleMemoWindow(): void
+    /** 终端收到拖进来的文字后请主进程激活主窗口（Windows 拖放不激活目标窗口；单向） */
+    focusMainWindow(): void
     /** 全局快捷键唤出窗口后：把焦点交给当前终端 */
     onFocusTerminal(cb: () => void): Unsubscribe
     onOpenSettings(cb: () => void): Unsubscribe
@@ -121,15 +119,6 @@ export interface TagTermApi {
     setHooks(agent: HookAgent, enabled: boolean): Promise<HooksStatus>
     onStatus(cb: (runtime: SessionRuntime) => void): Unsubscribe
   }
-  /** 本周备忘：事项的增删改；归哪一周由 shared/week 推算 */
-  memo: {
-    list(): Promise<MemoItem[]>
-    create(text: string): Promise<MemoItem>
-    /** 勾选完成时主进程写完成时间，取消勾选删掉 */
-    update(id: string, patch: MemoPatch): Promise<MemoItem>
-    remove(id: string): Promise<void>
-    onChanged(cb: (items: MemoItem[]) => void): Unsubscribe
-  }
   pty: {
     open(sessionId: string, size: PtySize): Promise<PtyOpenResult>
     write(sessionId: string, data: string): void
@@ -138,5 +127,29 @@ export interface TagTermApi {
     isAlive(sessionId: string): Promise<boolean>
     onData(cb: (sessionId: string, data: string) => void): Unsubscribe
     onExit(cb: (e: PtyExitEvent) => void): Unsubscribe
+  }
+}
+
+/** 本周备忘：事项的增删改；归哪一周由 shared/week 推算 */
+export interface MemoApi {
+  list(): Promise<MemoItem[]>
+  create(text: string): Promise<MemoItem>
+  /** 勾选完成时主进程写完成时间，取消勾选删掉 */
+  update(id: string, patch: MemoPatch): Promise<MemoItem>
+  remove(id: string): Promise<void>
+  onChanged(cb: (items: MemoItem[]) => void): Unsubscribe
+}
+
+/**
+ * 备忘小窗的 window.tagterm（独立 preload，memo-floating-window）：只够做备忘录 ——
+ * 事项的增删改与关掉自己；不暴露终端、会话、设置、hooks。
+ */
+export interface MemoWindowApi {
+  memo: MemoApi
+  memoWindow: {
+    /** × / Esc：关掉小窗（只隐藏，单向） */
+    close(): void
+    /** 主进程让小窗把焦点放进「新事项」输入框（已建过的小窗再次打开 / 热键聚焦时） */
+    onFocusInput(cb: () => void): Unsubscribe
   }
 }

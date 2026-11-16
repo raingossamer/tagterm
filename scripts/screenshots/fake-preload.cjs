@@ -43,27 +43,6 @@ let sessionTags = [
   ['s-dotfiles', 't-tools'],
 ].map(([sessionId, tagId]) => ({ sessionId, tagId }))
 
-// 本周备忘的演示事项（memo.png 场景用）：时间相对截图当天，保证「本周」里有延续来的、新加的和做完的
-const DAY_MS = 86400000
-const daysAgo = (days, hour = 10) => {
-  const d = new Date(Date.now() - days * DAY_MS)
-  d.setHours(hour, 0, 0, 0)
-  return d.toISOString()
-}
-let memos = [
-  { id: 'm-1', text: '整理 simba-api 的接口文档', done: false, createdAt: daysAgo(9) },
-  { id: 'm-2', text: '评审 tagterm 拖拽排序的 PR', done: false, createdAt: daysAgo(0, 9) },
-  { id: 'm-3', text: '升级 node-pty 后跑一遍回归', done: false, createdAt: daysAgo(0, 9) },
-  {
-    id: 'm-4',
-    text: '周会：同步 simba 迭代进度',
-    done: true,
-    createdAt: daysAgo(2),
-    doneAt: daysAgo(0, 8),
-  },
-  { id: 'm-5', text: '修复托盘图标闪烁', done: true, createdAt: daysAgo(10), doneAt: daysAgo(8) },
-]
-
 let settings = {
   launchCommands: [
     { id: 'c-claude', label: 'claude', command: 'claude', pinned: true, sortOrder: 1 },
@@ -214,43 +193,18 @@ const api = {
           { key: 'globalShortcut', outcome: 'applied' },
           { key: 'memoShortcut', outcome: 'unchanged' },
           { key: 'autoLaunch', outcome: 'unchanged' },
+          { key: 'memoOpenOnStart', outcome: 'unchanged' },
           { key: 'hooks', outcome: 'absent' },
           { key: 'terminalFontSize', outcome: 'applied' },
         ],
         terminalFontSize: 15,
       }),
-    reportMemoVisibility: () => {},
+    // 本周备忘是独立小窗（memo-floating-window）：截图脚本自己开小窗，这两个只是占位
+    toggleMemoWindow: () => {},
+    focusMainWindow: () => {},
     onFocusTerminal: on('app:focus-terminal'),
     onOpenSettings: on('app:open-settings'),
     onSelectSession: on('app:select-session'),
-    onOpenMemo: on('app:open-memo'),
-    onCloseMemo: on('app:close-memo'),
-  },
-  memo: {
-    list: () => ok(memos),
-    create: (text) => {
-      const m = { id: `m-${Date.now()}`, text: text.trim(), done: false, createdAt: T0 }
-      memos = [...memos, m]
-      emit('memo:changed', clone(memos))
-      return ok(m)
-    },
-    update: (id, patch) => {
-      memos = memos.map((m) => {
-        if (m.id !== id) return m
-        const next = { ...m, ...patch }
-        if (patch.done === true && !m.done) next.doneAt = new Date().toISOString()
-        if (patch.done === false) delete next.doneAt
-        return next
-      })
-      emit('memo:changed', clone(memos))
-      return ok(memos.find((m) => m.id === id))
-    },
-    remove: (id) => {
-      memos = memos.filter((m) => m.id !== id)
-      emit('memo:changed', clone(memos))
-      return ok()
-    },
-    onChanged: on('memo:changed'),
   },
   session: {
     list: () => ok(sessions),

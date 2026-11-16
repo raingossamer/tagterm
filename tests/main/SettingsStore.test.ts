@@ -246,6 +246,48 @@ describe('SettingsStore', () => {
     })
   })
 
+  describe('启动时打开本周备忘（可选字段 memoOpenOnStart，settings.json 仍为 v2）', () => {
+    const readFile = () => JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'))
+
+    it('缺省 = 不打开、不写键；勾上落盘并回调、重启仍在；取消勾选删键；不碰唤起命令与背景', async () => {
+      const received: Settings[] = []
+      const store = new SettingsStore(dir, {
+        seedCommands: ['claude'],
+        onChanged: (settings) => received.push(settings),
+      })
+      await store.load()
+      expect(store.get().memoOpenOnStart ?? false).toBe(false)
+      expect('memoOpenOnStart' in readFile()).toBe(false)
+      const before = store.get()
+
+      await store.update({ memoOpenOnStart: true })
+      expect(readFile().memoOpenOnStart).toBe(true)
+      expect(received.at(-1)?.memoOpenOnStart).toBe(true)
+      expect(store.get().launchCommands).toEqual(before.launchCommands)
+      expect(store.get().background).toEqual(before.background)
+
+      const reloaded = new SettingsStore(dir, { seedCommands: [] })
+      await reloaded.load()
+      expect(reloaded.get().memoOpenOnStart).toBe(true)
+
+      await reloaded.update({ memoOpenOnStart: false })
+      expect('memoOpenOnStart' in readFile()).toBe(false)
+      expect(reloaded.get().memoOpenOnStart ?? false).toBe(false)
+    })
+
+    it('文件里不是布尔：按缺省（不打开）处理、不拒绝加载', async () => {
+      const store = new SettingsStore(dir, { seedCommands: [] })
+      await store.load()
+      writeFileSync(
+        join(dir, 'settings.json'),
+        JSON.stringify({ ...readFile(), memoOpenOnStart: 'yes' }),
+      )
+      const reloaded = new SettingsStore(dir, { seedCommands: [] })
+      await reloaded.load()
+      expect(reloaded.get().memoOpenOnStart ?? false).toBe(false)
+    })
+  })
+
   describe('全局快捷键（可选字段 globalShortcut，settings.json 仍为 v2）', () => {
     const readFile = () => JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8'))
 

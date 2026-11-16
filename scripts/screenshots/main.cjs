@@ -12,6 +12,7 @@ const { join, resolve } = require('node:path')
 const ROOT = resolve(__dirname, '..', '..')
 const OUT_DIR = join(ROOT, 'docs', 'screenshots')
 const RENDERER = join(ROOT, 'out', 'renderer', 'index.html')
+const MEMO_RENDERER = join(ROOT, 'out', 'renderer', 'memo.html')
 const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version
 
 // 独立的 userData：localStorage（标签页记忆、折叠状态）从空白开始，也不和正在运行的实例抢单实例锁
@@ -56,6 +57,53 @@ app.whenReady().then(async () => {
     js(
       `[...document.querySelectorAll('[data-test=session-row]')].find((r) => r.querySelector('.name')?.textContent === ${JSON.stringify(name)})?.click()`,
     )
+  /** 截一个窗口：被挡住时 capturePage 抛 UnknownVizError，抬到最前再试几次 */
+  const capture = async (target, label) => {
+    await sleep(600)
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await target.webContents.capturePage()
+      } catch (err) {
+        if (attempt >= 4) throw err
+        console.log(
+          `[screenshots] ${label} 截图失败（${err instanceof Error ? err.message : err}），重试 ${attempt}`,
+        )
+        target.show()
+        target.moveTop()
+        await sleep(700)
+      }
+    }
+  }
+  /** 主窗口截图做底，小窗贴在右上角（离右边 24、离顶 56，带阴影），在离屏页面的 canvas 上合成 PNG */
+  const composeMemoShot = async (base, memo) => {
+    const page = new BrowserWindow({ show: false, webPreferences: { offscreen: true } })
+    await page.loadURL('about:blank')
+    const dataUrl = await page.webContents.executeJavaScript(`(async () => {
+      const load = (src) => new Promise((resolve) => { const i = new Image(); i.onload = () => resolve(i); i.src = src })
+      const [b, m] = await Promise.all([load(${JSON.stringify(base.toDataURL())}), load(${JSON.stringify(memo.toDataURL())})])
+      const c = document.createElement('canvas')
+      c.width = b.width
+      c.height = b.height
+      const ctx = c.getContext('2d')
+      ctx.drawImage(b, 0, 0)
+      const scale = b.width / ${base.getSize().width}
+      const w = m.width, h = m.height
+      const x = b.width - w - Math.round(24 * scale), y = Math.round(56 * scale)
+      ctx.save()
+      ctx.shadowColor = 'rgba(20, 30, 45, 0.35)'
+      ctx.shadowBlur = Math.round(36 * scale)
+      ctx.shadowOffsetY = Math.round(10 * scale)
+      ctx.fillStyle = '#fff'
+      ctx.fillRect(x, y, w, h)
+      ctx.restore()
+      ctx.drawImage(m, x, y)
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.12)'
+      ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1)
+      return c.toDataURL('image/png')
+    })()`)
+    page.destroy()
+    return Buffer.from(dataUrl.split(',')[1], 'base64')
+  }
   const shot = async (file) => {
     await sleep(600) // 等过渡动画与终端重绘
     // 窗口被别的窗口完全挡住时合成器没有这一帧，capturePage 抛 UnknownVizError：抬到最前再试几次，不让一次遮挡废掉整轮
@@ -123,10 +171,42 @@ app.whenReady().then(async () => {
     )
     await sleep(300)
 
-    // 5. 本周备忘（左栏齿轮左边的按钮；热键 Ctrl+Alt+M 是系统热键，截图脚本不注册）
-    await js(`document.querySelector('[data-test=open-memo]')?.click()`)
-    await waitFor(`document.querySelector('[data-test=memo-modal]')`, '本周备忘弹窗')
-    await shot('memo.png')
+    // 5. 本周备忘：独立置顶小窗（memo-floating-window）浮在主窗口右上角。两个窗口各截一张，
+    //    在一个离屏页面的 canvas 上合成（小窗带阴影），不依赖桌面上真实的窗口叠放
+    const base = await capture(win, 'memo.png（主窗口）')
+    const memoWin = new BrowserWindow({
+      width: 360,
+      height: 520,
+      useContentSize: true,
+      frame: false,
+      show: true,
+      backgroundColor: '#FFFFFF',
+      webPreferences: {
+        preload: join(__dirname, 'fake-memo-preload.cjs'),
+        contextIsolation: true,
+        sandbox: true,
+        nodeIntegration: false,
+      },
+    })
+    memoWin.webContents.on('console-message', (e) => {
+      if (e.level === 'error') errors.push(`[memo] ${e.message}`)
+    })
+    await memoWin.loadFile(MEMO_RENDERER)
+    const memoJs = (code) => memoWin.webContents.executeJavaScript(code)
+    const start = Date.now()
+    while (!(await memoJs(`document.querySelectorAll('[data-test=memo-item]').length >= 3`))) {
+      if (Date.now() - start > 10000) throw new Error('等待超时：备忘小窗')
+      await sleep(100)
+    }
+    // 鼠标停在第二条上：露出把手 ⠿ 与 ×（截图里看得出能拖）；输入框失焦，免得光标闪烁那一下被截进去
+    const row = await memoJs(
+      `(() => { document.activeElement?.blur(); const r = document.querySelectorAll('[data-test=memo-item]')[1]?.getBoundingClientRect(); return r ? { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) } : null })()`,
+    )
+    if (row) memoWin.webContents.sendInputEvent({ type: 'mouseMove', x: row.x, y: row.y })
+    const memo = await capture(memoWin, 'memo.png（小窗）')
+    memoWin.destroy()
+    writeFileSync(join(OUT_DIR, 'memo.png'), await composeMemoShot(base, memo))
+    console.log(`[screenshots] memo.png（合成）`)
   } catch (err) {
     console.error('[screenshots] 失败：', err)
     process.exitCode = 1

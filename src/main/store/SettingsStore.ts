@@ -86,6 +86,7 @@ export class SettingsStore {
       terminalBackground?: unknown
       globalShortcut?: unknown
       memoShortcut?: unknown
+      memoOpenOnStart?: unknown
     }
     if (typeof file.version !== 'number' || !Array.isArray(file.launchCommands)) {
       throw new Error(`设置文件格式不正确：${this.file}`)
@@ -118,18 +119,22 @@ export class SettingsStore {
           `[store] 设置里的${SHORTCUT_FIELDS[field].label}格式不正确，按缺省处理：${this.file}`,
         )
     }
+    if (file.memoOpenOnStart === true) this.settings.memoOpenOnStart = true
+    else if (file.memoOpenOnStart !== undefined && file.memoOpenOnStart !== false)
+      console.warn(`[store] 设置里的「启动时打开本周备忘」格式不正确，按不打开处理：${this.file}`)
     console.log(
       `[store] 已加载设置（${this.settings.launchCommands.length} 条唤起命令）：${this.file}`,
     )
   }
 
   get(): Settings {
-    const { globalShortcut, memoShortcut } = this.settings
+    const { globalShortcut, memoShortcut, memoOpenOnStart } = this.settings
     return {
       launchCommands: [...this.settings.launchCommands],
       background: { ...this.settings.background },
       ...(globalShortcut ? { globalShortcut: { ...globalShortcut } } : {}),
       ...(memoShortcut ? { memoShortcut: { ...memoShortcut } } : {}),
+      ...(memoOpenOnStart ? { memoOpenOnStart } : {}),
     }
   }
 
@@ -183,6 +188,8 @@ export class SettingsStore {
       const next: Settings = { ...this.settings }
       if (patch.launchCommands) next.launchCommands = patch.launchCommands.map(withId)
       if (patch.background) next.background = { ...patch.background }
+      if (patch.memoOpenOnStart === true) next.memoOpenOnStart = true
+      else if (patch.memoOpenOnStart === false) delete next.memoOpenOnStart
       await this.commit(next)
       const settings = this.get()
       this.onChanged(settings)

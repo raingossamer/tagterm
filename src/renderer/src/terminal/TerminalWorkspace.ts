@@ -234,6 +234,22 @@ export class TerminalWorkspace {
     this.pool.focusActive()
   }
 
+  /** 当前页的终端能不能收拖进来的文字：要有当前页且终端在运行（打开中 / 已退出 / 没打开都不收） */
+  canPaste(): boolean {
+    return this.activeId !== null && this.runtime.get(this.activeId)?.phase === 'running'
+  }
+
+  /**
+   * 拖进终端的文字（memo-floating-window 决策 5）：按粘贴送进当前终端（不加回车）并聚焦，返回收没收；
+   * 收不了（canPaste 为假）时什么都不做
+   */
+  pasteToActive(text: string): boolean {
+    if (!this.canPaste()) return false
+    this.pool.pasteActive(text)
+    this.pool.focusActive()
+    return true
+  }
+
   /** 可见终端允不允许用 WebGL（透传实例池，装配层决定；见 TerminalPool.setWebglAllowed） */
   setWebglAllowed(allowed: boolean): void {
     this.pool.setWebglAllowed(allowed)

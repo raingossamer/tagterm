@@ -174,6 +174,7 @@ describe('ConfigService', () => {
       globalShortcut: { enabled: true, accelerator: 'Ctrl+Alt+Y' },
       memoShortcut: { enabled: false, accelerator: 'Ctrl+Alt+N' },
       autoLaunch: true,
+      memoOpenOnStart: false,
       hooks: { claude: true, codex: false },
       terminalFontSize: 16,
     })
@@ -211,6 +212,7 @@ describe('ConfigService', () => {
         globalShortcut: { enabled: true, accelerator: 'Ctrl+Alt+Y' },
         memoShortcut: { enabled: true, accelerator: 'Ctrl+Alt+N' },
         autoLaunch: false,
+        memoOpenOnStart: true,
         hooks: { claude: false, codex: true },
         terminalFontSize: 18,
       })
@@ -228,6 +230,7 @@ describe('ConfigService', () => {
         { key: 'globalShortcut', outcome: 'applied' },
         { key: 'memoShortcut', outcome: 'applied' },
         { key: 'autoLaunch', outcome: 'applied' },
+        { key: 'memoOpenOnStart', outcome: 'applied' },
         { key: 'hooks', outcome: 'applied' },
         { key: 'terminalFontSize', outcome: 'applied' },
       ])
@@ -261,6 +264,7 @@ describe('ConfigService', () => {
       expect(settings.getMemoShortcut()).toEqual({ enabled: true, accelerator: 'Ctrl+Alt+N' })
       expect([...memoPort.registered.keys()]).toEqual(['Ctrl+Alt+N'])
       expect(autoLaunch.enabled).toBe(false)
+      expect(after.memoOpenOnStart).toBe(true)
       expect(hookCalls).toEqual([
         ['claude', false],
         ['codex', true],
@@ -278,6 +282,7 @@ describe('ConfigService', () => {
         { key: 'globalShortcut', outcome: 'absent' },
         { key: 'memoShortcut', outcome: 'absent' },
         { key: 'autoLaunch', outcome: 'absent' },
+        { key: 'memoOpenOnStart', outcome: 'absent' },
         { key: 'hooks', outcome: 'absent' },
         { key: 'terminalFontSize', outcome: 'absent' },
       ])
@@ -293,7 +298,7 @@ describe('ConfigService', () => {
       await build(fakeDialogs({ save: out })).exportConfig({ terminalFontSize: 14 })
       const before = settingsText()
       const result = await build(fakeDialogs({ open: out })).importConfig({ terminalFontSize: 14 })
-      expect(result!.items.map((i) => i.outcome)).toEqual(Array(8).fill('unchanged'))
+      expect(result!.items.map((i) => i.outcome)).toEqual(Array(9).fill('unchanged'))
       expect(settingsText()).toBe(before)
       expect(hookCalls).toEqual([])
       expect([...port.registered.keys()]).toEqual(['Ctrl+Alt+T'])
@@ -340,6 +345,7 @@ describe('ConfigService', () => {
         { key: 'globalShortcut', outcome: 'failed', message: '该快捷键已被其他程序占用' },
         { key: 'memoShortcut', outcome: 'absent' },
         { key: 'autoLaunch', outcome: 'failed', message: '开发模式下不能设置开机自启' },
+        { key: 'memoOpenOnStart', outcome: 'absent' },
         { key: 'hooks', outcome: 'failed', message: 'Codex：找不到 Codex 的配置目录' },
         { key: 'terminalFontSize', outcome: 'applied' },
       ])

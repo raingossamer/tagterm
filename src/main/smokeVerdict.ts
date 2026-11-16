@@ -19,9 +19,8 @@ export const MUST_BE_FALSE: Readonly<Record<string, string>> = {
   'tags.untaggedWhenAHidden': '隐藏标签 A 时，只挂 A 的会话随组收起，不会掉进「未打标签」组',
   'tags.searchFindsHidden': '被隐藏的会话，左栏搜索同样搜不到',
   'search.outputGrew': '终端里按 Ctrl+K 被搜索框接走，一个字也没有进 shell',
-  'memo.hiddenAfterEsc':
-    '热键从后台叫出的备忘录用 Esc 关掉时窗口不藏（只有用同一个热键关掉才藏回去）',
-  'memo.hiddenAfterFrontClose': '窗口在前台时打开的备忘录，再按热键只关不藏',
+  'memo.memoHasProcess': '备忘小窗里同样拿不到 Node 的 process（安全基线）',
+  'memo.memoHasRequire': '备忘小窗里同样拿不到 require（安全基线）',
 }
 
 export const NOT_JUDGED: Readonly<Record<string, string>> = {
@@ -30,6 +29,8 @@ export const NOT_JUDGED: Readonly<Record<string, string>> = {
   'hooks.viewDiag': '「正被查看」的焦点诊断数据，只在失败时帮助排查',
   'tags.popOptions': '「+ 标签」弹出层的选项与勾选数据；勾选对不对由 tags.popChecksRight 核查',
   'settings.download': '只有更新源上真有新版本时才会去下载，平时为 null',
+  'memo.diag':
+    '备忘小窗的焦点 / 位置 / 拖放诊断数据（焦点在哪取决于用户此刻在不在用电脑），只在失败时帮助排查',
 }
 
 export interface SmokeVerdict {

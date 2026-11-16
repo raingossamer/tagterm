@@ -1,5 +1,5 @@
 import { vi } from 'vitest'
-import type { TagTermApi } from '@shared/api'
+import type { MemoWindowApi, TagTermApi } from '@shared/api'
 import type { BackgroundImageData, TagListResult } from '@shared/ipc'
 import {
   DEFAULT_BACKGROUND,
@@ -67,9 +67,8 @@ export function createFakeApi(overrides: Overrides = {}): TagTermApi {
       listShells: vi.fn(async (): Promise<ShellKind[]> => ['cmd.exe', 'powershell.exe']),
       getDataDir: vi.fn(async () => 'C:/Users/test/AppData/Roaming/TagTerm'),
       openLogsDir: vi.fn(async () => {}),
-      reportMemoVisibility: vi.fn(),
-      onOpenMemo: vi.fn(() => () => {}),
-      onCloseMemo: vi.fn(() => () => {}),
+      toggleMemoWindow: vi.fn(),
+      focusMainWindow: vi.fn(),
       pickImage: vi.fn(async () => null),
       getAutoLaunch: vi.fn(async () => ({ enabled: false, blockedBySystem: false })),
       setAutoLaunch: vi.fn(async (enabled: boolean) => ({ enabled, blockedBySystem: false })),
@@ -160,14 +159,6 @@ export function createFakeApi(overrides: Overrides = {}): TagTermApi {
       onStatus: vi.fn(() => () => {}),
       ...overrides.agent,
     },
-    memo: {
-      list: vi.fn(async (): Promise<MemoItem[]> => []),
-      create: vi.fn(async (text: string) => makeMemo({ text })),
-      update: vi.fn(async (id: string, patch) => makeMemo({ id, ...patch })),
-      remove: vi.fn(async () => {}),
-      onChanged: vi.fn(() => () => {}),
-      ...overrides.memo,
-    },
     pty: {
       open: vi.fn(async () => ({ created: true, pid: 4242 })),
       write: vi.fn(),
@@ -182,6 +173,34 @@ export function createFakeApi(overrides: Overrides = {}): TagTermApi {
 }
 
 let seq = 0
+
+type MemoOverrides = {
+  [K in keyof MemoWindowApi]?: Partial<MemoWindowApi[K]>
+}
+
+/**
+ * 备忘小窗的 window.tagterm 假实现（独立 preload 只给 memo 与 memoWindow 两组）：
+ * 传入 overrides 覆盖需要的函数，其余为带合理缺省返回值的 vi.fn()。
+ */
+export function installFakeMemoApi(overrides: MemoOverrides = {}): MemoWindowApi {
+  const api: MemoWindowApi = {
+    memo: {
+      list: vi.fn(async (): Promise<MemoItem[]> => []),
+      create: vi.fn(async (text: string) => makeMemo({ text })),
+      update: vi.fn(async (id: string, patch) => makeMemo({ id, ...patch })),
+      remove: vi.fn(async () => {}),
+      onChanged: vi.fn(() => () => {}),
+      ...overrides.memo,
+    },
+    memoWindow: {
+      close: vi.fn(),
+      onFocusInput: vi.fn(() => () => {}),
+      ...overrides.memoWindow,
+    },
+  }
+  Object.defineProperty(window, 'tagterm', { value: api, configurable: true, writable: true })
+  return api
+}
 
 /** 构造一条测试备忘事项，字段可覆盖（缺省未完成、创建于 2026-11-04 中午） */
 export function makeMemo(partial: Partial<MemoItem> = {}): MemoItem {

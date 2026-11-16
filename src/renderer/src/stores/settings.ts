@@ -109,6 +109,11 @@ export const useSettingsStore = defineStore('settings', () => {
     if (url) URL.revokeObjectURL(url)
   }
 
+  /** 设置「启动」段：启动 TagTerm 时打开本周备忘（即时写入，镜像以广播为准） */
+  async function setMemoOpenOnStart(enabled: boolean): Promise<void> {
+    await window.tagterm.settings.update({ memoOpenOnStart: enabled })
+  }
+
   /** 编辑弹窗「完成」：规整后整体提交 */
   async function saveLaunchCommands(rows: readonly LaunchCommandInput[]): Promise<void> {
     await window.tagterm.settings.update({ launchCommands: normalizeLaunchCommands(rows) })
@@ -125,6 +130,7 @@ export const useSettingsStore = defineStore('settings', () => {
     moreCommands,
     load,
     saveLaunchCommands,
+    setMemoOpenOnStart,
     previewBackground,
     saveBackground,
     readImageUrl,

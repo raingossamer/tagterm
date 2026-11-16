@@ -114,4 +114,93 @@ describe('TerminalPane', () => {
       wrapper.unmount()
     })
   })
+
+  describe('拖文字进终端（memo-floating-window 决策 5）', () => {
+    /** 拖放事件：happy-dom 没有 DataTransfer，挂一个只有 types / getData / dropEffect 的替身 */
+    function drag(
+      el: Element,
+      type: string,
+      data: { types: string[]; text?: string },
+    ): { event: Event; transfer: { dropEffect: string } } {
+      const event = new Event(type, { bubbles: true, cancelable: true })
+      const transfer = {
+        types: data.types,
+        dropEffect: 'none',
+        getData: (t: string) => (t === 'text/plain' ? (data.text ?? '') : ''),
+      }
+      Object.defineProperty(event, 'dataTransfer', { value: transfer })
+      el.dispatchEvent(event)
+      return { event, transfer }
+    }
+    const textDrag = (text: string) => ({ types: ['text/plain'], text })
+
+    it('当前终端在运行、拖来的是文字：出现「松开插入到「会话名」」；松手按粘贴送进终端（不加回车）、提示消失、请主进程激活主窗口', async () => {
+      const api = installFakeApi()
+      const wrapper = mountPane()
+      await fake.workspace.select(a.id)
+      const wrap = wrapper.find('.term-wrap').element
+
+      drag(wrap, 'dragenter', textDrag(''))
+      const over = drag(wrap, 'dragover', textDrag(''))
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('[data-test=terminal-drop]').text()).toBe('松开插入到「a」')
+      expect(over.event.defaultPrevented).toBe(true)
+      expect(over.transfer.dropEffect).toBe('copy')
+
+      const drop = drag(wrap, 'drop', textDrag('设置「启动」段加勾选框'))
+      await wrapper.vm.$nextTick()
+      expect(drop.event.defaultPrevented).toBe(true)
+      expect(fake.terminals[0]!.pasted).toEqual(['设置「启动」段加勾选框'])
+      expect(wrapper.find('[data-test=terminal-drop]').exists()).toBe(false)
+      expect(api.app.focusMainWindow).toHaveBeenCalledTimes(1)
+      wrapper.unmount()
+    })
+
+    it('拖着离开终端区：提示消失（经过内部子元素进出不闪）', async () => {
+      const wrapper = mountPane()
+      await fake.workspace.select(a.id)
+      const wrap = wrapper.find('.term-wrap').element
+      const pane = wrapper.find('[data-test=terminal-pane]').element
+
+      drag(wrap, 'dragenter', textDrag(''))
+      drag(pane, 'dragenter', textDrag(''))
+      drag(wrap, 'dragleave', textDrag(''))
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('[data-test=terminal-drop]').exists()).toBe(true)
+      drag(pane, 'dragleave', textDrag(''))
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('[data-test=terminal-drop]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('反例：拖来的是文件 / 松手时文字为空 / 终端已退出 —— 不提示（或不收）、不粘贴、不激活窗口', async () => {
+      const api = installFakeApi()
+      const wrapper = mountPane()
+      await fake.workspace.select(a.id)
+      const wrap = wrapper.find('.term-wrap').element
+
+      const files = { types: ['Files', 'text/plain'], text: 'notes.txt' }
+      drag(wrap, 'dragenter', files)
+      expect(drag(wrap, 'dragover', files).event.defaultPrevented).toBe(false)
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('[data-test=terminal-drop]').exists()).toBe(false)
+      drag(wrap, 'drop', files)
+
+      drag(wrap, 'dragenter', textDrag(''))
+      drag(wrap, 'drop', textDrag('   '))
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('[data-test=terminal-drop]').exists()).toBe(false)
+
+      fake.pty.emitExit(a.id, 0)
+      drag(wrap, 'dragenter', textDrag(''))
+      expect(drag(wrap, 'dragover', textDrag('')).event.defaultPrevented).toBe(false)
+      await wrapper.vm.$nextTick()
+      expect(wrapper.find('[data-test=terminal-drop]').exists()).toBe(false)
+      drag(wrap, 'drop', textDrag('已退出'))
+
+      expect(fake.terminals[0]!.pasted).toEqual([])
+      expect(api.app.focusMainWindow).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
+  })
 })

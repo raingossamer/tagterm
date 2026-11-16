@@ -100,6 +100,8 @@ export interface Settings {
   globalShortcut?: GlobalShortcutConfig
   /** 本周备忘的全局快捷键（2026-11-06）：缺省（不写键）= 开启 + Ctrl+Alt+M；只经 app:set-memo-shortcut 写入 */
   memoShortcut?: GlobalShortcutConfig
+  /** 启动 TagTerm 时打开本周备忘小窗（2026-11-16）：缺省（不写键）= 不打开；设置「启动」段即时生效，经 settings:update 写入 */
+  memoOpenOnStart?: boolean
 }
 
 /** v2：terminalBackground（终端局部背景 + 黑色遮罩）整体换成全局 background */

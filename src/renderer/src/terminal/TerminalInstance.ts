@@ -14,6 +14,11 @@ export interface Disposable {
 export interface TerminalInstance {
   open(host: HTMLElement): void
   write(data: string): void
+  /**
+   * 按粘贴送进终端（拖进来的文字）：与键入一样经 onData 到 pty；程序开了括号粘贴模式时收到的是一次粘贴，
+   * 多行不会被拆成好几次发送；不加回车
+   */
+  paste(text: string): void
   focus(): void
   /** 按宿主尺寸重排；宿主不可见（量不到尺寸）时返回 null */
   fit(): TerminalSize | null

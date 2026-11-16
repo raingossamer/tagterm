@@ -283,6 +283,30 @@ describe('SettingsModal', () => {
     expect(wrapper.find('[data-test=settings-error]').text()).toBe('开发模式下不能设置开机自启')
   })
 
+  it('「启动」段 · 启动时打开本周备忘：勾选框反映设置、默认不勾；改动即时写入（不等「保存设置」）；失败红字并还原', async () => {
+    const api = installFakeApi()
+    const wrapper = mount(SettingsModal)
+    await flushPromises()
+    await wrapper.find('[data-test=settings-nav-startup]').trigger('click')
+    const box = () => wrapper.find('[data-test=memo-open-on-start]').element as HTMLInputElement
+
+    expect(wrapper.find('[data-test=memo-open-on-start-label]').text()).toBe(
+      '启动 TagTerm 时打开本周备忘',
+    )
+    expect(wrapper.find('[data-test=memo-open-on-start-hint]').text()).toContain('不抢键盘焦点')
+    expect(box().checked).toBe(false)
+
+    await wrapper.find('[data-test=memo-open-on-start]').setValue(true)
+    await flushPromises()
+    expect(api.settings.update).toHaveBeenCalledWith({ memoOpenOnStart: true })
+
+    vi.mocked(api.settings.update).mockRejectedValueOnce(new Error('写盘失败'))
+    await wrapper.find('[data-test=memo-open-on-start]').setValue(false)
+    await flushPromises()
+    expect(box().checked).toBe(true)
+    expect(wrapper.find('[data-test=settings-error]').text()).toBe('写盘失败')
+  })
+
   describe('「启动」段 · 全局快捷键', () => {
     async function openStartup() {
       const wrapper = mount(SettingsModal, { attachTo: document.body })
@@ -426,7 +450,9 @@ describe('SettingsModal', () => {
         '全局快捷键打开 / 关闭本周备忘',
       )
       expect(memoKey.text()).toBe('Ctrl+Alt+M')
-      expect(wrapper.find('[data-test=memo-shortcut-hint]').text()).toContain('记完再按')
+      expect(wrapper.find('[data-test=memo-shortcut-hint]').text()).toContain(
+        '焦点在小窗里时再按关掉',
+      )
 
       await memoKey.trigger('click')
       expect(api.app.pauseGlobalShortcut).toHaveBeenCalledWith(true)

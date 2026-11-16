@@ -31,7 +31,9 @@ import ShortcutField from './ShortcutField.vue'
 const SHORTCUT_HINT =
   '窗口在前台时按下藏到托盘，否则唤出并把焦点交给当前终端。点击键位框后按下新组合，Esc 取消'
 const MEMO_SHORTCUT_HINT =
-  '在哪儿按都行：唤出窗口并打开本周备忘，记完再按一次关掉（从托盘叫出来的会藏回去）'
+  '在哪儿按都行：打开本周备忘小窗；小窗开着但没焦点时把焦点交给它，焦点在小窗里时再按关掉'
+const MEMO_OPEN_ON_START_HINT =
+  '勾上后每次启动都自动打开小窗（开机自启时也是），不抢键盘焦点；不勾则每次启动都关着'
 
 type SectionKey = 'appearance' | 'startup' | 'agent' | 'update' | 'config' | 'about'
 
@@ -70,6 +72,7 @@ const CONFIG_ITEM_LABELS: Record<ConfigItemKey, string> = {
   globalShortcut: '全局快捷键',
   memoShortcut: '本周备忘快捷键',
   autoLaunch: '开机自启',
+  memoOpenOnStart: '启动时打开本周备忘',
   hooks: 'Agent hooks 开关',
   terminalFontSize: '终端字号',
 }
@@ -325,6 +328,18 @@ async function onAutoLaunchChange(e: Event): Promise<void> {
   }
 }
 
+/** 启动时打开本周备忘：勾选即写 settings.json；失败红字并把复选框还原 */
+async function onMemoOpenOnStartChange(e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement
+  error.value = ''
+  try {
+    await settings.setMemoOpenOnStart(input.checked)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+    input.checked = !input.checked
+  }
+}
+
 async function save(): Promise<void> {
   error.value = ''
   try {
@@ -505,6 +520,22 @@ function onKeydown(e: KeyboardEvent): void {
               :hint="MEMO_SHORTCUT_HINT"
               :submit="submitMemoShortcut"
             />
+            <div class="memo-start">
+              <label class="check" data-test="memo-open-on-start-label">
+                <input
+                  type="checkbox"
+                  :checked="settings.settings.memoOpenOnStart ?? false"
+                  data-test="memo-open-on-start"
+                  @change="onMemoOpenOnStartChange"
+                />
+                <span v-text="'启动 TagTerm 时打开本周备忘'"></span>
+              </label>
+              <p
+                class="hint"
+                data-test="memo-open-on-start-hint"
+                v-text="MEMO_OPEN_ON_START_HINT"
+              ></p>
+            </div>
           </section>
 
           <section v-else-if="section === 'agent'" data-test="agent-section">
@@ -833,6 +864,13 @@ section h4 {
   gap: 6px;
   font-size: 13px;
   cursor: pointer;
+}
+/* 「启动时打开本周备忘」：与上面两个快捷键段同样的间距（ShortcutField 的 .shortcut） */
+.memo-start {
+  margin-top: 18px;
+}
+.memo-start .hint {
+  margin: 4px 0 0;
 }
 .note {
   margin: 12px 0 0;

@@ -36,7 +36,7 @@ export type ConfigAppearance = Omit<AppBackground, 'imagePath'>
 
 export type ConfigHooks = Partial<Record<HookAgent, boolean>>
 
-/** 八项与 shared 的 ConfigItemKey 一一对应（键名漂移时这里的类型检查会报错） */
+/** 九项与 shared 的 ConfigItemKey 一一对应（键名漂移时这里的类型检查会报错） */
 export type ConfigFileData = Partial<{
   tags: ConfigTag[]
   launchCommands: ConfigLaunchCommand[]
@@ -44,6 +44,7 @@ export type ConfigFileData = Partial<{
   globalShortcut: GlobalShortcutConfig
   memoShortcut: GlobalShortcutConfig
   autoLaunch: boolean
+  memoOpenOnStart: boolean
   hooks: ConfigHooks
   terminalFontSize: number
 }> &
@@ -57,6 +58,7 @@ export const CONFIG_ITEM_KEYS: readonly ConfigItemKey[] = [
   'globalShortcut',
   'memoShortcut',
   'autoLaunch',
+  'memoOpenOnStart',
   'hooks',
   'terminalFontSize',
 ]
@@ -123,6 +125,11 @@ export function parseConfigFile(text: string): ConfigFileData {
   if (raw.autoLaunch !== undefined) {
     if (typeof raw.autoLaunch !== 'boolean') throw new Error('配置文件里的开机自启格式不正确')
     data.autoLaunch = raw.autoLaunch
+  }
+  if (raw.memoOpenOnStart !== undefined) {
+    if (typeof raw.memoOpenOnStart !== 'boolean')
+      throw new Error('配置文件里的「启动时打开本周备忘」格式不正确')
+    data.memoOpenOnStart = raw.memoOpenOnStart
   }
   if (raw.hooks !== undefined) data.hooks = parseHooks(raw.hooks)
   if (raw.terminalFontSize !== undefined) {

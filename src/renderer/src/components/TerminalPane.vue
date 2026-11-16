@@ -2,11 +2,14 @@
 // 终端区：把容器交给会话生命周期核心（内部实例池）并挂 ResizeObserver；点击空白处聚焦当前终端。
 // 背景图由 App 的全局背景层提供（决策 3），这里只留半透明底色，xterm 本身背景透明（theme.ts）。
 // 右上角浮层：终端内搜索框（Ctrl+Shift+F，TerminalSearch）与字号小牌 —— Ctrl+滚轮 / Ctrl+0 调字号时浮出「字号 N」，
-// 停手 1 秒消失（到上下限再滚也浮出，让人知道到头了）；两者同时出现时小牌排在搜索框下面
+// 停手 1 秒消失（到上下限再滚也浮出，让人知道到头了）；两者同时出现时小牌排在搜索框下面。
+// 拖文字进来（备忘小窗的事项，或别的程序的文字；memo-floating-window 决策 5）：当前终端在运行时出现「松开插入到「会话名」」，
+// 松手按粘贴送进终端（不加回车）并请主进程激活主窗口（Windows 拖放不激活目标窗口）；文件、空文字、终端没在运行都不收
 import { inject, onMounted, onUnmounted, ref } from 'vue'
 import type { Unsubscribe } from '@shared/api'
 import { TERMINAL_WORKSPACE_KEY } from '../terminal/workspaceKey'
 import { createDebounced } from '../composables/debounce'
+import { useSessionsStore } from '../stores/sessions'
 import TerminalSearch from './TerminalSearch.vue'
 
 /** 尺寸变化后多久才真正 fit：拖动窗口时 ResizeObserver 逐帧回调，逐帧 fit 会卡顿并闪烁 */
@@ -22,6 +25,48 @@ const scheduleFit = createDebounced(() => workspace.fitActive(), FIT_DEBOUNCE_MS
 const badgeFontSize = ref<number | null>(null)
 let badgeTimer: ReturnType<typeof setTimeout> | null = null
 let offFontZoom: Unsubscribe | null = null
+
+const sessions = useSessionsStore()
+/** 拖文字经过时的提示（当前会话名）；null = 不显示 */
+const dropTarget = ref<string | null>(null)
+/** dragenter / dragleave 会在内部子元素之间成对冒上来，计数归零才算真的离开 */
+let dragDepth = 0
+
+/** 收不收这次拖动：只收文字（拖文件不收），而且当前终端要在运行 */
+function acceptsDrag(e: DragEvent): boolean {
+  const types = [...(e.dataTransfer?.types ?? [])]
+  return types.includes('text/plain') && !types.includes('Files') && workspace.canPaste()
+}
+
+function onDragEnter(e: DragEvent): void {
+  if (!acceptsDrag(e)) return
+  dragDepth += 1
+  const activeId = workspace.snapshot().activeId
+  dropTarget.value = (activeId && sessions.byId(activeId)?.name) || '当前终端'
+}
+
+function onDragOver(e: DragEvent): void {
+  if (!acceptsDrag(e)) return
+  e.preventDefault() // 不拦 dragover 浏览器就不让放
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+}
+
+function onDragLeave(): void {
+  if (dragDepth === 0) return
+  dragDepth -= 1
+  if (dragDepth === 0) dropTarget.value = null
+}
+
+function onDrop(e: DragEvent): void {
+  const accepted = acceptsDrag(e)
+  dragDepth = 0
+  dropTarget.value = null
+  if (!accepted) return
+  e.preventDefault() // 也挡住浏览器把文字插进 xterm 隐藏 textarea 的默认行为（否则会再发一遍）
+  const text = e.dataTransfer?.getData('text/plain') ?? ''
+  if (!text.trim()) return
+  if (workspace.pasteToActive(text)) window.tagterm.app.focusMainWindow()
+}
 
 function showFontBadge(size: number): void {
   badgeFontSize.value = size
@@ -48,8 +93,17 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="term-wrap">
+  <div
+    class="term-wrap"
+    @dragenter="onDragEnter"
+    @dragover="onDragOver"
+    @dragleave="onDragLeave"
+    @drop="onDrop"
+  >
     <div ref="root" class="term" data-test="terminal-pane" @click="workspace.focusActive()"></div>
+    <div v-if="dropTarget !== null" class="drop" data-test="terminal-drop">
+      <span v-text="`松开插入到「${dropTarget}」`"></span>
+    </div>
     <div class="overlay">
       <TerminalSearch />
       <div
@@ -95,6 +149,26 @@ onUnmounted(() => {
 }
 .term :deep(.xterm .xterm-viewport::-webkit-scrollbar) {
   display: none;
+}
+/* 拖文字经过时的落点提示：虚线框 + 居中的「松开插入到「会话名」」；不挡拖放事件（落在下面的终端上） */
+.drop {
+  position: absolute;
+  inset: 6px;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  pointer-events: none;
+  z-index: 2;
+}
+.drop span {
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font: 600 13px var(--font);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 /* 右上角浮层：搜索框在上、字号小牌在下；浮层本身不挡点击（搜索框自己接事件） */
 .overlay {

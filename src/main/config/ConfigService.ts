@@ -105,6 +105,7 @@ export class ConfigService {
       await this.applyShortcut(data, 'globalShortcut'),
       await this.applyShortcut(data, 'memoShortcut'),
       this.applyAutoLaunch(data),
+      await this.applyMemoOpenOnStart(data),
       await this.applyHooks(data),
       applyFontSize(data, prefs),
     ]
@@ -139,6 +140,7 @@ export class ConfigService {
       globalShortcut: this.deps.settings.getGlobalShortcut(),
       memoShortcut: this.deps.settings.getMemoShortcut(),
       autoLaunch: this.deps.autoLaunch.get().enabled,
+      memoOpenOnStart: settings.memoOpenOnStart ?? false,
       hooks: { claude: hooks.claude.installed, codex: hooks.codex.installed },
       terminalFontSize: prefs.terminalFontSize,
     }
@@ -250,6 +252,20 @@ export class ConfigService {
       return { key: 'autoLaunch', outcome: 'applied' }
     } catch (err) {
       return { key: 'autoLaunch', outcome: 'failed', message: messageOf(err) }
+    }
+  }
+
+  /** 启动时打开本周备忘（settings.json 的可选布尔，缺省不打开）：与本机相同不写 */
+  private async applyMemoOpenOnStart(data: ConfigFileData): Promise<ConfigItemResult> {
+    const key = 'memoOpenOnStart'
+    if (data.memoOpenOnStart === undefined) return { key, outcome: 'absent' }
+    if ((this.deps.settings.get().memoOpenOnStart ?? false) === data.memoOpenOnStart)
+      return { key, outcome: 'unchanged' }
+    try {
+      await this.deps.settings.update({ memoOpenOnStart: data.memoOpenOnStart })
+      return { key, outcome: 'applied' }
+    } catch (err) {
+      return { key, outcome: 'failed', message: messageOf(err) }
     }
   }
 

@@ -547,6 +547,28 @@ describe('TerminalWorkspace（会话生命周期核心）', () => {
     expect(results).toHaveLength(2)
   })
 
+  it('23 拖进来的文字（memo-floating-window 决策 5）：当前终端在运行才收，按粘贴送进去（不加回车）并聚焦；没有当前页 / 打开中 / 已退出时不收', async () => {
+    expect(core.canPaste()).toBe(false)
+    expect(core.pasteToActive('设置加勾选框')).toBe(false)
+
+    const opening = core.select(a.id)
+    expect(core.canPaste()).toBe(false)
+    expect(core.pasteToActive('打开中')).toBe(false)
+    await opening
+    const term = terminals[0]!
+    const focusBefore = term.focusCount
+
+    expect(core.canPaste()).toBe(true)
+    expect(core.pasteToActive('设置加勾选框')).toBe(true)
+    expect(term.pasted).toEqual(['设置加勾选框'])
+    expect(term.focusCount).toBe(focusBefore + 1)
+
+    pty.emitExit(a.id, 0)
+    expect(core.canPaste()).toBe(false)
+    expect(core.pasteToActive('已退出')).toBe(false)
+    expect(term.pasted).toEqual(['设置加勾选框'])
+  })
+
   it('13 subscribe 每次变化收到新快照对象且等于 snapshot()，退订后不再收到；dispose 退订 pty、销毁全部实例、清空记录', async () => {
     const seen: WorkspaceSnapshot[] = []
     const off = core.subscribe((s) => seen.push(s))

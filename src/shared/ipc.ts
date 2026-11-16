@@ -54,7 +54,7 @@ export interface ConfigExportResult {
   path: string
 }
 
-/** 配置文件里的七项（导入按此顺序逐项应用、逐项报结果） */
+/** 配置文件里的九项（导入按此顺序逐项应用、逐项报结果） */
 export type ConfigItemKey =
   | 'tags'
   | 'launchCommands'
@@ -62,6 +62,7 @@ export type ConfigItemKey =
   | 'globalShortcut'
   | 'memoShortcut'
   | 'autoLaunch'
+  | 'memoOpenOnStart'
   | 'hooks'
   | 'terminalFontSize'
 
@@ -88,6 +89,8 @@ export type LaunchCommandInput = Omit<LaunchCommand, 'id'> & { id?: string }
 export interface SettingsPatch {
   launchCommands?: LaunchCommandInput[]
   background?: AppBackground
+  /** 启动时打开本周备忘小窗；false 即删键（缺省不写） */
+  memoOpenOnStart?: boolean
 }
 
 // ---- 标签（M2）----
@@ -206,7 +209,10 @@ export interface IpcInvokeMap {
 export interface IpcSendMap {
   'pty:write': [sessionId: string, data: string]
   'agent:report-output': [sessionId: string, report: OutputReport] // 静默末尾报告（高频单向，非法参数静默忽略）
-  'app:memo-visibility': [open: boolean] // 备忘录弹窗开 / 关（主进程据此判定备忘录热键是开还是关）
+  // ---- 本周备忘小窗（2026-11-16 memo-floating-window）----
+  'app:toggle-memo-window': [] // 主窗口左栏 📋：小窗没开就打开（并聚焦），开着就关掉
+  'app:focus-main-window': [] // 主窗口终端收到拖进来的文字后：请主进程激活主窗口（Windows 拖放不激活目标窗口）
+  'memo-window:close': [] // 小窗的 × / Esc：关掉（只隐藏）
 }
 
 // 主进程 → 渲染进程：webContents.send → ipcRenderer.on
@@ -221,9 +227,8 @@ export interface IpcEventMap {
   'agent:status': [runtime: SessionRuntime] // 某会话运行时记录变化；记录删除时发 alive: false 的空闲记录
   'app:select-session': [sessionId: string] // 系统通知被点击：显示窗口并切到该会话
   'app:focus-terminal': [] // 全局快捷键唤出窗口后：把焦点交给当前终端，可直接打字
-  'memo:changed': [items: MemoItem[]] // 备忘事项变更后广播全量
-  'app:open-memo': [] // 本周备忘热键 / 托盘菜单：主进程已显示窗口，打开备忘录弹窗
-  'app:close-memo': [] // 本周备忘热键在前台再按：关掉备忘录弹窗（窗口是否藏回去由主进程定）
+  'memo:changed': [items: MemoItem[]] // 备忘事项变更后发全量（发给备忘小窗）
+  'memo-window:focus-input': [] // 已建过的小窗被热键 / 托盘 / 左栏再次打开或聚焦：把焦点放进「新事项」输入框
 }
 
 export type SendChannel = keyof IpcSendMap

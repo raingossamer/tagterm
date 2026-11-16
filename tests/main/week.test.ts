@@ -5,7 +5,8 @@ import {
   earliestMemoWeek,
   isoWeekOf,
   memosOfWeek,
-  weekLabel,
+  weekName,
+  weekRange,
   weekStart,
 } from '@shared/week'
 import type { MemoItem } from '@shared/models'
@@ -41,11 +42,13 @@ describe('ISO 周号（周一起，本地时间）', () => {
     expect(addWeeks({ year: 2026, week: 45 }, -2)).toEqual({ year: 2026, week: 43 })
   })
 
-  it('标题：本年只写周号与起止日期，别的年份前面带年份', () => {
+  it('标题：周号本年只写「W45」、别的年份前面带年份；起止日期「11/2–11/8」，跨年照写', () => {
     const now = at(2026, 11, 6)
-    expect(weekLabel({ year: 2026, week: 45 }, now)).toBe('W45（11/2–11/8）')
-    expect(weekLabel({ year: 2026, week: 53 }, now)).toBe('W53（12/28–1/3）')
-    expect(weekLabel({ year: 2025, week: 52 }, now)).toBe('2025 W52（12/22–12/28）')
+    expect(weekName({ year: 2026, week: 45 }, now)).toBe('W45')
+    expect(weekName({ year: 2025, week: 52 }, now)).toBe('2025 W52')
+    expect(weekRange({ year: 2026, week: 45 })).toBe('11/2–11/8')
+    expect(weekRange({ year: 2026, week: 53 })).toBe('12/28–1/3')
+    expect(weekRange({ year: 2025, week: 52 })).toBe('12/22–12/28')
   })
 })
 

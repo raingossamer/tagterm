@@ -13,6 +13,8 @@ import type {
 export class FakeTerminal implements TerminalInstance {
   host: HTMLElement | null = null
   written = ''
+  /** paste 收到的文字（拖进终端） */
+  pasted: string[] = []
   focusCount = 0
   fitCount = 0
   isWebgl = false
@@ -34,6 +36,9 @@ export class FakeTerminal implements TerminalInstance {
   }
   write(data: string): void {
     this.written += data
+  }
+  paste(text: string): void {
+    this.pasted.push(text)
   }
   focus(): void {
     this.focusCount += 1

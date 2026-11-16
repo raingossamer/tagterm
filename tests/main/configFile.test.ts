@@ -20,6 +20,7 @@ const FULL: ConfigFileData = {
   globalShortcut: { enabled: true, accelerator: 'Ctrl+Alt+Y' },
   memoShortcut: { enabled: true, accelerator: 'Ctrl+Alt+N' },
   autoLaunch: true,
+  memoOpenOnStart: true,
   hooks: { claude: true, codex: false },
   terminalFontSize: 16,
 }
@@ -48,6 +49,7 @@ describe('配置文件（导出 / 导入的 JSON）', () => {
       'globalShortcut',
       'memoShortcut',
       'autoLaunch',
+      'memoOpenOnStart',
       'hooks',
       'terminalFontSize',
     ])
@@ -151,6 +153,7 @@ describe('配置文件（导出 / 导入的 JSON）', () => {
         '配置文件里的两个快捷键相同',
       ],
       [{ autoLaunch: 1 }, '配置文件里的开机自启格式不正确'],
+      [{ memoOpenOnStart: 'yes' }, '配置文件里的「启动时打开本周备忘」格式不正确'],
       [{ hooks: { claude: 'on' } }, '配置文件里的 hooks 开关格式不正确'],
       [{ hooks: [] }, '配置文件里的 hooks 开关格式不正确'],
       [{ terminalFontSize: 9 }, '配置文件里的终端字号必须是 10 到 32 之间的整数'],

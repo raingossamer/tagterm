@@ -35,7 +35,8 @@ import { ConfigService } from './config/ConfigService'
 import { SessionSubsystem, type FolderPort } from './session/SessionSubsystem'
 import { GlobalShortcut } from './shortcut/GlobalShortcut'
 import { decideSummon } from './shortcut/summon'
-import { MemoToggle } from './shortcut/memoToggle'
+import { MemoWindow } from './memo/MemoWindow'
+import { electronMemoWindows } from './platform/memoWindowPort'
 import { pickAutoUpdater, Updater } from './updater/Updater'
 import { detectAvailableShells, findOnPath } from './pathProbe'
 import { IMAGE_EXTENSIONS } from './store/backgroundImage'
@@ -150,6 +151,14 @@ function shrinkImage(
     : { bytes: resized.toPNG(), mime: 'image/png' }
 }
 
+/** 渲染进程的警告与错误也进日志（主进程监听窗口的控制台消息，不新增通道）；普通 log 不收 */
+function forwardRendererLog(win: BrowserWindow, prefix: string): void {
+  win.webContents.on('console-message', (event) => {
+    if (event.level === 'warning' || event.level === 'error')
+      logFile.write(event.level === 'error' ? 'ERROR' : 'WARN', `${prefix} ${event.message}`)
+  })
+}
+
 /** 托盘「设置」：显示窗口并让渲染进程打开设置弹窗 */
 function openSettings(): void {
   showWindow()
@@ -189,30 +198,14 @@ const shortcut = new GlobalShortcut({
   onPress: summonWindow,
 })
 /**
- * 本周备忘热键按下：「记完就回去」—— 开 / 关 / 关掉并藏回去由 MemoToggle 判定，这里只照做
- *（打开 = 还原、显示、聚焦窗口并让渲染进程打开弹窗）
+ * 本周备忘小窗（memo-floating-window）：ready 后建服务，窗口第一次打开时才建；热键 / 托盘 / 左栏 📋 都经它，
+ * 只管小窗、不碰主窗口（开 / 聚焦 / 关由 decideMemoToggle 判定）
  */
-const memoToggle = new MemoToggle()
+let memoWindow: MemoWindow | null = null
+/** 小窗建好后的 BrowserWindow：只给烟测做只读检查（安全基线、置顶、位置） */
+let memoBrowserWindow: BrowserWindow | null = null
 function toggleMemo(): void {
-  if (!mainWindow || mainWindow.isDestroyed()) return
-  const action = memoToggle.press({
-    isVisible: mainWindow.isVisible(),
-    isMinimized: mainWindow.isMinimized(),
-    isFocused: mainWindow.isFocused(),
-  })
-  if (action === 'open') {
-    showMainWindow(mainWindow)
-    broadcast('app:open-memo')
-    return
-  }
-  broadcast('app:close-memo')
-  if (action === 'close-and-hide') mainWindow.hide()
-}
-
-/** 托盘「本周备忘」：显示窗口并打开（不算热键从后台叫出来，之后按热键只关不藏） */
-function openMemo(): void {
-  showWindow()
-  broadcast('app:open-memo')
+  memoWindow?.press()
 }
 
 // 本周备忘的全局快捷键：同一个服务类的第二个实例
@@ -284,8 +277,9 @@ function startBoot(): Boot {
   const tags = new TagStore(dataDir, {
     onChanged: (result) => broadcast('tag:changed', result),
   })
+  // 备忘事项只在备忘小窗里显示：变更发给小窗（还没建过就不发，建好后页面自己拉一次全量）
   const memo = new MemoStore(dataDir, {
-    onChanged: (items) => broadcast('memo:changed', items),
+    onChanged: (items) => memoWindow?.send('memo:changed', items),
   })
 
   // agent 运行时子系统：状态机 / 进程树 / hooks 端点与安装器 / 通知 / 角标全在里面，这里只造 Electron 适配器并接线一次；
@@ -393,6 +387,22 @@ app.whenReady().then(async () => {
     dataDir,
   })
 
+  // 备忘小窗的服务：先读记住的位置（坏了只记警告），窗口等第一次打开才建
+  const memoWin = new MemoWindow({
+    port: electronMemoWindows({
+      mainWindow: () => mainWindow,
+      isQuitting: () => isQuitting,
+      isDevToolsKeyEnabled: !app.isPackaged,
+      onCreated: (win) => {
+        memoBrowserWindow = win
+        forwardRendererLog(win, '[memo-window]')
+      },
+    }),
+    dataDir,
+  })
+  await memoWin.load()
+  memoWindow = memoWin
+
   registerIpc(ipcMain, {
     version: app.getVersion(),
     osBuild: osBuildNumber(),
@@ -404,7 +414,8 @@ app.whenReady().then(async () => {
     agent: subsystem,
     shortcut,
     memoShortcut,
-    memoToggle,
+    memoWindow: memoWin,
+    focusMainWindow: showWindow,
     config,
     dataDir,
     logsDir,
@@ -425,20 +436,18 @@ app.whenReady().then(async () => {
     showOnReady: !isHiddenStart,
     isDevToolsKeyEnabled: !app.isPackaged,
   })
-  // 渲染进程的警告与错误也进日志（主进程监听窗口的控制台消息，不新增通道）；普通 log 不收
-  mainWindow.webContents.on('console-message', (event) => {
-    if (event.level === 'warning' || event.level === 'error')
-      logFile.write(event.level === 'error' ? 'ERROR' : 'WARN', `[renderer] ${event.message}`)
-  })
+  forwardRendererLog(mainWindow, '[renderer]')
   tray = createTray({
     onShow: showWindow,
-    onOpenMemo: openMemo,
+    onOpenMemo: () => memoWindow?.open(),
     onOpenSettings: openSettings,
     onQuit: quitApp,
   })
   // 窗口就绪后再注册：按下时要操作它；被别的程序占着只记日志，设置「启动」段显示红字
   shortcut.start(settings.getGlobalShortcut())
   memoShortcut.start(settings.getMemoShortcut())
+  // 「启动 TagTerm 时打开本周备忘」（设置「启动」段）：显示但不抢焦点；开机自启藏着启动时也照样打开
+  if (settings.get().memoOpenOnStart) memoWin.open({ focus: false })
   if (isSmoke)
     runSmokeCheck(mainWindow, {
       sessions,
@@ -450,6 +459,7 @@ app.whenReady().then(async () => {
       badgeCounts: () => tray?.counts() ?? null,
       summon: summonWindow,
       toggleMemo,
+      memoWindow: () => memoBrowserWindow,
       memo,
       quit: quitApp,
     })

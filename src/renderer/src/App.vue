@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 应用骨架：左栏（会话列表）+ 右栏（标签页 / 工作区 / 空状态 + 状态栏），布局照原型 .app 双栏 grid；
-// 启动并行加载 osBuild / settings / update / sessions / tags / agent / memo（tags 的派生以会话列表为主表内连接，先后到达都消化得了），
+// 启动并行加载 osBuild / settings / update / sessions / tags / agent（tags 的派生以会话列表为主表内连接，先后到达都消化得了），
 // 全部到位再恢复上次的标签页与当前页（只 spawn 当前页）；
 // 「正被查看」的会话由 useViewedSession 在当前页 / 焦点 / 可见性变化时上报主进程；
 // 装配会话生命周期核心 TerminalWorkspace：provide 给 TerminalPane / SideHead（宿主操作），attachCore 给 workspace store（快照镜像）。
@@ -23,11 +23,9 @@ import EditSessionModal from './components/EditSessionModal.vue'
 import SettingsModal from './components/SettingsModal.vue'
 import ManageTagsModal from './components/ManageTagsModal.vue'
 import ConfirmDialog from './components/ConfirmDialog.vue'
-import MemoModal from './components/MemoModal.vue'
 import { useDocumentVisible } from './composables/useDocumentVisible'
 import { useViewedSession } from './composables/useViewedSession'
 import { useAgentStore } from './stores/agent'
-import { useMemoStore } from './stores/memo'
 import { useSessionsStore } from './stores/sessions'
 import { useSettingsStore } from './stores/settings'
 import { useTagsStore } from './stores/tags'
@@ -44,7 +42,6 @@ const tags = useTagsStore()
 const update = useUpdateStore()
 const workspace = useWorkspaceStore()
 const agent = useAgentStore()
-const memo = useMemoStore()
 const isNewModalOpen = ref(false)
 /** 右键菜单「编辑会话」的目标；非空即显示编辑弹窗 */
 const editingSession = ref<Session | null>(null)
@@ -53,8 +50,6 @@ const isManageTagsOpen = ref(false)
 let unsubscribeOpenSettings: Unsubscribe | null = null
 let unsubscribeSelectSession: Unsubscribe | null = null
 let unsubscribeFocusTerminal: Unsubscribe | null = null
-let unsubscribeOpenMemo: Unsubscribe | null = null
-let unsubscribeCloseMemo: Unsubscribe | null = null
 const loadError = ref('')
 
 // 工厂惰性读取：终端只会在会话列表加载之后创建，而列表加载在 getOsBuild 之后
@@ -82,6 +77,11 @@ function onEdit(id: string): void {
   editingSession.value = sessions.byId(id) ?? null
 }
 
+/** 左栏 📋：本周备忘是独立小窗（memo-floating-window），开关由主进程做 */
+function toggleMemoWindow(): void {
+  window.tagterm.app.toggleMemoWindow()
+}
+
 function onKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape') isNewModalOpen.value = false
 }
@@ -98,11 +98,8 @@ onMounted(async () => {
   })
   // 全局快捷键唤出窗口 → 主进程已显示并聚焦窗口 → 焦点交给当前终端，可直接打字
   unsubscribeFocusTerminal = window.tagterm.app.onFocusTerminal(() => core.focusActive())
-  // 本周备忘热键 / 托盘菜单 → 主进程已显示窗口（或要藏回去）→ 开 / 关弹窗
-  unsubscribeOpenMemo = window.tagterm.app.onOpenMemo(() => memo.open())
-  unsubscribeCloseMemo = window.tagterm.app.onCloseMemo(() => memo.close())
   try {
-    // 七次 IPC 互不依赖，并行发出（读背景图那次最慢，会话 / 标签不再排在它后面）；全部到位才恢复标签页并打开当前页
+    // 六次 IPC 互不依赖，并行发出（读背景图那次最慢，会话 / 标签不再排在它后面）；全部到位才恢复标签页并打开当前页
     const [build] = await Promise.all([
       window.tagterm.app.getOsBuild(),
       settings.load(),
@@ -110,7 +107,6 @@ onMounted(async () => {
       sessions.load(),
       tags.load(),
       agent.load(),
-      memo.load(),
     ])
     osBuild = build
     await workspace.restore()
@@ -123,8 +119,6 @@ onUnmounted(() => {
   unsubscribeOpenSettings?.()
   unsubscribeSelectSession?.()
   unsubscribeFocusTerminal?.()
-  unsubscribeOpenMemo?.()
-  unsubscribeCloseMemo?.()
   detachCore()
   core.dispose()
 })
@@ -141,7 +135,7 @@ onUnmounted(() => {
       <SideFoot
         @new-session="isNewModalOpen = true"
         @manage-tags="isManageTagsOpen = true"
-        @memo="memo.open()"
+        @memo="toggleMemoWindow"
         @settings="isSettingsOpen = true"
       />
     </aside>
@@ -163,7 +157,6 @@ onUnmounted(() => {
     />
     <SettingsModal v-if="isSettingsOpen" @close="isSettingsOpen = false" />
     <ManageTagsModal v-if="isManageTagsOpen" @close="isManageTagsOpen = false" />
-    <MemoModal v-if="memo.isOpen" @close="memo.close()" />
     <!-- 应用内确认弹窗（取代 window.confirm）：放在最后，压在所有弹窗之上 -->
     <ConfirmDialog />
   </div>

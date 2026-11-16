@@ -118,6 +118,7 @@ export function createXtermFactory(getOptions: () => ITerminalOptions): Terminal
         host.addEventListener('contextmenu', onContextMenu)
       },
       write: (data) => term.write(data),
+      paste: (text) => term.paste(text),
       focus: () => term.focus(),
       fit: (): TerminalSize | null => {
         if (!fit.proposeDimensions()) return null

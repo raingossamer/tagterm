@@ -60,14 +60,14 @@ export function weekName(w: IsoWeek, now: Date): string {
   return w.year === isoWeekOf(now).year ? `W${w.week}` : `${w.year} W${w.week}`
 }
 
-/** 弹窗标题里的周：「W45（11/2–11/8）」 */
-export function weekLabel(w: IsoWeek, now: Date): string {
+/** 备忘小窗标题栏里的起止日期：「11/2–11/8」（周号另用 weekName） */
+export function weekRange(w: IsoWeek): string {
   const monday = mondayOf(w)
   const md = (utcDay: number): string => {
     const d = new Date(utcDay)
     return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`
   }
-  return `${weekName(w, now)}（${md(monday)}–${md(monday + 6 * DAY_MS)}）`
+  return `${md(monday)}–${md(monday + 6 * DAY_MS)}`
 }
 
 /** 事项归属的周：未完成 → now 所在周；已完成 → doneAt 所在周 */

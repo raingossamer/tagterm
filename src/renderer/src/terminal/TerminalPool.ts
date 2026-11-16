@@ -166,6 +166,11 @@ export class TerminalPool {
     if (this.activeId) this.entries.get(this.activeId)?.term.focus()
   }
 
+  /** 把文字按粘贴送进可见实例（拖进终端）；没有可见实例时无副作用 */
+  pasteActive(text: string): void {
+    if (this.activeId) this.entries.get(this.activeId)?.term.paste(text)
+  }
+
   /** 标签页关掉后：该实例的回滚裁到 200 行（xterm 立即裁掉最早的行，释放内存）；实例、pty、末尾判定都不动。未知 id 静默 */
   trimScrollback(sessionId: string): void {
     this.entries.get(sessionId)?.term.setScrollback(CLOSED_TAB_SCROLLBACK)

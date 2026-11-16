@@ -26,13 +26,30 @@ export default defineConfig(({ command }) => {
       plugins: [externalizeDepsPlugin()],
       resolve: { alias: { '@shared': sharedDir } },
     },
+    // 两个窗口各一份 preload 与页面：主窗口 index、本周备忘小窗 memo（memo-floating-window）
     preload: {
       plugins: [externalizeDepsPlugin()],
       resolve: { alias: { '@shared': sharedDir } },
+      build: {
+        rollupOptions: {
+          input: {
+            index: resolve(__dirname, 'src/preload/index.ts'),
+            memo: resolve(__dirname, 'src/preload/memo.ts'),
+          },
+        },
+      },
     },
     renderer: {
       plugins: [vue(), cspPlugin(isDev)],
       resolve: { alias: { '@shared': sharedDir } },
+      build: {
+        rollupOptions: {
+          input: {
+            index: resolve(__dirname, 'src/renderer/index.html'),
+            memo: resolve(__dirname, 'src/renderer/memo.html'),
+          },
+        },
+      },
     },
   }
 })

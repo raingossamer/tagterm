@@ -40,7 +40,7 @@ import { isValidAccelerator } from '@shared/accelerator'
 import type { AgentSubsystem } from './agent/AgentSubsystem'
 import type { FolderPort, SessionSubsystem } from './session/SessionSubsystem'
 import type { GlobalShortcut } from './shortcut/GlobalShortcut'
-import type { MemoToggle } from './shortcut/memoToggle'
+import type { MemoWindow } from './memo/MemoWindow'
 import { applyGlobalShortcut, applyMemoShortcut } from './shortcut/applyGlobalShortcut'
 import type { SettingsStore } from './store/SettingsStore'
 import type { MemoStore } from './store/MemoStore'
@@ -71,8 +71,10 @@ export interface IpcDeps {
   shortcut: GlobalShortcut
   /** 本周备忘的全局快捷键服务（同一个类的第二个实例） */
   memoShortcut: GlobalShortcut
-  /** 本周备忘热键的开关判定：渲染进程报来的弹窗开关喂给它 */
-  memoToggle: Pick<MemoToggle, 'visibilityChanged'>
+  /** 本周备忘小窗：主窗口左栏开关、小窗自己的 × / Esc 关掉 */
+  memoWindow: Pick<MemoWindow, 'toggle' | 'close'>
+  /** 激活主窗口（装配层注入）：主窗口终端收到从小窗拖来的文字后，Windows 拖放不会激活目标窗口 */
+  focusMainWindow: () => void
   /** 配置导入导出的编排（路径只从主进程的对话框来） */
   config: ConfigService
   /** 数据目录（设置「关于」显示） */
@@ -195,10 +197,10 @@ export function registerIpc(ipc: IpcMainLike, deps: IpcDeps): void {
   on('pty:write', (id, data) => {
     if (typeof id === 'string' && typeof data === 'string') deps.sessions.writeTerminal(id, data)
   })
-  // 备忘录弹窗开关（单向）：非布尔静默忽略
-  on('app:memo-visibility', (open) => {
-    if (typeof open === 'boolean') deps.memoToggle.visibilityChanged(open)
-  })
+  // 备忘小窗（单向，无参数）：左栏 📋 开关、小窗 × / Esc 关掉、拖放后激活主窗口
+  on('app:toggle-memo-window', () => deps.memoWindow.toggle())
+  on('memo-window:close', () => deps.memoWindow.close())
+  on('app:focus-main-window', () => deps.focusMainWindow())
   // 静默末尾报告（单向）：非法参数静默忽略；未知会话由子系统静默丢弃
   on('agent:report-output', (id, report) => {
     if (typeof id === 'string' && id && isOutputReport(report))
@@ -300,6 +302,11 @@ function assertSettingsPatch(patch: unknown): SettingsPatch {
   }
   if (o.background !== undefined) {
     out.background = assertBackground(o.background)
+  }
+  if (o.memoOpenOnStart !== undefined) {
+    if (typeof o.memoOpenOnStart !== 'boolean')
+      throw new Error('启动时打开本周备忘的设置格式不正确')
+    out.memoOpenOnStart = o.memoOpenOnStart
   }
   return out
 }
