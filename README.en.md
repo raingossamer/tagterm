@@ -12,7 +12,7 @@ A small Windows desktop tool: **save the project folders you use most as termina
 
 When you use AI coding tools in several projects at once, every time you have to find the project folder, type `cmd` in the address bar, then type `claude`; once a pile of terminal windows is open, you can no longer tell which tool has stopped and is waiting for your approval. TagTerm folds both into one window: a session is a path, and the status is visible at a glance.
 
-## Features (v0.4.2)
+## Features (v0.4.3)
 
 ### Sessions and terminals
 
@@ -57,10 +57,12 @@ Every open session has a status dot, shown in the sidebar, on the tab and in the
 
 ### Weekly memo
 
-- **One hotkey to jot things down**: Ctrl+Alt+M by default, from any program, summons TagTerm and opens the "Weekly memo" with the focus in the input box; press Enter to add and keep typing. Press the hotkey again to close it — if TagTerm was brought out of the tray or the background by this hotkey, it hides again and you are back in the program you were using. The memo button to the left of the gear at the bottom of the sidebar and "Weekly memo" in the tray menu open it too.
-- **This week's list**: tick to finish, click the text to edit in place, × to delete; finished items are struck through and sink to the bottom. Unfinished items stay in the current week across week boundaries, labelled with the week they were written down ("from W44").
-- **Looking back**: ‹ › next to the title pages through earlier weeks to see what got done (read-only).
-- "Settings → Startup" lets you change the combination or turn it off; it cannot be the same as the summon hotkey.
+- **A separate always-on-top window**: the "Weekly memo" is its own small window that floats above every program; drag it anywhere on screen (including a second monitor) and resize it. It stays put while the TagTerm main window is hidden in the tray, and it remembers its position and size for next time.
+- **One hotkey to jot things down**: Ctrl+Alt+M by default, from any program, opens the memo window with the focus in the input box; press Enter to add and keep typing. If the memo is already open while you are typing somewhere else, the hotkey hands the focus to it; with the focus in the memo, pressing it again closes it and you are back in the program you were using. The memo button to the left of the gear at the bottom of the sidebar opens and closes it too, "Weekly memo" in the tray menu opens it, and Esc or × in the memo closes it.
+- **Drag into a terminal**: grab the ⠿ on the left of an item and drop it on a TagTerm terminal; the text is inserted at the cursor (without pressing Enter), so you can add a few words before sending it to Claude Code or another agent.
+- **This week's list**: this week's progress sits at the top; tick to finish, click the text to edit in place, × to delete; finished items move into a collapsible "Done" group. Unfinished items stay in the current week across week boundaries, labelled with the week they were written down ("from W44").
+- **Looking back**: ‹ › in the title bar pages through earlier weeks to see what got done (read-only).
+- "Settings → Startup" lets you change the hotkey or turn it off (it cannot be the same as the summon hotkey), and has "Open the weekly memo when TagTerm starts".
 
 ![Weekly memo](docs/screenshots/memo.png)
 
@@ -76,7 +78,7 @@ Every open session has a status dot, shown in the sidebar, on the tab and in the
 - **Tray resident**: × only hides to the tray and every terminal keeps running; the tray menu offers Show window / Weekly memo / Settings / Quit (quit ends all terminals). Single instance: launching again just focuses the existing window.
 - **Start with Windows**: starts silently in the tray after login, without showing the window.
 - **Check for updates**: "Settings → Updates" checks, downloads, installs and restarts; an automatic check runs 10 seconds after launch and only notifies, never downloads on its own.
-- **Export / import config**: "Settings → Import / Export" writes tags, launch commands, both global hotkeys, start-with-Windows, the Agent hooks switches, appearance parameters and the terminal font size into one JSON file, and imports it on another computer; tags are merged by name, everything else is replaced, the current config is backed up first, and the result of every item is listed. Sessions, their tags, the background image and memo items are not included (see "Moving to another computer" below).
+- **Export / import config**: "Settings → Import / Export" writes tags, launch commands, both global hotkeys, start-with-Windows, whether to open the weekly memo at startup, the Agent hooks switches, appearance parameters and the terminal font size into one JSON file, and imports it on another computer; tags are merged by name, everything else is replaced, the current config is backed up first, and the result of every item is listed. Sessions, their tags, the background image and memo items are not included (see "Moving to another computer" below).
 
 ## Install
 
@@ -96,7 +98,7 @@ If the hooks cannot be installed on the new computer (for example Claude Code is
 
 ## Data and privacy
 
-- The app's own data is four JSON files in `%APPDATA%\TagTerm\`: `sessions.json` (sessions), `settings.json` (launch commands, background and both global hotkeys), `tags.json` (tags and their links) and `memo.json` (weekly memo items). Uninstalling does not delete them. Automatic backups taken before a config import live in `backups\` next to them, with the 10 most recent kept.
+- The app's own data is five JSON files in `%APPDATA%\TagTerm\`: `sessions.json` (sessions), `settings.json` (launch commands, background, both global hotkeys and whether to open the weekly memo at startup), `tags.json` (tags and their links), `memo.json` (weekly memo items) and `memo-window.json` (position and size of the memo window). Uninstalling does not delete them. Automatic backups taken before a config import live in `backups\` next to them, with the 10 most recent kept.
 - Turning a hooks switch on edits `~/.claude/settings.json` or `~/.codex/hooks.json`: a backup is written first as `<file>.tagterm-bak-<timestamp>`, only entries marked as TagTerm's are added or removed, and turning the switch off removes them. Hooks only post events to a port on `127.0.0.1` on this machine.
 - Logs record events and errors only, in `%APPDATA%\TagTerm\logs\`, one file rotating at 1 MB with 3 kept; "Settings → About" opens the log folder with one click, which is what to send the developer when something goes wrong.
 - Terminal output and keystrokes are never written to disk or to the log. Apart from "Check for updates" reaching GitHub Releases, the app does not touch the network.
